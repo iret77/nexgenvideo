@@ -246,7 +246,7 @@ enum ProductionSpatialHistoryAcceptance {
         try session.observeHistoryAdmissionForAcceptance(observer.observe)
         defer { try? session.observeHistoryAdmissionForAcceptance(nil) }
         do {
-            try await driver.clickButton(undo ? "spatial.undo" : "spatial.redo", title: undo ? "Undo" : "Redo", in: window)
+            try await driver.clickButton(undo ? "spatial.undo" : "spatial.redo", title: undo ? "Undo" : "Redo", in: window, settledTarget: .button)
             try await driver.wait("real history callback and restoration", seconds: 90) {
                 observer.callbacks == 1 && !session.busy
             }

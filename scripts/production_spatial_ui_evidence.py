@@ -77,8 +77,13 @@ def require_cancellations(case, row):
 
 
 def validate(report, directory):
+    return validate_cases(report, directory, CASES)
+
+
+def validate_cases(report, directory, cases):
     try:
-        for case, (label, controls, flags) in CASES.items():
+        for case in cases:
+            label, controls, flags = CASES[case]
             rows = report[case]
             if [row.get("scale") for row in rows] != [1, 1.25, 1.5]:
                 return False

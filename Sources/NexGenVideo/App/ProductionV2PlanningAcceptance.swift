@@ -120,7 +120,7 @@ enum ProductionV2PlanningAcceptance {
         let scriptBefore = try await Task.detached { try PlanningWriterIO.script(dataRoot: root) }.value
         guard let scene = scriptBefore.scenes.first else { throw failed("Script has no scene.") }
         try await driver.click("script.scene.edit." + scene.id, in: window)
-        let sheet = try await driver.sheet("script.scene.title")
+        let sheet = try await driver.sheet("script.scene.title", waitForControl: true)
         let title = scene.title + " — native revision"
         try await driver.fill("script.scene.title", value: title, in: sheet)
         try driver.visible(["script.scene.cancel", "script.scene.apply"], in: sheet)

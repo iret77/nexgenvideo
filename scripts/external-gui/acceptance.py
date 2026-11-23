@@ -202,9 +202,11 @@ def install(args, evidence, *, allowed_paths=None):
             identity['app'] = metadata(source, args.source_sha)
             command(['ditto', source, installed], evidence / 'install.log', timeout=120)
             if getattr(args, 'scenario', None) == LOCAL_MUSICVIDEO:
+                mounted = qualified_local_pack(args.source_sha, args.dmg_sha256, args.expected_pack_sha256)
+                expected_tree = mounted['mountedPackTreeSHA256'] if mounted is not None else LOCAL_PACK_TREE
                 packs = list(mount.glob('*.ngvpack'))
                 require(len(packs) == 1 and packs[0].name == 'musicvideo.ngvpack'
-                        and not packs[0].is_symlink() and tree_sha256(packs[0]) == LOCAL_PACK_TREE,
+                        and not packs[0].is_symlink() and tree_sha256(packs[0]) == expected_tree,
                         'The exact mounted DMG does not contain the qualified external pack')
                 guide = mount / 'Install NexGenVideo.txt'
                 require(guide.is_file() and not guide.is_symlink()
@@ -212,16 +214,15 @@ def install(args, evidence, *, allowed_paths=None):
                         'The actual DMG installation guide differs from the reviewed guide')
                 external = evidence / 'musicvideo.ngvpack'
                 command(['ditto', packs[0], external], evidence / 'install.log', timeout=120)
-                require(tree_sha256(external) == LOCAL_PACK_TREE, 'DMG pack copy changed')
-                from compiled_app_release import verify_pack_copy
+                require(tree_sha256(external) == expected_tree, 'DMG pack copy changed')
                 from compiled_core_reuse import persist
-                pack_reuse = verify_pack_copy(external, 'local-dmg', dmg=dmg, evidence=evidence,
+                pack_reuse = check_local_pack(external, 'local-dmg', dmg=dmg, evidence=evidence,
                     binding={'sourceSHA': args.source_sha, 'dmgSHA256': args.dmg_sha256,
                         'appTreeSHA256': identity['app']['treeSHA256'], 'guideSHA256': sha256(guide),
-                        **({'packaging': identity['packaging']} if 'packaging' in identity else {})})
+                        **({'packaging': identity['packaging']} if 'packaging' in identity else {})}, mounted=mounted)
                 persist(evidence / 'pack-source-signature.log', pack_reuse)
                 identity['externalPack'] = {'origin': 'mounted-dmg', 'filename': external.name,
-                    'treeSHA256': LOCAL_PACK_TREE, 'dmgSHA256': args.dmg_sha256, 'guideSHA256': sha256(guide),
+                    'treeSHA256': expected_tree, 'dmgSHA256': args.dmg_sha256, 'guideSHA256': sha256(guide),
                     'verificationReuseSHA256': sha256(evidence / 'pack-source-signature.log')}
 
         finally:
@@ -487,8 +488,43 @@ def fresh_catalog(raw, expected_catalog, expected_pack):
     return entry
 
 
-def local_catalog(raw, expected_catalog, expected_pack):
-    require(re.fullmatch('[a-f0-9]{64}', expected_catalog or '') and expected_pack == LOCAL_PACK_ZIP_SHA
+def qualified_local_pack(source, dmg_sha, pack_sha):
+    binding = read_json(Path(os.environ['RUNNER_TEMP']) / 'qualified-local-pack/harness.json')
+    require(binding.get('candidateKind') == 'signed-journey' and binding.get('buildSourceSHA') == source
+            and binding.get('harnessSourceSHA') == os.environ['GITHUB_SHA'], 'Local pack source receipt differs')
+    mounted = binding.get('mountedInternalImage')
+    if mounted is None:
+        require(pack_sha == LOCAL_PACK_ZIP_SHA, 'Missing original local pack lineage')
+        return None
+    require(mounted.get('sourceSHA') == source == os.environ['GITHUB_SHA']
+            and mounted.get('dmgSHA256') == dmg_sha and mounted.get('packArchive') == 'musicvideo.ngvpack.zip'
+            and mounted.get('packOrigin') == 'mounted-dmg' and mounted.get('packArchiveSHA256') == pack_sha
+            and mounted.get('mountedPackTreeSHA256') == mounted.get('packTreeSHA256')
+            and all(re.fullmatch('[a-f0-9]{64}', mounted.get(k, '')) for k in
+                    ('dmgSHA256', 'packArchiveSHA256', 'mountedPackTreeSHA256', 'mountedAppTreeSHA256')),
+            'Local pack differs from the original internal image')
+    return mounted
+
+
+def check_local_pack(bundle, context, dmg, evidence, binding, mounted):
+    if mounted is None:
+        from compiled_app_release import verify_pack_copy
+        return verify_pack_copy(bundle, context, dmg=dmg, evidence=evidence, binding=binding)
+    require(binding['dmgSHA256'] == mounted['dmgSHA256'] and binding['appTreeSHA256'] == mounted['mountedAppTreeSHA256']
+            and sha256(REPOSITORY / 'scripts/Install NexGenVideo.txt') == binding['guideSHA256']
+            and tree_sha256(bundle) == mounted['mountedPackTreeSHA256'] and stat.S_IMODE(bundle.stat().st_mode) == 0o755,
+            'The pack or its installation guide differs from the original internal image')
+    log = evidence / (context + '-native.log')
+    command(['codesign', '--verify', '--strict', '--verbose=2', bundle], log)
+    command(['xcrun', 'stapler', 'validate', bundle], log)
+    return dict(schema='verified-internal-pack/v1', context=context, sourceSHA=binding['sourceSHA'],
+                dmgSHA256=mounted['dmgSHA256'], packArchiveSHA256=mounted['packArchiveSHA256'],
+                packTreeSHA256=mounted['mountedPackTreeSHA256'], runID=os.environ['GITHUB_RUN_ID'], nativeLogSHA256=sha256(log))
+
+
+def local_catalog(raw, expected_catalog, expected_pack, *, mounted=None):
+    expected_zip = mounted['packArchiveSHA256'] if mounted is not None else LOCAL_PACK_ZIP_SHA
+    require(re.fullmatch('[a-f0-9]{64}', expected_catalog or '') and expected_pack == expected_zip
             and hashlib.sha256(raw).hexdigest() == expected_catalog, 'Local-DMG catalog or original ZIP lineage differs')
     value = json.loads(raw)
     require(value.get('schema') == 'plugins/v2' and isinstance(value.get('plugins'), list), 'Unsupported actual stable catalog')
@@ -729,10 +765,12 @@ def run_local_musicvideo(args):
     try:
         runtime_environment(evidence)
         app, identity = install(args, evidence)
+        mounted = qualified_local_pack(args.source_sha, args.dmg_sha256, args.expected_pack_sha256)
+        expected_tree = mounted['mountedPackTreeSHA256'] if mounted is not None else LOCAL_PACK_TREE
         with (app / 'Contents/Info.plist').open('rb') as stream: info = plistlib.load(stream)
         require(info.get('NGVPluginCatalogURL') == CATALOG_URL, 'The installed app overrides the stable catalog')
         before = fetch_public_bytes(CATALOG_URL, 1024 * 1024)
-        local_catalog(before, args.expected_catalog_sha256, args.expected_pack_sha256)
+        local_catalog(before, args.expected_catalog_sha256, args.expected_pack_sha256, mounted=mounted)
         (evidence / 'catalog-before.json').write_bytes(before)
         runtime = Path(args.test_runtime).resolve(strict=True)
         require(re.fullmatch('[a-f0-9]{64}', args.test_producer_sha256 or '')
@@ -760,25 +798,24 @@ def run_local_musicvideo(args):
                 and summary.get('skippedTests') == 0, 'Exactly one normal Musicvideo test must execute and pass')
         validate_local_stages(evidence)
         after = fetch_public_bytes(CATALOG_URL, 1024 * 1024)
-        local_catalog(after, args.expected_catalog_sha256, args.expected_pack_sha256)
+        local_catalog(after, args.expected_catalog_sha256, args.expected_pack_sha256, mounted=mounted)
         require(after == before, 'Normal catalog changed during installation')
         (evidence / 'catalog-after.json').write_bytes(after)
         bundle = Path(config['home']) / 'Library/Application Support/NexGenVideo/Plugins/musicvideo/0.6.0.ngvpack'
         require(identity.get('externalPack', {}).get('origin') == 'mounted-dmg'
                 and identity['externalPack'].get('dmgSHA256') == args.dmg_sha256
-                and identity['externalPack'].get('treeSHA256') == LOCAL_PACK_TREE,
+                and identity['externalPack'].get('treeSHA256') == expected_tree,
                 'Normal local installation lost exact mounted-DMG provenance')
         pack_tree = tree_sha256(bundle)
-        require(pack_tree == tree_sha256(evidence / 'musicvideo.ngvpack') == LOCAL_PACK_TREE,
+        require(pack_tree == tree_sha256(evidence / 'musicvideo.ngvpack') == expected_tree,
                 'Installed local pack differs from the actual mounted DMG payload')
-        shutil.copytree(bundle, evidence / 'installed-pack', symlinks=True)
+        command(['ditto', bundle, evidence / 'installed-pack'], evidence / 'install.log', timeout=120)
         require(tree_sha256(evidence / 'installed-pack') == pack_tree, 'Installed local pack evidence changed')
-        from compiled_app_release import verify_pack_copy
         from compiled_core_reuse import persist
-        pack_reuse = verify_pack_copy(bundle, 'local-installed', dmg=Path(args.dmg), evidence=evidence,
+        pack_reuse = check_local_pack(bundle, 'local-installed', dmg=Path(args.dmg), evidence=evidence,
             binding={'sourceSHA': args.source_sha, 'dmgSHA256': args.dmg_sha256,
                 'appTreeSHA256': identity['app']['treeSHA256'], 'guideSHA256': identity['externalPack']['guideSHA256'],
-                **({'packaging': identity['packaging']} if 'packaging' in identity else {})})
+                **({'packaging': identity['packaging']} if 'packaging' in identity else {})}, mounted=mounted)
         persist(evidence / 'pack-signature.log', pack_reuse)
         require(metadata(app, args.source_sha) == identity['app'], 'The normal app changed during installation')
         result.update(completed=True, identitySHA256=sha256(evidence / 'identity.json'), runtimeSHA256=sha256(evidence / 'runtime.json'),
@@ -832,7 +869,7 @@ def validate_fresh_musicvideo(args):
                       'catalogSHA256': result['catalogSHA256'], 'packSHA256': result['packSHA256']}))
 
 
-def validate_local_pack_reuse(evidence, identity, revision, source_sha, dmg_sha256):
+def validate_local_pack_reuse(evidence, identity, revision, source_sha, dmg_sha256, *, mounted=None):
     from compiled_app_release import original_pack_proof, local_pack_runtime_origin
     require(os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('GITHUB_REPOSITORY') == 'iret77/nexgenvideo'
             and os.environ.get('GITHUB_JOB') == 'acceptance' and os.environ.get('GITHUB_RUN_ATTEMPT') == '1'
@@ -841,6 +878,21 @@ def validate_local_pack_reuse(evidence, identity, revision, source_sha, dmg_sha2
     binding = {'sourceSHA': source_sha, 'dmgSHA256': dmg_sha256,
         'appTreeSHA256': identity.get('app', {}).get('treeSHA256'), 'guideSHA256': identity.get('externalPack', {}).get('guideSHA256'),
         **({'packaging': identity['packaging']} if 'packaging' in identity else {})}
+    if mounted is not None:
+        require(identity['externalPack']['verificationReuseSHA256'] == sha256(evidence / 'pack-source-signature.log'),
+                'Mounted pack verification changed')
+        for context, name, bundle in [('local-dmg', 'pack-source-signature.log', 'musicvideo.ngvpack'),
+                                      ('local-installed', 'pack-signature.log', 'installed-pack')]:
+            proof = read_json(evidence / name)
+            require(proof == dict(schema='verified-internal-pack/v1', context=context, sourceSHA=source_sha,
+                    dmgSHA256=dmg_sha256, packArchiveSHA256=mounted['packArchiveSHA256'], packTreeSHA256=mounted['mountedPackTreeSHA256'],
+                    runID=identity['runID'], nativeLogSHA256=sha256(evidence / (context + '-native.log'))),
+                    'Native verification evidence differs')
+            with tempfile.TemporaryDirectory(prefix='ngv-inspect-installed-pack-') as temporary:
+                copy = Path(temporary) / 'musicvideo.ngvpack'
+                command(['ditto', evidence / bundle, copy], evidence / 'validation-copy.log', timeout=120)
+                check_local_pack(copy, context + '-validation', None, evidence, binding, mounted)
+        return
     expected_producer = local_pack_runtime_origin(binding, expected_dmg_sha256=dmg_sha256)
     require(identity.get('externalPack', {}).get('verificationReuseSHA256') == sha256(evidence / 'pack-source-signature.log'),
             'Mounted-DMG pack admission bytes changed')
@@ -892,20 +944,23 @@ def validate_local_musicvideo(args):
     for key, name in [('identitySHA256', 'identity.json'), ('runtimeSHA256', 'runtime.json'), ('journeySHA256', 'journey.json'),
                       ('packSignatureLogSHA256', 'pack-signature.log')]:
         require(result.get(key) == sha256(evidence / name), 'Normal Musicvideo proof bytes changed: ' + name)
-    validate_local_pack_reuse(evidence, identity, revision, args.source_sha, args.dmg_sha256)
-    local_catalog((evidence / 'catalog-before.json').read_bytes(), args.expected_catalog_sha256, args.expected_pack_sha256)
-    local_catalog((evidence / 'catalog-after.json').read_bytes(), args.expected_catalog_sha256, args.expected_pack_sha256)
+    mounted = qualified_local_pack(args.source_sha, args.dmg_sha256, args.expected_pack_sha256)
+    expected_tree = mounted['mountedPackTreeSHA256'] if mounted is not None else LOCAL_PACK_TREE
+    expected_zip = mounted['packArchiveSHA256'] if mounted is not None else LOCAL_PACK_ZIP_SHA
+    validate_local_pack_reuse(evidence, identity, revision, args.source_sha, args.dmg_sha256, mounted=mounted)
+    local_catalog((evidence / 'catalog-before.json').read_bytes(), args.expected_catalog_sha256, args.expected_pack_sha256, mounted=mounted)
+    local_catalog((evidence / 'catalog-after.json').read_bytes(), args.expected_catalog_sha256, args.expected_pack_sha256, mounted=mounted)
     require((evidence / 'catalog-before.json').read_bytes() == (evidence / 'catalog-after.json').read_bytes()
-            and result['packSHA256'] == args.expected_pack_sha256 == LOCAL_PACK_ZIP_SHA
+            and result['packSHA256'] == args.expected_pack_sha256 == expected_zip
             and result['catalogSHA256'] == args.expected_catalog_sha256, 'Normal catalog or published pack bytes changed')
     summary = read_json(evidence / 'summary.json')
     require(summary.get('passedTests') == 1 and summary.get('failedTests') == 0 and summary.get('skippedTests') == 0,
             'Normal Musicvideo test did not execute exactly once')
     require(tree_sha256(evidence / 'installed-pack') == tree_sha256(evidence / 'musicvideo.ngvpack')
-            == result.get('packTreeSHA256') == LOCAL_PACK_TREE
+            == result.get('packTreeSHA256') == expected_tree
             and identity.get('externalPack', {}).get('origin') == 'mounted-dmg'
             and identity['externalPack'].get('dmgSHA256') == result['dmgSHA256']
-            and identity['externalPack'].get('treeSHA256') == LOCAL_PACK_TREE,
+            and identity['externalPack'].get('treeSHA256') == expected_tree,
             'Local installed pack is not the exact current DMG payload')
     validate_local_stages(evidence)
     print(json.dumps({'completed': True, 'sourceSHA': args.source_sha, 'dmgSHA256': result['dmgSHA256'],

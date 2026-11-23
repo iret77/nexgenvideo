@@ -1795,6 +1795,16 @@ enum NativeAcceptancePointer {
         return result.evidence
     }
 
+    static func windowObservation(_ number: Int, windows: [[String: Any]]) -> [String: Any] {
+        let window = windows.first { ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == number }
+        let owner = (window?[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
+        let app = owner.flatMap { NSRunningApplication(processIdentifier: $0) }
+        return ["number": number, "ownerPID": owner ?? -1, "bundleID": app?.bundleIdentifier ?? "",
+                "layer": window?[kCGWindowLayer as String] ?? NSNull(), "bounds": window?[kCGWindowBounds as String] ?? NSNull(),
+                "frontmostPID": NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1,
+                "uptime": ProcessInfo.processInfo.systemUptime]
+    }
+
     private static func target(_ probe: NSView, window: NSWindow, fraction: NSPoint,
                                editing: FieldTarget = .ordinary,
                                windowFailure: ([String: Any]) -> Void,
@@ -1903,7 +1913,8 @@ enum NativeAcceptancePointer {
               clause("positiveOriginalWindowWidth", cgFrame.width > 0),
               clause("positiveOriginalWindowHeight", cgFrame.height > 0),
               clause("originalWindowContainsQuartzPoint", cgFrame.contains(quartzPoint)) else {
-            windowFailure(["firstFailedClause": firstFailedClause ?? "UNAVAILABLE",
+            let coveringWindow = Self.windowObservation(windowAtPoint, windows: windows)
+            windowFailure(["firstFailedClause": firstFailedClause ?? "UNAVAILABLE", "windowAtPointDetails": coveringWindow,
                 "clauses": clauseNames.map { ["name": $0, "status": clauses[$0] ?? "NOT_EVALUATED"] },
                 "windowAtPoint": windowAtPoint, "originalWindowNumber": originalWindowNumber,
                 "ownerPID": getpid(), "screenPoint": [appKitPoint.x, appKitPoint.y],
@@ -2015,6 +2026,7 @@ enum NativeAcceptancePointer {
         private var stableSeconds = 0.0
         private var samples = 0
         private var lastObservation: [String: Any] = [:]
+        private var covers: [[String: Any]] = []
 
         init(id: String, title: String, allowsGestureSurface: Bool) {
             self.id = id
@@ -2023,7 +2035,7 @@ enum NativeAcceptancePointer {
         }
 
         var evidence: [String: Any] {
-            ["id": id, "title": title, "stableSeconds": stableSeconds, "samples": samples, "observation": lastObservation]
+            ["id": id, "title": title, "stableSeconds": stableSeconds, "samples": samples, "observation": lastObservation, "coveringWindows": covers]
         }
 
         mutating func observe(_ probe: NSView?, window: NSWindow, fraction: NSPoint) -> Bool {
@@ -2050,6 +2062,11 @@ enum NativeAcceptancePointer {
                     }
                 } catch {
                     lastObservation = ["status": error.localizedDescription, "rejection": rejection]
+                    if rejection["firstFailedClause"] as? String == "windowAtPointMatches",
+                       let details = rejection["windowAtPointDetails"] as? [String: Any],
+                       let number = details["number"] as? Int, (covers.last?["number"] as? Int) != number {
+                        covers.append(details)
+                    }
                 }
             }
             baseline = nil

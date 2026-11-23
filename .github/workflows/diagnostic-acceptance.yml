@@ -15,7 +15,7 @@ on:
       candidate_kind:
         description: Signed release verification or targeted failed CI diagnostics
         type: choice
-        options: [native-pointer-guard-snapshot, native-app-native-failure-diagnostic, native-app-targets, native-app-build-plan, signed-release, signed-bpy, signed-journey, signed-transport, native-retained-failures, native-scene-history-hierarchy, native-scene-pointer-delivery, native-segment-geometry, native-button-query, native-button-query-crash, native-button-query-crash-reuse, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
+        options: [signed-scene-history, signed-scene-editing, native-pointer-guard-snapshot, native-app-native-failure-diagnostic, native-app-targets, native-app-build-plan, signed-release, signed-bpy, signed-journey, signed-transport, native-retained-failures, native-scene-history-hierarchy, native-scene-pointer-delivery, native-segment-geometry, native-button-query, native-button-query-crash, native-button-query-crash-reuse, native-export-color, ci-runtime, ci-bpy-open-diagnostic, ci-bpy-resource-diagnostic, ci-app-test-diagnostic, ci-app-glow-replay, ci-app-full-replay, ci-builtin-blur, ci-builtin-blur-scribble, ci-builtin-blur-floor, ci-builtin-blur-preheat, ci-glow-context]
         default: signed-release
       run_id:
         description: "Original producer workflow run"
@@ -136,8 +136,46 @@ env:
   FAILURE_DIGEST: ${{ inputs.failure_artifact_sha256 }}
 
 jobs:
+  signed-scene-history:
+    if: inputs.candidate_kind == 'signed-scene-history' || inputs.candidate_kind == 'signed-scene-editing'
+    runs-on: macrunner
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-macos-source
+      - name: Prepare the independent movie decoder
+        if: inputs.candidate_kind == 'signed-scene-editing'
+        id: movie-tools
+        uses: mamba-org/setup-micromamba@f457c30a868e4760d3a6fcea5f25dc655b8edf39
+        with:
+          environment-name: ngv-media
+          create-args: 'ffmpeg=9.0.2=gpl_*'
+          micromamba-root-path: ${{ runner.temp }}/micromamba
+          micromamba-binary-path: ${{ runner.temp }}/micromamba-bin/micromamba
+          init-shell: 'none'
+          generate-run-shell: false
+          cache-environment: false
+          cache-downloads: false
+          post-cleanup: all
+      - name: Verify the disk image and exercise the selected scene workflow
+        env:
+          MOVIE_TOOLS: ${{ steps.movie-tools.outputs.environment-path }}/bin
+        run: python3 scripts/signed_scene_history.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ${{ inputs.candidate_kind }}-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/signed-scene-history/evidence/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
   source:
+    if: inputs.candidate_kind != 'signed-scene-history' && inputs.candidate_kind != 'signed-scene-editing'
     outputs:
+      mounted-pack-sha256: ${{ steps.candidate.outputs.mounted-pack-sha256 }}
       pointer-guard-binding-id: ${{ steps.pointer-guard-binding-upload.outputs.artifact-id }}
       pointer-guard-binding-digest: ${{ steps.pointer-guard-binding-upload.outputs.artifact-digest }}
       native-failure-binding-id: ${{ steps.native-failure-binding-upload.outputs.artifact-id }}
@@ -620,6 +658,7 @@ jobs:
           retention-days: 90
 
       - name: Bind the successful release job and immutable artifact
+        id: candidate
         if: inputs.candidate_kind != 'native-pointer-guard-snapshot' && inputs.candidate_kind != 'native-app-native-failure-diagnostic' && inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-scene-pointer-delivery' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -635,15 +674,19 @@ jobs:
           ATTEMPT="$(jq -r .run_attempt "$RUNNER_TEMP/candidate-metadata/run.json")"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN/attempts/$ATTEMPT/jobs?per_page=100" > "$RUNNER_TEMP/candidate-metadata/jobs.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT" > "$RUNNER_TEMP/candidate-metadata/artifact.json"
-          extra=()
+          set -- --candidate-kind "$CANDIDATE_KIND"
           if [ "$CANDIDATE_KIND" = ci-app-test-diagnostic ]; then
             gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT/zip" > "$RUNNER_TEMP/original-test-diagnostic.zip"
-            extra+=(--crash-archive "$RUNNER_TEMP/original-test-diagnostic.zip")
+            set -- "$@" --crash-archive "$RUNNER_TEMP/original-test-diagnostic.zip"
           fi
           python3 scripts/verify_diagnostic_candidate.py "$CANDIDATE_RUN" "$CANDIDATE_SOURCE" \
             "$CANDIDATE_ARTIFACT" "$CANDIDATE_DIGEST" "$RUNNER_TEMP/candidate-metadata" \
-            --candidate-kind "$CANDIDATE_KIND" \
-            --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256" "${extra[@]}"
+            "$@" \
+            --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256"
+          if jq -e '.mountedInternalImage' "$RUNNER_TEMP/candidate-metadata/harness.json" >/dev/null; then
+            pack_sha="$(jq -er '.mountedInternalImage.packArchiveSHA256 | select(test("^[0-9a-f]{64}$"))' "$RUNNER_TEMP/candidate-metadata/harness.json")"
+            echo "mounted-pack-sha256=$pack_sha" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/upload-artifact@v4
         if: inputs.candidate_kind != 'native-pointer-guard-snapshot' && inputs.candidate_kind != 'native-app-native-failure-diagnostic' && inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-scene-pointer-delivery' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         with:
@@ -1872,7 +1915,7 @@ jobs:
       expected_dmg_sha256: ${{ inputs.expected_dmg_sha256 }}
       scenario: ${{ inputs.journey_scenario || 'journey' }}
       expected_catalog_sha256: ${{ inputs.expected_catalog_sha256 }}
-      expected_pack_sha256: ${{ inputs.journey_scenario == 'normal-fresh-local-musicvideo' && '37fcee05d1ac334b20eb392c61cc3b7a94af165dc3b967c61602bc79d6dc4388' || '' }}
+      expected_pack_sha256: ${{ inputs.journey_scenario == 'normal-fresh-local-musicvideo' && (needs.source.outputs.mounted-pack-sha256 || '37fcee05d1ac334b20eb392c61cc3b7a94af165dc3b967c61602bc79d6dc4388') || '' }}
 
   signed-transport:
     needs: [source, transport-fixture]

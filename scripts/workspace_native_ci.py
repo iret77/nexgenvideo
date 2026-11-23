@@ -202,9 +202,11 @@ def resolve(run_id, name, artifact_id, destination, *, product_source='', proof_
         subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--'], check=True, stdout=subprocess.DEVNULL, timeout=30)
         changed = subprocess.check_output(['git', 'diff', '--no-renames', '--name-only', '-z', producer_source, 'HEAD'], timeout=30).decode()
         jobs = api(f'/actions/runs/{run_id}/attempts/{run["run_attempt"]}/jobs?per_page=100')
-        verify_signed_desktop(run, jobs, artifact, run_id, source_sha, artifact['id'],
+        mounted = verify_signed_desktop(run, jobs, artifact, run_id, source_sha, artifact['id'],
                               artifact['digest'].removeprefix('sha256:'), list(filter(None, changed.split('\0'))),
                               **({'packaging': packaging} if packaging is not None else {}))
+        if mounted is not None:
+            identity['mountedInternalImage'] = mounted
         producer = next(job for job in jobs['jobs'] if job['name'] == 'release')
         identity.update(schema='nexgenvideo/native-input/2', harnessSourceSHA=harness,
             retainedRelease={'productSourceSHA': source_sha, 'harnessSourceSHA': harness,
@@ -376,6 +378,12 @@ def prepare(directory, identity_file):
                     sourceReceiptSHA256=sha(directory / 'bpy-source-receipt.json'),
                     sourceArchiveSHA256=validation['archiveSHA256'],
                     sourceManifestSHA256=validation['manifestSHA256'], sourceClosure=validation)
+    mounted = identity.get('mountedInternalImage')
+    if mounted is not None and (identity['archiveSHA256'] != mounted['archiveSHA256']
+            or identity['appTreeSHA256'] != mounted['mountedAppTreeSHA256']
+            or identity['runtimeInputSHA256'] != mounted['runtimeInputSHA256']
+            or identity['sourceReceiptSHA256'] != mounted['bpySourceReceiptSHA256']):
+        raise ValueError('Desktop workspace transfer differs from the mounted signed disk image')
     atomic_json(identity_file, identity)
     outputs({'identity_sha256': sha(identity_file)})
 
@@ -388,6 +396,13 @@ def verify_runtime(directory, identity_file, expected_identity_sha):
         raise ValueError('The runtime or validator input changed')
     if sha(directory / 'workspace-ui.tar.gz') != identity['archiveSHA256']:
         raise ValueError('The immutable native runtime changed')
+
+
+def verify_installed_runtime(directory, identity_file):
+    identity = json.loads(identity_file.read_bytes())
+    if identity.get('mountedInternalImage') is not None:
+        from retained_release_runtime import validate_app
+        validate_app(directory, identity['sourceSHA'], runtime_receipt(directory, identity), proof=identity)
 
 
 def relative(name):
@@ -623,7 +638,7 @@ def main():
         validate.add_argument('--' + name, default='')
     bpy = sub.add_parser('resolve-bpy-followup'); bpy.add_argument('--run-id', type=int, required=True)
     bpy.add_argument('--identity', type=Path, required=True)
-    for name in ('prepare', 'verify-runtime', 'download-runtime'):
+    for name in ('prepare', 'verify-runtime', 'verify-installed-runtime', 'download-runtime'):
         command = sub.add_parser(name); command.add_argument('directory', type=Path); command.add_argument('identity', type=Path)
         if name == 'verify-runtime': command.add_argument('identity_sha')
     pack = sub.add_parser('archive'); pack.add_argument('directory', type=Path); pack.add_argument('identity', type=Path)
@@ -642,6 +657,7 @@ def main():
     elif args.command == 'resolve-bpy-followup': resolve_bpy_followup(args.run_id, args.identity)
     elif args.command == 'prepare': prepare(args.directory, args.identity)
     elif args.command == 'verify-runtime': verify_runtime(args.directory, args.identity, args.identity_sha)
+    elif args.command == 'verify-installed-runtime': verify_installed_runtime(args.directory, args.identity)
     elif args.command == 'download-runtime': download_runtime(args.identity, args.directory)
     elif args.command == 'archive': archive_evidence(args.directory, args.identity, args.case, args.scale, args.destination)
     else: return summarize(args.artifacts, args.output, args.plan, args.identity, args.identity_sha, args.remote)
