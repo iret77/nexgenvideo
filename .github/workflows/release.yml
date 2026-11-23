@@ -636,6 +636,17 @@ jobs:
 
       - uses: ./.github/actions/cache-swiftpm-dependencies
 
+      - name: Bind original ONNX package and binary transports
+        if: inputs.internal_image_only
+        run: python3 scripts/prepare_release_onnx.py
+
+      - name: Resolve the locked release dependencies
+        if: inputs.internal_image_only
+        timeout-minutes: 10
+        run: |
+          swift package --cache-path "$NGV_SWIFTPM_CACHE_PATH" --scratch-path "$RUNNER_TEMP/release-tests" --force-resolved-versions resolve
+          git diff --exit-code -- Package.swift Package.resolved
+
       - name: Import Developer ID cert into a temporary keychain
         env:
           CERT_B64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}

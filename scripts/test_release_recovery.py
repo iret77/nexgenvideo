@@ -103,6 +103,24 @@ class ReleaseRecoveryTests(unittest.TestCase):
             raise AssertionError(command)
         return scratch, binary, proof, environment, output
 
+    def test_cancelled_compiler_uses_the_same_job_plan_without_reopening_swiftpm(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scratch, binary, _, environment, output = self.native_checkpoint_fixture(root)
+            saved = root / 'checkpoints'
+            query = subprocess.CompletedProcess([], 0, str(binary) + '\n', '')
+            with patch.dict(os.environ, environment), patch.object(checkpoint.sys, 'platform', 'darwin'), chdir(ROOT), \
+                    patch.object(checkpoint.subprocess, 'run', return_value=query) as swift, \
+                    patch.object(checkpoint.subprocess, 'check_output', side_effect=output):
+                checkpoint.native_test_products(saved, scratch, '/cache', 'plan')
+                swift.reset_mock()
+                with patch.dict(os.environ, NGV_RELEASE_TEST_PRODUCTS_ROOT=str(binary.resolve())):
+                    checkpoint.native_test_products(saved, scratch, '/cache', 'available')
+                swift.assert_not_called()
+                self.assertTrue(json.loads((saved / 'available-manifest.json').read_bytes())['images'])
+                with patch.dict(os.environ, NGV_RELEASE_TEST_PRODUCTS_ROOT=str(root)), self.assertRaises(ValueError):
+                    checkpoint.native_test_products(saved, scratch, '/cache', 'available')
+
     def test_native_compiler_archive_precedes_runtime_and_requires_both_images(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

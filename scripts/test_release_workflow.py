@@ -132,6 +132,26 @@ def active_publication_steps(workflow, artifact_only, dry_run, resumed=False):
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_internal_build_resolves_exact_onnx_inputs_before_signing_credentials(self):
+        import prepare_release_onnx as transport
+        lock = json.loads((ROOT / 'Package.resolved').read_bytes())
+        manifest = (ROOT / 'Package.swift').read_bytes()
+        transport.validate_pin(lock, manifest)
+        with self.assertRaises(ValueError):
+            transport.validate_pin(lock, manifest + b'changed')
+        next(pin for pin in lock['pins'] if pin['location'] == transport.ORIGIN)['state']['revision'] = 'a' * 40
+        with self.assertRaises(ValueError):
+            transport.validate_pin(lock, manifest)
+        workflow = yaml.safe_load((ROOT / '.github/workflows/release.yml').read_text())
+        steps = workflow['jobs']['release-build']['steps']
+        names = [step.get('name') for step in steps]
+        bind = names.index('Bind original ONNX package and binary transports')
+        resolve = names.index('Resolve the locked release dependencies')
+        self.assertLess(bind, resolve)
+        self.assertLess(resolve, names.index('Import Developer ID cert into a temporary keychain'))
+        self.assertEqual(steps[bind]['if'], 'inputs.internal_image_only')
+        self.assertIn('--force-resolved-versions', steps[resolve]['run'])
+
     def test_boundary_slots_run_after_native_failure_only_with_verified_inputs(self):
         workflow = yaml.load((ROOT / '.github/workflows/bpy-runtime-acceptance.yml').read_text(), Loader=yaml.BaseLoader)
         steps = workflow['jobs']['runtime']['steps']

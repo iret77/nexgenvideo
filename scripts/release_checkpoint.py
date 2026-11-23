@@ -159,9 +159,22 @@ def native_test_products(root, scratch, cache, phase):
             'Native Python capability proof failed')
     argv = ['swift', 'build', '--cache-path', cache, '-c', 'release', '--scratch-path', str(scratch),
             '-Xswiftc', '-enable-testing', '--show-bin-path']
-    query = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
-    require(query.returncode == 0 and len(query.stdout.strip().splitlines()) == 1, 'Native product metadata query failed')
-    binary = Path(query.stdout.strip()).resolve()
+    plan_path = root / 'plan-manifest.json'
+    if phase == 'available' and plan_path.is_file():
+        plan = json.loads(plan_path.read_bytes())
+        require(not plan_path.is_symlink() and plan.get('schema') == 'release-native-products/v1'
+                and plan.get('phase') == 'plan' and plan.get('sourceSHA') == os.environ['GITHUB_SHA']
+                and plan.get('runID') == os.environ['GITHUB_RUN_ID'] and plan.get('attempt') == '1'
+                and plan.get('scratchPath') == str(scratch) and plan.get('binPathCommand') == argv
+                and plan.get('binaryRoot') == os.environ.get('NGV_RELEASE_TEST_PRODUCTS_ROOT'),
+                'Native product plan differs from this execution')
+        binary = Path(plan['binaryRoot']).resolve()
+        query_stderr = plan['binPathStderr']
+    else:
+        query = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+        require(query.returncode == 0 and len(query.stdout.strip().splitlines()) == 1, 'Native product metadata query failed')
+        binary = Path(query.stdout.strip()).resolve()
+        query_stderr = query.stderr
     require(binary.is_relative_to(scratch.resolve()), 'Native product root escapes its scratch path')
     with Path(os.environ['GITHUB_ENV']).open('a') as environment:
         environment.write('NGV_RELEASE_TEST_PRODUCTS_ROOT=' + str(binary) + '\n')
@@ -175,7 +188,7 @@ def native_test_products(root, scratch, cache, phase):
     manifest = {'schema': 'release-native-products/v1', 'phase': phase, 'sourceSHA': source,
                 'runID': os.environ['GITHUB_RUN_ID'], 'attempt': '1', 'binaryRoot': str(binary),
                 'scratchPath': str(scratch), 'configuration': 'release', 'swiftcFlags': ['-enable-testing'],
-                'binPathCommand': argv, 'binPathStderr': query.stderr, 'pythonProof': python_proof,
+                'binPathCommand': argv, 'binPathStderr': query_stderr, 'pythonProof': python_proof,
                 'trackedDirtyPaths': dirty, 'runtimeReady': phase == 'runtime', 'images': {}, 'files': {}}
     manifest['sourceObjects'] = {name: subprocess.check_output(['git', 'rev-parse', 'HEAD:' + name], text=True).strip()
         for name in ('Sources', 'Engine', 'Tests', 'Package.swift', 'Package.resolved', 'Runtime', 'Metal', 'Vendor', 'plugins')}
