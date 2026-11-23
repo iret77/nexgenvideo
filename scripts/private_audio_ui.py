@@ -184,11 +184,42 @@ def verify_material_handoff(report, native, client, file_count, project):
                     for row in actions), 'Private material buttons did not receive their native clicks')
 
 
+def verify_production_handoff(report, native, client, project):
+    from retained_app_test_products import require
+    progress = report / 'owner-v2-musicvideo.json'
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        require(native.poll() is None, 'Private app exited before entering Production')
+        client.check()
+        if progress.is_file():
+            state = json.loads(progress.read_bytes())
+            require(not state['failure'], 'Private Production handoff failed')
+            rows = state['interactions']
+            for index, row in enumerate(rows):
+                if row.get('label') != 'private production workspace':
+                    continue
+                target = row['evidence']
+                click = rows[index - 1] if index else {}
+                proof = click.get('nativeInput', {})
+                require(project and target['projectKey'] == project and target['workspace'] == 'production'
+                        and click.get('kind') == 'pointer' and click.get('id') == 'editor.workspace.production'
+                        and target['window'] == click.get('window') == proof.get('window') and target['window'] > 0
+                        and proof.get('status') == 'delivered' and all(proof.get(key) is True for key in
+                                ('ownedDownPosted', 'ownedUpPosted', 'buttonDownObserved', 'buttonReleased',
+                                 'localMonitorDownObserved')),
+                        'Private Production handoff lacks the completed click in its own document')
+                return
+        time.sleep(0.2)
+    raise TimeoutError('Missing the private Production handoff')
+
+
 def verify_native_intake(app, pack, runner, binding):
     from isolated_test_home import environment
     from retained_app_test_products import checksum, require
     from musicvideo_intake_evidence import observation
-    material_required = int(plistlib.loads((app / 'Contents/Info.plist').read_bytes())['CFBundleVersion']) >= 134
+    build = int(plistlib.loads((app / 'Contents/Info.plist').read_bytes())['CFBundleVersion'])
+    material_required = build >= 134
+    production_required = build >= 140
     report = runner / 'analysis-report'
     report.mkdir()
     keys = ('PATH', 'TMPDIR', 'LANG', 'LC_ALL', 'DISPLAY', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT',
@@ -242,11 +273,14 @@ def verify_native_intake(app, pack, runner, binding):
             if material_required:
                 verify_material_handoff(report, native, client, len(paths), entered['projectKey'])
             finish_footer_observer(observer)
+            if production_required:
+                verify_production_handoff(report, native, client, entered['projectKey'])
             raise HandoffObserved
     except HandoffObserved:
         require(native.poll() is not None and client.process.poll() is not None, 'Private intake child did not exit')
         (report / 'native-intake.json').write_text(json.dumps(dict(binding=binding, appPID=native.pid,
-            nativeExit=native.returncode, clientExit=client.process.returncode, analysisHandoff=True, materialIntakeHandoff=material_required, fullAcceptance=False)))
+            nativeExit=native.returncode, clientExit=client.process.returncode, analysisHandoff=True, materialIntakeHandoff=material_required,
+            productionWorkspaceHandoff=production_required, fullAcceptance=False)))
     except Exception:
         import traceback
         (report / 'intake-error.log').write_text(traceback.format_exc())

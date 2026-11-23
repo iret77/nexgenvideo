@@ -61,7 +61,7 @@ enum ProductionV2AudioAcceptance {
         try await driver.wait("actual audio clip selected") { editor.selectedClipIds == [clip.id] }
         try await driver.click("editor.workspace.postproduction", in: window, enabled: false)
         try await driver.wait("native audio level editor") { editor.workspaceFocus == .postproduction }
-        try await driver.fill("inspector.value.Volume", value: "-6.0", in: window, requireFocusExit: true)
+        try await driver.fill("editing.audio.volume", value: "-6.0", in: window, requireFocusExit: true)
         let expectedVolume = pow(10.0, -6.0 / 20.0)
         try await driver.wait("typed audio level committed") {
             guard let value = editor.timeline.tracks.flatMap(\.clips).first(where: { $0.id == clip.id }) else { return false }

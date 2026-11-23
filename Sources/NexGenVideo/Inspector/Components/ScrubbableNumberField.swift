@@ -52,6 +52,13 @@ struct ScrubbableNumberField: View {
         return max(fieldWidth * interfaceScale, ceil(measured))
     }
 
+    private var inputProbe: AppRelaunchClickProbe? {
+        guard WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested,
+              let accessibilityName else { return nil }
+        return AppRelaunchClickProbe(identifier: acceptanceIdentifier ?? "inspector.value." + accessibilityName,
+            acceptanceState: isEnabled, acceptanceText: isEditing ? editText : editingText)
+    }
+
     var body: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
             ZStack {
@@ -82,10 +89,7 @@ struct ScrubbableNumberField: View {
             .inspectorControlChrome(focused: isEditing, mixed: isMixed, error: hasError)
             .overlay(scrubOverlay)
             .background {
-                if WorkspaceUIAcceptance.isRequested, let accessibilityName {
-                    AppRelaunchClickProbe(identifier: acceptanceIdentifier ?? "inspector.value." + accessibilityName,
-                        acceptanceState: isEnabled, acceptanceText: isEditing ? editText : editingText)
-                }
+                if isEditing, let inputProbe { inputProbe }
             }
 
             if let trailingLabel {
@@ -118,6 +122,7 @@ struct ScrubbableNumberField: View {
         } else {
             ScrubMouseArea(
                 canScrub: isEnabled && !isMixed,
+                inputProbe: inputProbe,
                 onDragStart: {
                     dragStartValue = value ?? liveValue
                     isDragging = true
@@ -173,6 +178,7 @@ struct ScrubbableNumberField: View {
 /// AppKit mouse-tracking area for the scrubbable field.
 private struct ScrubMouseArea: NSViewRepresentable {
     var canScrub: Bool
+    let inputProbe: AppRelaunchClickProbe?
     var onDragStart: () -> Void
     var onDragChanged: (CGFloat, NSEvent.ModifierFlags) -> Void
     var onDragEnd: () -> Void
@@ -190,6 +196,19 @@ private struct ScrubMouseArea: NSViewRepresentable {
 
     private func apply(to v: ScrubArea) {
         if v.canScrub != canScrub { v.window?.invalidateCursorRects(for: v) }
+        if let inputProbe {
+            let marker = v.inputMarker ?? AppRelaunchClickProbeView(frame: v.bounds)
+            if marker.superview == nil {
+                marker.autoresizingMask = [.width, .height]
+                v.addSubview(marker)
+                v.inputMarker = marker
+            }
+            marker.identifier = NSUserInterfaceItemIdentifier(inputProbe.identifier)
+            marker.acceptanceState = inputProbe.acceptanceState
+            marker.acceptanceText = inputProbe.acceptanceText
+        } else {
+            v.inputMarker?.removeFromSuperview()
+        }
         v.canScrub = canScrub
         v.onDragStart = onDragStart
         v.onDragChanged = onDragChanged
@@ -198,6 +217,7 @@ private struct ScrubMouseArea: NSViewRepresentable {
     }
 
     final class ScrubArea: NSView {
+        weak var inputMarker: AppRelaunchClickProbeView?
         var canScrub: Bool = true
         var onDragStart: (() -> Void)?
         var onDragChanged: ((CGFloat, NSEvent.ModifierFlags) -> Void)?

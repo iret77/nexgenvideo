@@ -70,6 +70,10 @@ enum ProductionV2OwnerAcceptance {
             }
             try await driver.click("editor.workspace.production", in: window, enabled: false)
             try await driver.wait("production owner workspace") { editor.workspaceFocus == .production }
+            if flow != nil {
+                try driver.record("private production workspace", fields: ["projectKey": editor.projectId ?? "",
+                    "window": window.windowNumber, "workspace": editor.workspaceFocus.rawValue])
+            }
             let privateBinding = try await preservedSong(context: context, expectedSHA256: privateSongSHA256)
             let source: URL
             if mixed {
