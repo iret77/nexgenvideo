@@ -37,26 +37,51 @@ def observe_location_footer(report, pid):
     progress = report / 'hostflow-repeatable-intake.json'
     result = report / 'hostflow-repeatable-intake-result.json'
     deadline = time.monotonic() + 49 * 60
-    while not marker.is_file():
+    def check_deadline():
         if time.monotonic() >= deadline:
-            raise TimeoutError('Second location was not presented')
-        time.sleep(0.01 if progress.is_file() else 0.1)
+            raise TimeoutError('Location window observation timed out')
+
+    def capture(window, path):
+        before = time.monotonic()
+        subprocess.run(['/usr/sbin/screencapture', '-x', '-o', '-l', str(window), str(path)],
+                       stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       check=True, timeout=4)
+        return before, time.monotonic(), path
+
+    while not (report / 'hostflow-repeatable-intake-0-file-panel.png').is_file():
+        check_deadline()
+        time.sleep(0.05)
     if int((report / 'dialog-native.pid').read_text()) != pid:
         raise ValueError('Location window belongs to another intake')
     rows = json.loads(progress.read_bytes())['interactions']
-    field, = [r['field'] for r in rows if r['kind'] == 'text' and r['field']['actual'] == 'Unfinished location']
-    window = field['window']
-    if not field['ownsEditor'] or not isinstance(window, int) or window <= 0:
-        raise ValueError('Missing original second location window')
+    first_picker = next(r for r in rows if r.get('id') == 'agent.dialog.choose-file' and r['kind'] == 'pointer')
+    window = first_picker['window']
+    if not isinstance(window, int) or window <= 0:
+        raise ValueError('Missing original location window')
     with tempfile.TemporaryDirectory(dir=report.parent) as temp:
+        capture(window, Path(temp) / 'first-location.png')
+        arrival = None
+        while arrival is None:
+            check_deadline()
+            if marker.is_file():
+                rows = json.loads(progress.read_bytes())['interactions']
+                index = next((i for i, r in enumerate(rows) if r['kind'] == 'text'
+                              and r['field']['actual'] == 'Unfinished location' and r['field']['ownsEditor']
+                              and r['field']['window'] == window), None)
+                if index is not None:
+                    arrival = next((event for r in rows[index + 1:] if r.get('label') == 'button hover'
+                                    for event in r['evidence']['received'] if event['tagMatches'] and event['windowMatches']
+                                    and event['xMatches'] and event['yMatches'] and event['window'] == window), None)
+                if result.is_file() and arrival is None:
+                    raise ValueError('Missing delivered hover after the second location field')
+            if arrival is None:
+                time.sleep(0.005 if marker.is_file() else 0.02)
+        time.sleep(max(0, arrival['observedUptime'] + 0.15 - time.monotonic()))
         captures = []
         end = time.monotonic() + 2
         while time.monotonic() < end and not result.exists():
             path = Path(temp) / f'{len(captures)}.png'
-            before = time.monotonic()
-            subprocess.run(['/usr/sbin/screencapture', '-x', '-o', '-l', str(window), str(path)],
-                           stdin=subprocess.DEVNULL, check=True, timeout=4)
-            captures.append((before, time.monotonic(), path))
+            captures.append(capture(window, path))
         while not result.exists():
             if time.monotonic() >= deadline:
                 raise TimeoutError('Location confirmation did not finish')
@@ -67,7 +92,8 @@ def observe_location_footer(report, pid):
         hover, = [e for e in click['movement']['received'] if e['tagMatches'] and e['windowMatches']
                   and e['xMatches'] and e['yMatches'] and e['window'] == window]
         down, = [e for e in click['posted'] if e['type'] == 1 and e['tag'] == hover['tag'] == click['tag']]
-        if click['status'] != 'delivered' or click['window'] != window or not click['originalHoverValidAtDown']:
+        if (click['status'] != 'delivered' or click['window'] != window or not click['originalHoverValidAtDown']
+                or hover != arrival):
             raise ValueError('Missing observed Clear item activation')
         settled = [(a, b, path) for a, b, path in captures
                    if hover['observedUptime'] + 0.15 <= a <= b < down['postedUptime']]
@@ -83,6 +109,11 @@ def observe_location_footer(report, pid):
                        down=down['postedUptime'], resultSHA256=hashlib.sha256(raw).hexdigest(), frames=frames,
                        attempts=[[a, b] for a, b, _ in captures], runID=int(os.environ['GITHUB_RUN_ID']),
                        attempt=int(os.environ['GITHUB_RUN_ATTEMPT']))
+        if not frames and captures:
+            a, b, path = min(captures, key=lambda c: abs(c[1] - down['postedUptime']))
+            diagnostic = 'location-footer-unqualified.png'
+            path.replace(report / diagnostic)
+            receipt['unqualifiedFrame'] = dict(name=diagnostic, begin=a, end=b)
         with (report / 'location-footer-observation.json').open('x') as stream:
             json.dump(receipt, stream, sort_keys=True)
         if not frames:
