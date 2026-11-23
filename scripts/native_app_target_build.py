@@ -267,8 +267,12 @@ def stop_logged_process(process):
     process.wait(timeout=10)
     deadline = time.monotonic() + 10
     while True:
-        try: os.killpg(process.pid, 0)
-        except ProcessLookupError: return
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            pass  # A denied probe does not establish that the group is gone.
         if time.monotonic() >= deadline:
             raise RuntimeError('Owned native command process group did not terminate')
         time.sleep(0.05)

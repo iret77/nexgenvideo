@@ -6,7 +6,7 @@ from pathlib import Path
 import unittest
 import zipfile
 import tempfile
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 import native_app_target_build as build
 
@@ -745,6 +745,21 @@ class NativeAppTargetBuildTests(unittest.TestCase):
                     if group is not None:
                         try: os.killpg(group, build.signal.SIGKILL)
                         except ProcessLookupError: pass
+
+    def test_cleanup_waits_for_absence_after_a_denied_group_probe(self):
+        process = Mock(pid=12345)
+        for final_probe in (ProcessLookupError(), PermissionError()):
+            with self.subTest(final_probe=type(final_probe).__name__), \
+                    patch.object(os, 'killpg', side_effect=[None, None, PermissionError(), final_probe]) as signal_group, \
+                    patch.object(build.time, 'monotonic', side_effect=[0, 1, 11]), patch.object(build.time, 'sleep') as pause:
+                if isinstance(final_probe, PermissionError):
+                    with self.assertRaisesRegex(RuntimeError, 'process group did not terminate'):
+                        build.stop_logged_process(process)
+                else:
+                    build.stop_logged_process(process)
+                self.assertEqual(signal_group.call_args_list, [call(process.pid, build.signal.SIGTERM),
+                    call(process.pid, build.signal.SIGKILL), call(process.pid, 0), call(process.pid, 0)])
+                pause.assert_called_once_with(0.05)
 
     def test_logged_interruption_records_cleanup_failure_without_claiming_a_safe_group(self):
         with tempfile.TemporaryDirectory() as temp:
