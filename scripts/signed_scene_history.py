@@ -27,7 +27,7 @@ from acceptance import metadata, tree_sha256
 BASE = 'iret77/rc-delivery-base-795'
 DESKTOP_BRANCH = 'iret77/rc-142-scene-desktop'
 PRODUCT = 'd81c249811b31954c0e0366ef7740856c8cf8655'
-HARNESS_FILES = {'scripts/release_checkpoint.py', 'scripts/signed_scene_history.py',
+HARNESS_FILES = {'.github/workflows/pr-checks.yml', 'scripts/release_checkpoint.py', 'scripts/signed_scene_history.py',
                  'scripts/scene_desktop_observer.swift', 'scripts/test_signed_scene_history.py'}
 
 
@@ -74,6 +74,8 @@ def bind_desktop_harness(run_id):
     merge = api('git/commits/' + receipt['checkoutSHA'])
     require(merge['tree']['sha'] == receipt['treeSHA'] and [p['sha'] for p in merge['parents']] == [PRODUCT, head],
             'Tested source tree or parents differ')
+    require([step['conclusion'] for step in job['steps'] if step['name'] == 'Typecheck the scene desktop observer']
+            == ['success'], 'The Mac did not verify the desktop observer source')
     source_checks.verify_steps(job, receipt)
     summary = source_checks.test_completion(source_checks.read_api(f"actions/jobs/{job['id']}/logs"))
     require(summary['summary'] == 'OK', 'Incomplete standalone harness source checks')
@@ -204,6 +206,7 @@ def observe_desktop(root, evidence):
             while not (root / 'scene-desktop-ready').is_file():
                 require(observer.poll() is None and time.monotonic() < deadline, 'Desktop observer did not record its baseline')
                 time.sleep(0.1)
+            require(observer.poll() is None, 'Desktop observer stopped at its baseline')
             yield observer
         finally:
             (root / 'scene-desktop-done').touch()
@@ -229,7 +232,9 @@ def execute_history(installed, root, evidence, product, scope='scene-history', o
             '-de.h5ventures.nexgenvideo.mcp.enabled', 'NO']
     with (native / 'runtime.log').open('xb') as stdout, (native / 'runtime-stderr.log').open('xb') as stderr:
         process = subprocess.Popen(args, env=child, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
+        launch = dict(pid=process.pid, sourceSHA=product, scope=scope, arguments=args)
         try:
+            write(evidence / 'scene-launch.json', launch)
             if observer is not None:
                 write(root / 'scene-observed-app.json', dict(pid=process.pid, executable=str(executable)))
             code = process.wait(timeout=2400 if scope == 'scene-editing' else 300)
@@ -241,7 +246,12 @@ def execute_history(installed, root, evidence, product, scope='scene-history', o
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=5)
+            with (native / 'runtime-stderr.log').open('rb') as log:
+                launch['notificationOptOutObserved'] = any(
+                    line.rstrip(b'\r\n') == b'[app] NOTICE: notifications disabled in settings' for line in log)
+            write(evidence / 'scene-launch.json', launch)
     require(code == 0, f'Scene history exited with {code}')
+    require(launch['notificationOptOutObserved'], 'The App did not confirm its notification preference')
     write(native / 'process-result.json', dict(pid=process.pid, sourceSHA=product, mode='runtime', returncode=code))
     if scope == 'scene-editing':
         return editing_result(native, product, process.pid)

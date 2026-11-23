@@ -3,19 +3,13 @@ import ApplicationServices
 import Darwin
 import Foundation
 
-func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
-    var value: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
-    return value
-}
-
 func element(_ value: CFTypeRef?) -> AXUIElement? {
     guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
     return (value as! AXUIElement)
 }
 
-func buttonFrame(_ button: AXUIElement) -> CGRect? {
-    guard let origin = attribute(button, kAXPositionAttribute), let extent = attribute(button, kAXSizeAttribute),
+func frameOf(_ button: AXUIElement, read: (AXUIElement, String) -> CFTypeRef?) -> CGRect? {
+    guard let origin = read(button, kAXPositionAttribute), let extent = read(button, kAXSizeAttribute),
           CFGetTypeID(origin) == AXValueGetTypeID(), CFGetTypeID(extent) == AXValueGetTypeID() else { return nil }
     var point = CGPoint.zero
     var size = CGSize.zero
@@ -26,10 +20,32 @@ func buttonFrame(_ button: AXUIElement) -> CGRect? {
     return CGRect(origin: point, size: size)
 }
 
-func undoHit(_ pid: pid_t) -> [String: Any] {
+@MainActor
+func undoHit(_ pid: pid_t, keyWindow: Int, windows: [[String: Any]]) -> [String: Any] {
+    var errors: [String: Int32] = [:]
+    func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+        var value: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+        if status == .success { return value }
+        if status != .attributeUnsupported && status != .noValue { errors[name] = status.rawValue }
+        return nil
+    }
+    func coordinates(_ frame: CGRect) -> [CGFloat] { [frame.minX, frame.minY, frame.width, frame.height] }
     let app = AXUIElementCreateApplication(pid)
     AXUIElementSetMessagingTimeout(app, 0.15)
     guard let window = element(attribute(app, kAXFocusedWindowAttribute)) else { return ["status": "no-focused-window"] }
+    guard let focusedFrame = frameOf(window, read: attribute) else { return ["status": "missing-focused-frame", "errors": errors] }
+    let matching = windows.filter { row in
+        guard (row["pid"] as? NSNumber)?.int32Value == pid,
+              let bounds = row[kCGWindowBounds as String] as? [String: Any],
+              let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return false }
+        return zip(coordinates(frame), coordinates(focusedFrame)).allSatisfy { abs($0.0 - $0.1) <= 0.5 }
+    }
+    let numbers = matching.compactMap { ($0[kCGWindowNumber as String] as? NSNumber)?.intValue }
+    guard numbers == [keyWindow] else {
+        return ["status": "focused-window-not-uniquely-bound", "matchingWindows": numbers,
+                "nativeKeyWindow": keyWindow, "focusedFrame": coordinates(focusedFrame)]
+    }
     let deadline = ProcessInfo.processInfo.systemUptime + 0.6
     var pending = [window]
     var seen: [AXUIElement] = []
@@ -40,7 +56,10 @@ func undoHit(_ pid: pid_t) -> [String: Any] {
         guard seen.count <= 512, ProcessInfo.processInfo.systemUptime < deadline else {
             return ["status": "incomplete", "visited": seen.count]
         }
-        if attribute(node, kAXRoleAttribute) as? String == kAXButtonRole,
+        guard let role = attribute(node, kAXRoleAttribute) as? String else {
+            return ["status": "unclassified-node", "errors": errors]
+        }
+        if role == kAXButtonRole,
            (attribute(node, kAXTitleAttribute) as? String == "Undo" || attribute(node, kAXDescriptionAttribute) as? String == "Undo"),
            (attribute(node, kAXEnabledAttribute) as? NSNumber)?.boolValue == true {
             buttons.append(node)
@@ -50,7 +69,8 @@ func undoHit(_ pid: pid_t) -> [String: Any] {
             pending.append(contentsOf: children)
         }
     }
-    guard buttons.count == 1, let button = buttons.first, let frame = buttonFrame(button) else {
+    guard errors.isEmpty else { return ["status": "incomplete-ax-read", "errors": errors] }
+    guard buttons.count == 1, let button = buttons.first, let frame = frameOf(button, read: attribute) else {
         return ["status": "no-unique-enabled-undo", "matches": buttons.count]
     }
     let point = CGPoint(x: frame.midX, y: frame.midY)
@@ -60,6 +80,7 @@ func undoHit(_ pid: pid_t) -> [String: Any] {
     let status = AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &hit)
     let appKit = NSPoint(x: point.x, y: CGDisplayBounds(CGMainDisplayID()).maxY - point.y)
     var record: [String: Any] = ["status": "sampled", "publicUndoCenterQuartz": [point.x, point.y],
+        "nativeKeyWindow": keyWindow, "focusedFrame": coordinates(focusedFrame), "publicUndoFrame": coordinates(frame),
         "appKitWindowAtPoint": NSWindow.windowNumber(at: appKit, belowWindowWithWindowNumber: 0),
         "hitStatus": status.rawValue, "focusedWindowIdentity": CFHash(window), "undoIdentity": CFHash(button)]
     var ancestors: [[String: Any]] = []
@@ -75,10 +96,12 @@ func undoHit(_ pid: pid_t) -> [String: Any] {
         hit = element(attribute(node, kAXParentAttribute))
     }
     record["hitAncestors"] = ancestors
+    record["attributeErrors"] = errors
     return record
 }
 
-func desktop(_ phase: String, pid: pid_t? = nil, inspectUndo: Bool = false) throws {
+@MainActor
+func desktop(_ phase: String, pid: pid_t? = nil, keyWindow: Int? = nil) throws {
     let now = ProcessInfo.processInfo.systemUptime
     let inventory = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
     let windows: [[String: Any]] = (inventory ?? []).compactMap {
@@ -92,10 +115,11 @@ func desktop(_ phase: String, pid: pid_t? = nil, inspectUndo: Bool = false) thro
     var row: [String: Any] = ["phase": phase, "uptime": now, "windowListAvailable": inventory != nil,
                               "windows": windows, "axTrusted": AXIsProcessTrusted()]
     row["frontmostPID"] = NSWorkspace.shared.frontmostApplication?.processIdentifier
-    if inspectUndo, let pid { row["undoHit"] = undoHit(pid) }
+    if let keyWindow, let pid { row["undoHit"] = undoHit(pid, keyWindow: keyWindow, windows: windows) }
     row["finishedUptime"] = ProcessInfo.processInfo.systemUptime
     FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject: row, options: [.sortedKeys]))
     FileHandle.standardOutput.write(Data([10]))
+    if phase == "before-app", inventory == nil || !AXIsProcessTrusted() { exit(3) }
 }
 
 let arguments = Array(CommandLine.arguments.dropFirst())
@@ -113,10 +137,17 @@ while ProcessInfo.processInfo.systemUptime < deadline && !FileManager.default.fi
        let path = object["executable"] as? String, let app = NSRunningApplication(processIdentifier: pid),
        app.executableURL?.resolvingSymlinksInPath().path == URL(fileURLWithPath: path).resolvingSymlinksInPath().path {
         var phase = "app-started"
+        var keyWindow: Int?
         if let receipt = try? Data(contentsOf: progress),
            let fields = try? JSONSerialization.jsonObject(with: receipt) as? [String: Any],
-           let stage = fields["stage"] as? String { phase = String(stage.prefix(120)) }
-        try desktop(phase, pid: pid, inspectUndo: phase == "settled local button Undo")
+           let stage = fields["stage"] as? String {
+            phase = String(stage.prefix(120))
+            if phase == "settled local button Undo", let diagnostic = fields["diagnostic"] as? String,
+               diagnostic.hasPrefix("key="), let first = diagnostic.split(separator: ",").first {
+                keyWindow = Int(first.dropFirst(4))
+            }
+        }
+        try desktop(phase, pid: pid, keyWindow: keyWindow)
     }
     Thread.sleep(forTimeInterval: 0.5)
 }

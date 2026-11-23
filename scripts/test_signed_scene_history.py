@@ -31,8 +31,14 @@ class SignedSceneHistoryTests(unittest.TestCase):
                 proc.poll.return_value = status
                 app = root / 'NexGenVideo.app'
                 checked = {'appScopePassed': True}
+
+                def start(*args, **kwargs):
+                    kwargs['stderr'].write(b'[app] NOTICE: notifications disabled in settings\n')
+                    kwargs['stderr'].flush()
+                    return proc
+
                 with patch.dict(os.environ, {'NGV_SELFTEST_OLD': '1', 'GH_TOKEN': 'test-placeholder'}), \
-                        patch.object(history.subprocess, 'Popen', return_value=proc) as launch, \
+                        patch.object(history.subprocess, 'Popen', side_effect=start) as launch, \
                         patch.object(history, 'scoped_success', return_value=checked) as verify:
                     if status:
                         with self.assertRaisesRegex(ValueError, 'exited'):
