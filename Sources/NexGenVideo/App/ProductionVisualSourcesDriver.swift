@@ -1322,7 +1322,6 @@ final class NativePointerPoster: @unchecked Sendable {
     private var state: [String: Any] = ["posted": [[String: Any]](), "ownedDownPosted": false,
         "ownedUpPosted": false, "buttonDownObserved": false, "buttonReleased": true, "cleanupUpPosted": false]
     private let screenPoint: NSPoint
-    private let hoverCounts: [UInt32]?
     private let hoverObservation: NativeAcceptancePointer.HoverObservation?
 
     static func buttonDragScrollCounts() -> [UInt32] {
@@ -1332,13 +1331,12 @@ final class NativePointerPoster: @unchecked Sendable {
     }
 
     init(source: CGEventSource, down: CGEvent, up: CGEvent, point: CGPoint, window: Int,
-         windowBounds: CGRect, screenPoint: NSPoint, tag: Int64, hoverCounts: [UInt32]? = nil,
+         windowBounds: CGRect, screenPoint: NSPoint, tag: Int64,
          hoverObservation: NativeAcceptancePointer.HoverObservation? = nil,
          deliver: @escaping @Sendable (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) }) {
         self.source = source; self.down = down; self.up = up; self.point = point; self.window = window; self.tag = tag
         self.windowBounds = windowBounds; self.deliver = deliver
         self.screenPoint = screenPoint
-        self.hoverCounts = hoverCounts
         self.hoverObservation = hoverObservation
     }
 
@@ -1376,11 +1374,8 @@ final class NativePointerPoster: @unchecked Sendable {
     @MainActor private func postDownIfReady() -> Bool {
         let hitWindow = NSWindow.windowNumber(at: screenPoint, belowWindowWithWindowNumber: 0)
         put("hitWindowBeforeDown", hitWindow)
-        guard hitWindow == window, !stopped(), !CGEventSource.buttonState(.combinedSessionState, button: .left),
-              let actual = CGEvent(source: nil)?.location,
-              abs(actual.x - point.x) < 0.5, abs(actual.y - point.y) < 0.5 else {
-            put("error", "The system pointer or button changed before Down.")
-            put("buttonReleased", !CGEventSource.buttonState(.combinedSessionState, button: .left))
+        guard hitWindow == window else {
+            put("error", "The original window no longer receives the button press.")
             return false
         }
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
@@ -1395,22 +1390,23 @@ final class NativePointerPoster: @unchecked Sendable {
             put("error", "The original native window changed before Down.")
             return false
         }
-        if let hoverCounts {
-            let current = Self.buttonDragScrollCounts()
-            put("hoverCountsAtDown", current)
-            guard current == hoverCounts else {
-                put("error", "Pointer input changed after the delivered hover.")
-                return false
-            }
-        }
         if let hoverObservation {
+            put("hoverCountsAtDown", Self.buttonDragScrollCounts())
             put("originalHoverValidAtDown", hoverObservation.valid)
             if let interruption = hoverObservation.interruption { put("hoverInterruptionAtDown", interruption) }
-            guard hoverObservation.valid else {
-                put("error", "The observed pointer left the button before Down.")
+            guard hoverObservation.valid, hoverObservation.targetIsCurrent() else {
+                put("error", "The observed input or button changed before Down.")
                 return false
             }
         }
+        guard !stopped(), !CGEventSource.buttonState(.combinedSessionState, button: .left),
+              let actual = CGEvent(source: nil)?.location,
+              abs(actual.x - point.x) < 0.5, abs(actual.y - point.y) < 0.5 else {
+            put("error", "The system pointer or button changed before Down.")
+            put("buttonReleased", !CGEventSource.buttonState(.combinedSessionState, button: .left))
+            return false
+        }
+        hoverObservation?.finishBeforeDown()
         post(down, type: .leftMouseDown)
         return true
     }
@@ -1461,43 +1457,72 @@ enum NativeAcceptancePointer {
 
     @MainActor final class HoverObservation {
         let tag = Int64.random(in: 1...Int64.max)
-        private var monitor: Any?
+        private var localMonitor: Any?
+        private var globalMonitor: Any?
         private var window: NSWindow?
         private var previouslyAcceptedMoves = false
-        private var arrived = false
+        private var arrivalTime: TimeInterval?
+        private var pending: (time: TimeInterval, evidence: [String: Any])?
+        private var finished = false
         private(set) var interruption: [String: Any]?
+        var targetIsCurrent: () -> Bool = { false }
 
-        var valid: Bool { arrived && interruption == nil }
+        var valid: Bool { arrivalTime != nil && interruption == nil }
 
         func start(window: NSWindow, at screenPoint: NSPoint) throws {
             self.window = window
             previouslyAcceptedMoves = window.acceptsMouseMovedEvents
             if !previouslyAcceptedMoves { window.acceptsMouseMovedEvents = true }
             let number = window.windowNumber, local = window.convertPoint(fromScreen: screenPoint)
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+            let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDown, .leftMouseUp, .leftMouseDragged,
+                .rightMouseDown, .rightMouseUp, .rightMouseDragged, .otherMouseDown, .otherMouseUp, .otherMouseDragged, .scrollWheel]
+            let observe: @Sendable (NSEvent, Bool) -> Void = { [weak self] event, inApp in
                 let received = event.locationInWindow, receiver = event.windowNumber
                 let eventTag = event.cgEvent?.getIntegerValueField(.eventSourceUserData)
-                let pointer = NSEvent.mouseLocation
+                let time = event.timestamp, type = event.type.rawValue
                 MainActor.assumeIsolated {
-                    guard let self else { return }
-                    let samePoint = receiver == number && abs(received.x - local.x) < 0.5 && abs(received.y - local.y) < 0.5
+                    guard let self, !self.finished, self.interruption == nil else { return }
+                    let pointer = NSEvent.mouseLocation
+                    let atTarget = inApp && type == NSEvent.EventType.mouseMoved.rawValue && receiver == number
+                        && abs(received.x - local.x) < 0.5 && abs(received.y - local.y) < 0.5
                         && abs(pointer.x - screenPoint.x) < 0.5 && abs(pointer.y - screenPoint.y) < 0.5
-                    if !self.arrived {
-                        self.arrived = eventTag == self.tag && samePoint
-                    } else if !samePoint && self.interruption == nil {
-                        self.interruption = ["window": receiver, "point": [received.x, received.y],
-                            "screenPoint": [pointer.x, pointer.y], "tag": eventTag ?? 0]
+                    if atTarget {
+                        if self.arrivalTime == nil && eventTag == self.tag {
+                            self.arrivalTime = time
+                            if let pending = self.pending, pending.time >= time {
+                                self.interruption = pending.evidence.merging(["arrivalTimestamp": time]) { _, new in new }
+                            }
+                            self.pending = nil
+                        }
+                        return
+                    }
+                    let evidence: [String: Any] = ["local": inApp, "type": type, "window": receiver,
+                        "point": [received.x, received.y], "screenPoint": [pointer.x, pointer.y],
+                        "tag": eventTag ?? 0, "timestamp": time]
+                    if let arrival = self.arrivalTime {
+                        if time >= arrival { self.interruption = evidence.merging(["arrivalTimestamp": arrival]) { _, new in new } }
+                    } else if time >= (self.pending?.time ?? -.infinity) {
+                        self.pending = (time, evidence)
                     }
                 }
+            }
+            localMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { event in
+                observe(event, true)
                 return event
             }
-            guard monitor != nil else { throw GateBlocked("The button hover cannot be observed.") }
+            globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { observe($0, false) }
+            guard localMonitor != nil, globalMonitor != nil else { throw GateBlocked("The button input cannot be observed.") }
         }
 
+        func finishBeforeDown() { finished = true }
+
         func close() {
-            if let monitor { NSEvent.removeMonitor(monitor) }
+            if let localMonitor { NSEvent.removeMonitor(localMonitor) }
+            if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
             if !previouslyAcceptedMoves { window?.acceptsMouseMovedEvents = false }
-            monitor = nil
+            localMonitor = nil
+            globalMonitor = nil
+            targetIsCurrent = { false }
         }
     }
 
@@ -2091,6 +2116,14 @@ enum NativeAcceptancePointer {
             throw GateBlocked("The settled local button changed before movement.")
         }
         let hover = buttonReadiness?.hover
+        if let hover, let buttonReadiness {
+            hover.observation.targetIsCurrent = {
+                guard let sample = try? target(probe, window: window, fraction: fraction, editing: editing,
+                                               windowFailure: { _ in }, accessibilityFailure: { _ in }) else { return false }
+                var comparisons: [String: Bool] = [:]
+                return buttonReadiness.matches(sample) && same(original, sample, comparisons: &comparisons)
+            }
+        }
         let tag = hover?.arrival.tag ?? Int64.random(in: 1...Int64.max)
         guard let source = CGEventSource(stateID: .combinedSessionState),
               let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown,
@@ -2110,7 +2143,7 @@ enum NativeAcceptancePointer {
         }
         let poster = NativePointerPoster(source: source, down: down, up: up, point: original.quartzPoint,
                                          window: window.windowNumber, windowBounds: original.cgFrame,
-                                         screenPoint: original.screenPoint, tag: tag, hoverCounts: hover?.arrival.counts,
+                                         screenPoint: original.screenPoint, tag: tag,
                                          hoverObservation: hover?.observation)
         let delivery = Delivery(), number = window.windowNumber, point = original.point
         let acceptedMoves = window.acceptsMouseMovedEvents
@@ -2215,7 +2248,7 @@ enum NativeAcceptancePointer {
                 delivery.events = (movement["received"] as? [[String: Any]] ?? []).filter { $0["tagMatches"] as? Bool == true }
                 guard hover.probe === probe, arrival.transaction == token, arrival.window === window,
                       arrival.root === original.root, arrival.windowFrame == original.windowFrame,
-                      arrival.point == original.quartzPoint, hover.observation.valid, arrival.counts == counts else {
+                      arrival.point == original.quartzPoint, hover.observation.valid else {
                     throw GateBlocked("The delivered hover changed before button input.")
                 }
                 try validateMovementTarget()
