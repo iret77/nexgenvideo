@@ -77,6 +77,7 @@ def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs
         "inputs.defer_private_audio": defer_private_audio,
         "inputs.internal_image_only": internal_image_only,
         "inputs.compiled_app_targets_json": compiled_targets,
+        "inputs.compiler_checkpoint_run_id": "",
         "needs.bpy-source.result": "success",
         "env.NGV_COMPILED_APP_RELEASE": "true" if compiled_targets or cohort_pack_reuse else "",
         "env.NGV_COMPONENT_NOTARY_CONTINUATION": "true" if component_continuation else "",
@@ -447,6 +448,19 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
         for change in ({}, {'ARTIFACT_ONLY': 'false'}, {'DRY_RUN': 'false'}, {'VERIFIED_PR_RUN': ''},
                        {'DEFER_PRIVATE_AUDIO': 'true'}, {'GITHUB_REF_NAME': 'main'}, {'COMPILED_APP_TARGETS': '{}'},
                        {'RETAINED_PRODUCT_SOURCE': 'old'}, {'RELEASE_TEST_RUN': '124'}, {'RELEASE_ENGINE_RUN': '125'}):
+            with self.subTest(change=change):
+                result = subprocess.run(['bash', '-c', validate], env={**os.environ, **inputs, **change},
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode == 0, not change, result.stdout + result.stderr)
+
+    def test_compiler_checkpoint_cannot_replace_signed_inputs_or_select_other_runs(self):
+        steps = self.workflow()['jobs']['release-gate']['steps']
+        validate = next(step['run'] for step in steps if step.get('name') == 'Validate release input')
+        inputs = dict(REL_VERSION='1.8.0', INTERNAL_IMAGE_ONLY='true', ARTIFACT_ONLY='true', DRY_RUN='true',
+                      VERIFIED_PR_RUN='123', GITHUB_REF_NAME='iret77/rc-delivery-base-795',
+                      COMPILER_CHECKPOINT_RUN='45207102608', DEFER_PRIVATE_AUDIO='false')
+        for change in ({}, {'COMPILER_CHECKPOINT_RUN': '1'}, {'INTERNAL_IMAGE_ONLY': 'false'},
+                       {'SIGNED_BUILD_RUN': '9'}, {'NOTARY_PROGRESS_RUN': '9'}, {'RELEASE_TEST_RUN': '9'}):
             with self.subTest(change=change):
                 result = subprocess.run(['bash', '-c', validate], env={**os.environ, **inputs, **change},
                                         capture_output=True, text=True, timeout=5)
@@ -904,7 +918,14 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
         for name in ordered:
             self.assertEqual(names.count(name), 1)
             self.assertNotIn('continue-on-error', by_name[name])
-            self.assertEqual(by_name[name]['if'], "inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''")
+            condition = "inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''"
+            if name in ordered[1:5]:
+                condition += " && inputs.compiler_checkpoint_run_id == ''"
+            self.assertEqual(by_name[name]['if'], condition)
+        restore = 'Restore the original release test compiler products'
+        self.assertEqual(by_name[restore]['if'], "inputs.compiler_checkpoint_run_id != ''")
+        self.assertLess(names.index(ordered[0]), names.index(restore))
+        self.assertLess(names.index(restore), names.index(ordered[5]))
         confirm = by_name['Confirm compiler product upload before staging']
         self.assertEqual(confirm['env']['GH_TOKEN'], '${{ github.token }}')
         self.assertEqual(confirm['env']['CHECKPOINT_ID'], '${{ steps.native_compiler_products.outputs.artifact-id }}')

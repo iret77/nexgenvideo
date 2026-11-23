@@ -54,6 +54,10 @@ on:
         description: SHA-256 of that exact original client archive
         type: string
         default: ''
+      compiler_checkpoint_run_id:
+        description: Original test compiler run for private Build 141 recovery
+        type: string
+        default: ''
       completed_release_tests_run_id:
         description: Pinned completed Release tests for unchanged native inputs
         type: string
@@ -128,6 +132,7 @@ jobs:
           ARTIFACT_ONLY: ${{ inputs.artifact_only }}
           DRY_RUN: ${{ inputs.dry_run }}
           COMPILED_APP_TARGETS: ${{ inputs.compiled_app_targets_json }}
+          COMPILER_CHECKPOINT_RUN: ${{ inputs.compiler_checkpoint_run_id }}
           INTERNAL_IMAGE_ONLY: ${{ inputs.internal_image_only }}
           DEFER_PRIVATE_AUDIO: ${{ inputs.defer_private_audio }}
           RELEASE_TEST_RUN: ${{ inputs.completed_release_tests_run_id }}
@@ -145,6 +150,10 @@ jobs:
           set -euo pipefail
           echo "$REL_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
             || { echo "::error::version must be X.Y.Z"; exit 1; }
+          if [ -n "${COMPILER_CHECKPOINT_RUN:-}" ] && { [ "$COMPILER_CHECKPOINT_RUN" != 45207102608 ] || [ "${INTERNAL_IMAGE_ONLY:-false}" != true ] || [ -n "${SIGNED_BUILD_RUN:-}${NOTARY_PROGRESS_RUN:-}" ]; }; then
+            echo "::error::Compiler recovery requires its original producer and an internal build"
+            exit 1
+          fi
           if [ "${INTERNAL_IMAGE_ONLY:-false}" = true ]; then
             if [ -n "${COMPILED_APP_TARGETS:-}${RETAINED_PRODUCT_SOURCE:-}${RELEASE_TEST_RUN:-}${RELEASE_ENGINE_RUN:-}" ]; then
               echo "::error::Internal images require fresh product sources and their release tests"
@@ -836,16 +845,22 @@ jobs:
             --cache-path "$NGV_SWIFTPM_CACHE_PATH"
 
       - name: Build the exact release test configuration
-        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
+        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == '' && inputs.compiler_checkpoint_run_id == ''
         # Testable release objects stay isolated from the production bundle build.
         run: swift build --jobs 1 --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release --scratch-path "$RUNNER_TEMP/release-tests" --build-tests -Xswiftc -enable-testing
+
+      - name: Restore the original release test compiler products
+        if: inputs.compiler_checkpoint_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release_compiler_restore.py
 
       - name: Verify release build did not mutate tracked source
         if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
         run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
 
       - name: Checkpoint successful native compiler products before staging
-        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
+        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == '' && inputs.compiler_checkpoint_run_id == ''
         run: |
           python3 scripts/release_checkpoint.py native-test-products --phase compiler \
             --root "$RUNNER_TEMP/release-test-product-checkpoints" --scratch-path "$RUNNER_TEMP/release-tests" \
@@ -853,7 +868,7 @@ jobs:
 
       - name: Upload native compiler products before staging
         id: native_compiler_products
-        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
+        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == '' && inputs.compiler_checkpoint_run_id == ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-test-compiler-products-${{ github.run_id }}-a${{ github.run_attempt }}
@@ -863,7 +878,7 @@ jobs:
           retention-days: 90
 
       - name: Confirm compiler product upload before staging
-        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''
+        if: inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == '' && inputs.compiler_checkpoint_run_id == ''
         env:
           GH_TOKEN: ${{ github.token }}
           CHECKPOINT_ID: ${{ steps.native_compiler_products.outputs.artifact-id }}

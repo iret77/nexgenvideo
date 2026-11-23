@@ -41,7 +41,7 @@ class ReleaseRecoveryTests(unittest.TestCase):
                                  'archiveSHA256', 'runtimeInputSHA256', 'bpySourceReceiptSHA256'), 'a' * 64)
         mounted.update(schema='nexgenvideo/release-workspace-producer/1', app=app, packOrigin='mounted-dmg',
                        sourceSHA=SOURCE, runID='12', runAttempt='1')
-        for variant in ('valid', 'foreign-builder', 'wrong-attempt', 'reused-tests', 'different-pack', 'wrong-digest'):
+        for variant in ('valid', 'foreign-builder', 'wrong-attempt', 'reused-tests', 'missing-compiler-origin', 'different-pack', 'wrong-digest'):
             builder_record, mounted_record = copy.deepcopy(manifest), dict(mounted)
             if variant == 'reused-tests': builder_record['nativeEvidence']['schema'] = 'retained'
             if variant == 'different-pack': mounted_record['mountedPackTreeSHA256'] = 'b' * 64
@@ -52,6 +52,8 @@ class ReleaseRecoveryTests(unittest.TestCase):
                 job = dict(id=number, name=role, labels=['macrunner'], conclusion='success', status='completed',
                            run_attempt=1, run_id=12, head_sha=SOURCE, started_at='2025-01-01T00:00:00Z',
                            completed_at='2025-01-01T00:05:00Z')
+                if number == 1 and variant == 'missing-compiler-origin':
+                    job['steps'] = [{'name': 'Restore the original release test compiler products', 'conclusion': 'success'}]
                 if number == 1 and variant == 'foreign-builder': job['head_sha'] = 'b' * 40
                 if number == 2 and variant == 'wrong-attempt': job['run_attempt'] = 2
                 jobs.append(job)
@@ -185,6 +187,28 @@ class ReleaseRecoveryTests(unittest.TestCase):
                     else:
                         checkpoint.confirm_native_test_products(root, '7', 'd' * 64)
                         self.assertEqual(json.loads((root / 'compiler-upload.json').read_text())['artifact'], artifact)
+
+    def test_new_compiler_upload_polls_only_a_temporary_not_found(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, _, _, env, _ = self.native_checkpoint_fixture(root)
+            (root / 'compiler-archive.json').write_text(json.dumps({'sourceSHA': SOURCE, 'runID': '123'}))
+            artifact = {'id': 7, 'digest': 'sha256:' + 'd' * 64, 'name': 'release-test-compiler-products-123-a1',
+                        'workflow_run': {'id': 123, 'head_sha': SOURCE}, 'expired': False}
+            for status, temporary, count in ((404, True, 2), (404, False, 7), (403, False, 1)):
+                errors = [checkpoint.urllib.error.HTTPError('https://api.github.com', status, 'error', {}, None)
+                          for _ in range(count)]
+                if temporary:
+                    errors[-1] = artifact
+                with self.subTest(status=status, temporary=temporary), patch.dict(os.environ, env), \
+                        patch.object(checkpoint.sys, 'platform', 'darwin'), patch.object(checkpoint.time, 'sleep'), \
+                        patch.object(checkpoint, 'api', side_effect=errors) as get:
+                    if temporary:
+                        checkpoint.confirm_native_test_products(root, '7', 'd' * 64)
+                    else:
+                        with self.assertRaises(checkpoint.urllib.error.HTTPError):
+                            checkpoint.confirm_native_test_products(root, '7', 'd' * 64)
+                    self.assertEqual(get.call_count, count)
 
     def original(self):
         run = {"id": native.RUN, "head_sha": native.SOURCE, "repository": {"full_name": checkpoint.REPOSITORY},
@@ -714,8 +738,11 @@ class ReleaseRecoveryTests(unittest.TestCase):
             self.assertIn("inputs.signed_build_run_id == ''", condition)
             self.assertIn("inputs.notary_progress_run_id == ''", condition)
         steps = {step.get("name"): step for step in jobs["release-build"]["steps"]}
-        for name in ("Build the exact release test configuration", "Stage release test runtime inputs", "Test the exact release configuration"):
-            self.assertEqual(steps[name]["if"], "inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''")
+        fresh = "inputs.completed_release_tests_run_id == '' && inputs.compiled_app_targets_json == ''"
+        self.assertEqual(steps["Build the exact release test configuration"]["if"],
+                         fresh + " && inputs.compiler_checkpoint_run_id == ''")
+        for name in ("Stage release test runtime inputs", "Test the exact release configuration"):
+            self.assertEqual(steps[name]["if"], fresh)
         self.assertNotIn("notarize", "\n".join(step.get("run", "") for step in steps.values()).lower())
         packaging = "\n".join(step.get("run", "") for step in jobs["release"]["steps"])
         self.assertNotIn("swift build", packaging)
