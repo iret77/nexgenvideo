@@ -3,13 +3,20 @@ description: Build the independent UI test with its app producer or restore thos
 inputs:
   mode:
     required: true
-    description: build or restore
+    description: build, restore or native-transfer
   app-source:
     default: ''
     description: Actual product commit
   app-run:
     default: ''
     description: Actual product producer run
+outputs:
+  artifact-id:
+    description: Published client artifact ID
+    value: ${{ steps.upload.outputs.artifact-id }}
+  artifact-digest:
+    description: Published client archive SHA-256
+    value: ${{ steps.upload.outputs.artifact-digest }}
 runs:
   using: composite
   steps:
@@ -18,13 +25,14 @@ runs:
         DIALOG_MODE: ${{ inputs.mode }}
         DIALOG_APP_SOURCE: ${{ inputs.app-source }}
         DIALOG_APP_RUN: ${{ inputs.app-run }}
-        GH_TOKEN: ${{ inputs.mode == 'restore' && github.token || '' }}
+        GH_TOKEN: ${{ inputs.mode != 'build' && github.token || '' }}
         HOME: ${{ runner.temp }}/nexgenvideo-test-home
         CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
       run: |
         mkdir -p "$HOME"
         python3 scripts/file_dialog_products.py "$DIALOG_MODE"
-    - if: inputs.mode == 'build'
+    - id: upload
+      if: inputs.mode == 'build' || inputs.mode == 'native-transfer'
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: file-dialog-ui

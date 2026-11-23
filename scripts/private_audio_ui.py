@@ -60,6 +60,11 @@ def verify_material_handoff(report, native, client, file_count, project):
             require(proof['sentReturn'] is True and proof['visibleTargetWindows'][:1] == [typed['window']]
                     and proof['window'] == typed['window'] and typed['pathField'] == 'PathTextField'
                     and observed['selected'] == typed['typed'] == str(report / 'Stage.png'), 'Unconfirmed location selection')
+        else:
+            proof = json.loads((report / (prefix + 'cancel-action.json')).read_bytes())
+            require(proof['sentEscape'] is True and proof['visibleTargetWindows'][:1] == [typed['window']]
+                    and proof['window'] == typed['window'] and 'typed' not in typed and 'selected' not in observed,
+                    'Unconfirmed location cancellation')
     material = json.loads(material_result.read_bytes())
     actions = [row for row in material['interactions'] if row.get('kind') == 'pointer']
     cards = [row['evidence'] for row in material['interactions'] if row.get('label') == 'material action']

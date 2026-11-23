@@ -1349,10 +1349,12 @@ jobs:
             "$FIXTURE_REFERENCE"
           python3 scripts/private_analysis_verification.py fixture-extract --work "$PACKAGE_DIR" --output "$EXTRACT_DIR"
 
-      - name: Restore the qualified Track dialog client
+      - name: Build file dialog XCTest
         id: track_client
         if: steps.retained_products.outputs.track_intake == 'true'
-        run: python3 scripts/file_dialog_presign.py "$RUNNER_TEMP/app-target-build" native-client
+        uses: ./.github/actions/file-dialog-products
+        with:
+          mode: build
       - name: Build only the current production App target
         id: production
         run: python3 scripts/native_app_target_build.py production --output "$RUNNER_TEMP/app-target-build"
@@ -1369,6 +1371,8 @@ jobs:
         id: track_intake
         if: steps.retained_products.outputs.track_intake == 'true'
         env:
+          DIALOG_CLIENT_ARTIFACT_ID: ${{ steps.track_client.outputs.artifact-id }}
+          DIALOG_CLIENT_ARTIFACT_SHA256: ${{ steps.track_client.outputs.artifact-digest }}
           NGV_EXAMPLE_FIXTURE_ROOT: ${{ runner.temp }}/fixture-data/examples
           NGV_EXAMPLE_FIXTURE_MANIFEST: ${{ runner.temp }}/fixture-package/fixtures.manifest.json
           NGV_EXAMPLE_REGISTRY_REFERENCE: ghcr.io/iret77/nexgenvideo-examples@${{ vars.NGV_EXAMPLE_FIXTURE_DIGEST }}

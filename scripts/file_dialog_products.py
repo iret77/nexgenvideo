@@ -73,11 +73,11 @@ def client_producer_job(candidates, product, run_id, attempt, native_origin=None
     return job
 
 
-def restore(work, products, product, run_id, *, native_origin=None):
+def restore(work, products, product, run_id, *, native_origin=None, native_producer=None):
     selected = environment_selectors()
     if native_origin and (selected or os.environ.get("GITHUB_JOB") != "app-target-build"):
         raise ValueError("A native Track check requires a direct original client")
-    if selected:
+    if selected and native_producer is None:
         provenance = load_provenance(run_id, product, selected)["record"]
         run_id = provenance["originalSignedBuildRunID"]
     run = api(f"actions/runs/{run_id}")
@@ -85,6 +85,10 @@ def restore(work, products, product, run_id, *, native_origin=None):
                            ("bundle", "ci", "ci-batch", "workspace-ui-acceptance", "private-example-analysis", "release")}
     if native_origin:
         supported_workflows = {".github/workflows/native-acceptance-probes.yml"}
+    if native_producer is not None:
+        supported_workflows = {".github/workflows/diagnostic-acceptance.yml"}
+        if native_producer["run"]["id"] != run_id or run["conclusion"] != "success" or run["status"] != "completed":
+            raise ValueError("The qualified native file dialog producer differs")
     if (run.get("repository", {}).get("full_name") != "iret77/nexgenvideo" or run.get("id") != run_id
             or run.get("head_sha") != product or run.get("path") not in supported_workflows):
         raise ValueError("Unexpected file dialog producer")
@@ -104,6 +108,28 @@ def restore(work, products, product, run_id, *, native_origin=None):
         raise ValueError("Insufficient file dialog client archive reserve")
     raw = artifact_bytes(artifact, size)
     with zipfile.ZipFile(io.BytesIO(raw)) as outer:
+        if outer.namelist() == ["native-client-origin.json"]:
+            if (native_origin or native_producer or run["path"] != ".github/workflows/release.yml"
+                    or outer.getinfo("native-client-origin.json").file_size > 16384):
+                raise ValueError("Unexpected native file dialog transfer")
+            transfer = json.loads(outer.read("native-client-origin.json"))
+            attempt = transfer["releaseAttempt"]
+            if (transfer["schema"] != "nexgenvideo/native-file-dialog-transfer/1" or transfer["releaseRun"] != run_id
+                    or type(attempt) is not int or not 1 <= attempt <= run["run_attempt"]):
+                raise ValueError("Unexpected release transfer identity")
+            jobs = api(f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100")
+            if jobs["total_count"] != len(jobs["jobs"]):
+                raise ValueError("Incomplete release job inventory")
+            job, = [row for row in jobs["jobs"] if row["name"] == "release-build"
+                    and row["conclusion"] == "success" and row["labels"] == ["macrunner"]
+                    and row["head_sha"] == product and row["run_id"] == run_id and row["run_attempt"] == attempt
+                    and any(s["name"] == "Use qualified native file dialog XCTest" and s["conclusion"] == "success"
+                            for s in row["steps"])]
+            verify_artifact(artifact, run, job, item["id"], artifact["digest"].removeprefix("sha256:"), "file-dialog-ui")
+            client = restore_native_client(work, products, product, transfer["metadata"])
+            if client != transfer["client"]:
+                raise ValueError("Release points to different native file dialog products")
+            return client
         if sorted(outer.namelist()) != ["client.json", "products.tar.gz"] or outer.getinfo("client.json").file_size > 16384:
             raise ValueError("Unexpected file dialog client archive")
         receipt = json.loads(outer.read("client.json"))
@@ -121,6 +147,8 @@ def restore(work, products, product, run_id, *, native_origin=None):
     for page in range(2, (jobs["total_count"] + 99) // 100 + 1):
         candidates.extend(api(f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page={page}")["jobs"])
     job = client_producer_job(candidates, product, run_id, attempt, native_origin)
+    if native_producer is not None and job["id"] != native_producer["job"]["id"]:
+        raise ValueError("Compiled App metadata and file dialog XCTest came from different jobs")
     verify_artifact(artifact, run, job, item["id"], artifact["digest"].removeprefix("sha256:"), "file-dialog-ui")
     with tarfile.open(archive) as tar:
         if sum(i.size for i in tar) > 400 * 1024**2:
@@ -130,12 +158,39 @@ def restore(work, products, product, run_id, *, native_origin=None):
     check_test_paths(original, products)
     if original.name != receipt["xctestrun"] or products_sha256(products) != receipt["products"]:
         raise ValueError("Restored file dialog client differs")
-    (work / "client.json").write_text(json.dumps(dict(receipt, artifactID=item["id"], artifactDigest=artifact["digest"])))
+    client = dict(receipt, artifactID=item["id"], artifactDigest=artifact["digest"])
+    (work / "client.json").write_text(json.dumps(client))
+    return client
+
+
+def restore_native_client(work, products, product, metadata):
+    from compiled_app_release import producer
+    if (set(metadata) != {"artifactID", "artifactSHA256", "runID", "sourceSHA"} or metadata["sourceSHA"] != product
+            or type(metadata["runID"]) is not int or metadata["runID"] <= 0
+            or type(metadata["artifactID"]) is not int or metadata["artifactID"] <= 0
+            or not re.fullmatch("[a-f0-9]{64}", metadata["artifactSHA256"])):
+        raise ValueError("Unexpected native file dialog metadata selector")
+    origin = producer(metadata, "metadata")
+    return restore(work, products, product, metadata["runID"], native_producer=origin)
+
+
+def transfer_native_client(work, products, product):
+    from compiled_app_release import selectors
+    if os.environ.get("GITHUB_JOB") != "release-build" or product != os.environ["GITHUB_SHA"]:
+        raise ValueError("Native file dialog transfer requires the release checkout")
+    event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
+    metadata = selectors(event["inputs"]["compiled_app_targets_json"], event)["metadata"]
+    client = restore_native_client(work, products, product, metadata)
+    transfer = dict(schema="nexgenvideo/native-file-dialog-transfer/1", releaseRun=int(os.environ["GITHUB_RUN_ID"]),
+                    releaseAttempt=int(os.environ["GITHUB_RUN_ATTEMPT"]), metadata=metadata, client=client)
+    publication = work / "transfer"
+    publication.mkdir()
+    (publication / "native-client-origin.json").write_text(json.dumps(transfer))
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("build", "restore"))
+    parser.add_argument("mode", choices=("build", "restore", "native-transfer"))
     args = parser.parse_args()
     if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("GITHUB_REPOSITORY") != "iret77/nexgenvideo":
         raise ValueError("Requires the NexGenVideo CI job")
@@ -148,6 +203,8 @@ def main():
     products = work / "build/Build/Products"
     if args.mode == "build":
         package(work, products, product)
+    elif args.mode == "native-transfer":
+        transfer_native_client(work, products, product)
     else:
         run_id = int(os.environ.get("DIALOG_APP_RUN") or os.environ["GITHUB_RUN_ID"])
         restore(work, products, product, run_id)
