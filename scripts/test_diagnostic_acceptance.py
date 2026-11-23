@@ -37,6 +37,28 @@ class NativeAppTargetWorkflowTests(unittest.TestCase):
             with self.subTest(difference=difference), self.assertRaises(ValueError):
                 select(job | difference)
 
+    def test_release_file_dialog_transfer_records_original_client_and_release_separately(self):
+        from file_dialog_products import transfer_native_client
+        head = 'a' * 40
+        metadata = dict(artifactID=23, artifactSHA256='b' * 64, runID=17, sourceSHA=head)
+        client = dict(run=17, source=head, artifactID=27, artifactDigest='sha256:' + 'c' * 64)
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            products = work / 'build/Build/Products'
+            event = work / 'event.json'
+            event.write_text(json.dumps({'inputs': {'compiled_app_targets_json': 'selectors'}}))
+            env = dict(GITHUB_JOB='release-build', GITHUB_SHA=head, GITHUB_RUN_ID='31',
+                       GITHUB_RUN_ATTEMPT='1', GITHUB_EVENT_PATH=str(event))
+            with patch.dict(os.environ, env), patch('compiled_app_release.selectors', return_value={'metadata': metadata}), \
+                    patch('file_dialog_products.restore_native_client', return_value=client) as restore:
+                with self.assertRaises(ValueError):
+                    transfer_native_client(work, products, 'd' * 40)
+                transfer_native_client(work, products, head)
+            restore.assert_called_once_with(work, products, head, metadata)
+            self.assertEqual(json.loads((work / 'transfer/native-client-origin.json').read_bytes()),
+                             dict(schema='nexgenvideo/native-file-dialog-transfer/1', releaseRun=31,
+                                  releaseAttempt=1, metadata=metadata, client=client))
+
     @staticmethod
     def steps():
         workflow = Path(__file__).resolve().parent.parent / '.github/workflows/diagnostic-acceptance.yml'

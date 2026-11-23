@@ -582,9 +582,15 @@ jobs:
       - uses: ./.github/actions/setup-xcode-27
 
       - name: Build file dialog XCTest
+        if: inputs.compiled_app_targets_json == '' || fromJSON(inputs.compiled_app_targets_json).metadata.sourceSHA != github.sha
         uses: ./.github/actions/file-dialog-products
         with:
           mode: build
+      - name: Use qualified native file dialog XCTest
+        if: inputs.compiled_app_targets_json != '' && fromJSON(inputs.compiled_app_targets_json).metadata.sourceSHA == github.sha
+        uses: ./.github/actions/file-dialog-products
+        with:
+          mode: native-transfer
 
       - name: Resolve version + mode
         env:

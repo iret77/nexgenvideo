@@ -5,6 +5,7 @@ import math
 import os
 from pathlib import Path
 import plistlib
+import re
 import shutil
 import struct
 import subprocess
@@ -17,11 +18,6 @@ from isolated_test_home import environment
 from retained_app_test_products import checksum, require
 
 
-NATIVE_CLIENT = dict(source="293a860f7fd1d042624791f1a8461efde20bd226", run=44986243216, attempt=1,
-                     artifactID=14740056062, jobID=137097327254,
-                     digest="sha256:704db102731772be4231f4bb33d091b335fb59117010601a4dc4a4ae19ea788e")
-
-
 def intake_binding(app, pack, image_uuid, payload, native=False):
     import file_dialog_products as dialogs
     from compiled_app_release import canonical_bundle_tree
@@ -29,17 +25,28 @@ def intake_binding(app, pack, image_uuid, payload, native=False):
     runner = Path(os.environ['RUNNER_TEMP'])
     source = os.environ['GITHUB_SHA']
     products = Path(os.environ['NGV_FILE_DIALOG_PRODUCTS']).resolve(strict=True)
+    work = runner / 'file-dialog-ui'
     if native:
         require(os.environ.get('GITHUB_JOB') == 'app-target-build', 'Unexpected native Track consumer')
-        client = json.loads((runner / 'file-dialog-ui/client.json').read_bytes())
-        require(client['artifactID'] == NATIVE_CLIENT['artifactID'] and client['artifactDigest'] == NATIVE_CLIENT['digest'],
-                'Restored original client does not match the native Track check')
-        origin_source, origin_run = NATIVE_CLIENT['source'], NATIVE_CLIENT['run']
+        client = json.loads((work / 'transfer/client.json').read_bytes())
+        artifact_id = int(os.environ['DIALOG_CLIENT_ARTIFACT_ID'])
+        digest = os.environ['DIALOG_CLIENT_ARTIFACT_SHA256'].removeprefix('sha256:')
+        require(artifact_id > 0 and re.fullmatch('[a-f0-9]{64}', digest), 'Missing native file dialog artifact')
+        client.update(artifactID=artifact_id, artifactDigest='sha256:' + digest)
+        with (work / 'client.json').open('x') as out:
+            json.dump(client, out)
+        origin_run = int(os.environ['GITHUB_RUN_ID'])
+    elif (work / 'transfer/native-client-origin.json').is_file():
+        origin = json.loads((work / 'transfer/native-client-origin.json').read_bytes())
+        client = json.loads((work / 'client.json').read_bytes())
+        require(origin['releaseRun'] == int(os.environ['GITHUB_RUN_ID']) and origin['client'] == client
+                and origin['metadata']['sourceSHA'] == source, 'Release file dialog origin changed')
+        origin_run = origin['metadata']['runID']
     else:
-        client = json.loads((runner / 'file-dialog-ui/transfer/client.json').read_bytes())
-        origin_source, origin_run = source, int(os.environ['GITHUB_RUN_ID'])
-    require(products == (runner / 'file-dialog-ui/build/Build/Products').resolve(strict=True)
-            and client['source'] == origin_source and client['run'] == origin_run
+        client = json.loads((work / 'transfer/client.json').read_bytes())
+        origin_run = int(os.environ['GITHUB_RUN_ID'])
+    require(products == (work / 'build/Build/Products').resolve(strict=True)
+            and client['source'] == source and client['run'] == origin_run
             and client['attempt'] == int(os.environ['GITHUB_RUN_ATTEMPT'])
             and client['tree'] == dialogs.project_tree(source) and client['products'] == dialogs.products_sha256(products),
             'Early intake and release require the same actual file dialog XCTest')
@@ -148,25 +155,14 @@ def early_intake(root):
     stage_intake(root, runner, value, bound, native=False)
 
 
-def native_intake(root, prepare):
+def native_intake(root):
     import app_cohort_v2 as cohort
-    import file_dialog_products as dialogs
     import native_app_target_build as targets
     runner = targets.native_guard(root)
     prepared = json.loads((root / 'prepared.json').read_bytes())
     value = cohort.verify_context(prepared['cohortV2'], current=True)
     require(int(value['build']) >= 131 and prepared['sourceSHA'] == os.environ['GITHUB_SHA'],
             'Native Track intake requires the current candidate')
-    if prepare:
-        require(dialogs.project_tree(NATIVE_CLIENT['source']) == dialogs.project_tree(prepared['sourceSHA']),
-                'The qualified original client is incompatible with the current native check')
-        work = runner / 'file-dialog-ui'
-        work.mkdir()
-        products = work / 'build/Build/Products'
-        dialogs.restore(work, products, NATIVE_CLIENT['source'], NATIVE_CLIENT['run'], native_origin=NATIVE_CLIENT)
-        with open(os.environ['GITHUB_ENV'], 'a') as output:
-            output.write('NGV_FILE_DIALOG_PRODUCTS=' + str(products) + '\n')
-        return
     receipt = json.loads((root / 'production/product-receipt.json').read_bytes())
     plan = prepared['plans']['production']
     link, = [row for row in plan['operations']['links'] if row['targetGUID'] == plan['driver']['targetGUID']]
@@ -230,8 +226,8 @@ def stage_intake(root, runner, value, bound, *, native):
 
 if __name__ == '__main__':
     root = Path(sys.argv[1])
-    if sys.argv[2:] in (['native-client'], ['native-intake']):
-        native_intake(root, prepare=sys.argv[2] == 'native-client')
+    if sys.argv[2:] == ['native-intake']:
+        native_intake(root)
     elif len(sys.argv) == 2:
         early_intake(root)
     else:

@@ -289,15 +289,19 @@ final class FileDialogTests: XCTestCase {
             try wait("The app did not observe the expected selection") { FileManager.default.fileExists(atPath: file("observed").path) }
             try activeTarget()
             try require(sheets.count == 0, "The path editor is still open")
-            if action == "open", let url {
+            if !isSave {
                 let observed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file("observed"))) as? [String: Any])
+                let panelNumber = try XCTUnwrap(receipt["window"] as? Int)
                 try require(observed["pid"] as? Int == Int(pid) && observed["step"] as? Int == index
-                            && observed["window"] as? Int == receipt["window"] as? Int
-                            && observed["action"] as? String == "open" && observed["selected"] as? String == url.path,
-                            "The open panel has not selected the intended file")
-                let panelNumber = try XCTUnwrap(observed["window"] as? Int)
+                            && observed["window"] as? Int == panelNumber && observed["action"] as? String == action,
+                            "The observed file panel changed")
+                if let url {
+                    try require(observed["selected"] as? String == url.path, "The open panel has not selected the intended file")
+                } else {
+                    try require(observed["selected"] == nil && receipt["typed"] == nil, "Unexpected input for Cancel")
+                }
                 try activeTarget()
-                try require(sheets.count == 0, "A new path editor appeared before Open")
+                try require(sheets.count == 0, "A new path editor appeared before the file panel action")
                 let windows = try XCTUnwrap(CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
                                                                        kCGNullWindowID) as? [[String: Any]])
                 let targetWindows = windows.filter {
@@ -305,16 +309,18 @@ final class FileDialogTests: XCTestCase {
                         && ($0[kCGWindowAlpha as String] as? Double ?? 0) > 0
                 }.compactMap { $0[kCGWindowNumber as String] as? Int }
                 let current = targetWindows.first == panelNumber && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
-                if current { app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: []) }
-                try JSONSerialization.data(withJSONObject: ["window": panelNumber, "visibleTargetWindows": targetWindows, "sentReturn": current])
-                    .write(to: file("default-action.json"), options: .atomic)
-                try require(current, "The observed Open panel is no longer the frontmost target window")
+                let cancel = url == nil
+                if current { app.typeKey(cancel ? XCUIKeyboardKey.escape.rawValue : XCUIKeyboardKey.return.rawValue, modifierFlags: []) }
+                let key = cancel ? "sentEscape" : "sentReturn"
+                let proof: [String: Any] = ["window": panelNumber, "visibleTargetWindows": targetWindows, key: current]
+                try JSONSerialization.data(withJSONObject: proof)
+                    .write(to: file(cancel ? "cancel-action.json" : "default-action.json"), options: .atomic)
+                try require(current, "The observed file panel is no longer the frontmost target window")
                 continue
             }
-            let label = isSave ? "Save" : "Cancel"
             let buttons = app.windows.descendants(matching: .button)
             func visibleButtons() -> [XCUIElement] {
-                buttons.matching(identifier: label).allElementsBoundByIndex.filter { $0.isEnabled && $0.isHittable }
+                buttons.matching(identifier: "Save").allElementsBoundByIndex.filter { $0.isEnabled && $0.isHittable }
             }
             try wait("The native dialog action is missing or ambiguous") { visibleButtons().count == 1 }
             try activeTarget()
