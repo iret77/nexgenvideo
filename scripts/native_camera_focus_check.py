@@ -11,10 +11,6 @@ from retained_app_test_products import require, write
 
 
 def verify_input(root):
-    from isolated_test_home import environment as isolated_environment
-    from native_app_failure_diagnostic import measure, run_owned, scope_filter
-    from run_macos_tests import app_environment, framework_output, host_receipt
-
     runner = native_guard(root)
     prepared = json.loads((root / 'prepared.json').read_bytes())
     value = app_cohort_v2.verify_context(prepared['cohortV2'], current=True)
@@ -31,12 +27,20 @@ def verify_input(root):
             and product['state']['linkComplete'] and product['state']['linkedOutput'] == str(image)
             and image.parents[3] == runtime and product['files'][image.relative_to(arena).as_posix()]['sha256'] == image_sha
             and capture.sha(host) == retained.HOST_SHA, 'Native test host or current test bundle differs')
-    if value['build'] == '129':
-        method = 'canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus()'
-        directory = 'camera-focus'
-    else:
-        method = 'canonicalNativeAccessibilityIdentityAndGeometryAreRevalidatedBeforeDown()'
-        directory = 'window-presentation'
+    checks = []
+    if value['build'] != '129':
+        checks.append(('window-presentation', 'canonicalNativeAccessibilityIdentityAndGeometryAreRevalidatedBeforeDown()'))
+    if value['build'] == '129' or int(value['build']) >= 139:
+        checks.append(('camera-focus', 'canonicalNativeAccessibilityHitKeepsSystemInputAndRealFieldFocus()'))
+    for directory, method in checks:
+        verify_method(root, prepared, runner, runtime, image, image_sha, host, directory, method)
+
+
+def verify_method(root, prepared, runner, runtime, image, image_sha, host, directory, method):
+    from isolated_test_home import environment as isolated_environment
+    from native_app_failure_diagnostic import measure, run_owned, scope_filter
+    from run_macos_tests import app_environment, framework_output, host_receipt
+
     method = 'NexGenVideoTests.NativePointerInteractionTests/' + method
     identity, = [name for name in app_cohort_v2.criteria()['modules']['app']['exactEndedFunctionIDs']
                  if name.rsplit('/', 1)[0] == method]
