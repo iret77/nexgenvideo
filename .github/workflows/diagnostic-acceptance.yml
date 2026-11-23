@@ -292,11 +292,13 @@ jobs:
                       or any(os.environ[key] for key in ('EXTRA_SOURCE', 'EXTRA_PRODUCTS', 'EXTRA_FAILURE', 'EXTRA_PRODUCTS_SHA', 'EXTRA_FAILURE_SHA'))):
                   raise SystemExit('Public transport requires one passed journey, exact DMG, current source proof and no diagnostic reuse inputs.')
           elif any(fields[1:]) or fields[0] and packaging is None and os.environ['KIND'] != 'signed-release' and not (
-                  os.environ['KIND'] == 'signed-journey' and os.environ.get('JOURNEY_SCENARIO') == 'normal-fresh-local-musicvideo'):
+                  os.environ['KIND'] == 'signed-journey' and (os.environ.get('JOURNEY_SCENARIO') == 'normal-fresh-local-musicvideo'
+                  or os.environ.get('JOURNEY_SCENARIO') == 'journey' and os.environ.get('CANDIDATE_RUN') == '45216062737'
+                  and os.environ.get('CANDIDATE_SOURCE') == '116e812d86f8886b7657daf005f955500fb05648')):
               raise SystemExit('Public transport inputs cannot be silently ignored by another mode.')
           PY
       - name: Reuse complete current merged PR source proof
-        if: inputs.candidate_kind == 'native-pointer-guard-snapshot' || inputs.candidate_kind == 'native-app-native-failure-diagnostic' || inputs.candidate_kind == 'native-app-targets' || inputs.candidate_kind == 'native-app-build-plan' || inputs.candidate_kind == 'signed-transport' || inputs.candidate_kind == 'native-button-query' || inputs.candidate_kind == 'native-button-query-crash' || inputs.candidate_kind == 'native-button-query-crash-reuse' || (inputs.candidate_kind == 'signed-release' && inputs.verified_pr_run_id != '') || (inputs.candidate_kind == 'signed-journey' && inputs.journey_scenario == 'normal-fresh-local-musicvideo') || inputs.packaging_producer_source_sha != ''
+        if: inputs.candidate_kind == 'native-pointer-guard-snapshot' || inputs.candidate_kind == 'native-app-native-failure-diagnostic' || inputs.candidate_kind == 'native-app-targets' || inputs.candidate_kind == 'native-app-build-plan' || inputs.candidate_kind == 'signed-transport' || inputs.candidate_kind == 'native-button-query' || inputs.candidate_kind == 'native-button-query-crash' || inputs.candidate_kind == 'native-button-query-crash-reuse' || (inputs.candidate_kind == 'signed-release' && inputs.verified_pr_run_id != '') || (inputs.candidate_kind == 'signed-journey' && inputs.journey_scenario == 'normal-fresh-local-musicvideo') || (inputs.candidate_kind == 'signed-journey' && inputs.run_id == '45216062737' && inputs.verified_pr_run_id != '') || inputs.packaging_producer_source_sha != ''
         env:
           GH_TOKEN: ${{ github.token }}
           VERIFIED_PR: ${{ inputs.verified_pr_run_id }}
@@ -635,15 +637,18 @@ jobs:
           ATTEMPT="$(jq -r .run_attempt "$RUNNER_TEMP/candidate-metadata/run.json")"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN/attempts/$ATTEMPT/jobs?per_page=100" > "$RUNNER_TEMP/candidate-metadata/jobs.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT" > "$RUNNER_TEMP/candidate-metadata/artifact.json"
-          extra=()
+          set -- --candidate-kind "$CANDIDATE_KIND"
+          if [ -f "$RUNNER_TEMP/transport-source-proof/receipt.json" ]; then
+            set -- "$@" --source-proof "$RUNNER_TEMP/transport-source-proof/receipt.json"
+          fi
           if [ "$CANDIDATE_KIND" = ci-app-test-diagnostic ]; then
             gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT/zip" > "$RUNNER_TEMP/original-test-diagnostic.zip"
-            extra+=(--crash-archive "$RUNNER_TEMP/original-test-diagnostic.zip")
+            set -- "$@" --crash-archive "$RUNNER_TEMP/original-test-diagnostic.zip"
           fi
           python3 scripts/verify_diagnostic_candidate.py "$CANDIDATE_RUN" "$CANDIDATE_SOURCE" \
             "$CANDIDATE_ARTIFACT" "$CANDIDATE_DIGEST" "$RUNNER_TEMP/candidate-metadata" \
-            --candidate-kind "$CANDIDATE_KIND" \
-            --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256" "${extra[@]}"
+            "$@" \
+            --packaging-producer-source "$PACKAGING_PRODUCER_SOURCE" --packaging-provenance-artifact-id "$PACKAGING_PROVENANCE_ARTIFACT_ID" --packaging-provenance-artifact-sha256 "$PACKAGING_PROVENANCE_ARTIFACT_SHA256"
       - uses: actions/upload-artifact@v4
         if: inputs.candidate_kind != 'native-pointer-guard-snapshot' && inputs.candidate_kind != 'native-app-native-failure-diagnostic' && inputs.candidate_kind != 'native-app-targets' && inputs.candidate_kind != 'native-app-build-plan' && inputs.candidate_kind != 'native-retained-failures' && inputs.candidate_kind != 'native-scene-history-hierarchy' && inputs.candidate_kind != 'native-scene-pointer-delivery' && inputs.candidate_kind != 'native-segment-geometry' && inputs.candidate_kind != 'native-button-query' && inputs.candidate_kind != 'native-button-query-crash' && inputs.candidate_kind != 'native-button-query-crash-reuse' && inputs.candidate_kind != 'native-export-color' && inputs.candidate_kind != 'ci-bpy-resource-diagnostic' && inputs.candidate_kind != 'ci-app-glow-replay' && inputs.candidate_kind != 'ci-app-full-replay' && inputs.candidate_kind != 'ci-builtin-blur' && inputs.candidate_kind != 'ci-builtin-blur-scribble' && inputs.candidate_kind != 'ci-builtin-blur-floor' && inputs.candidate_kind != 'ci-builtin-blur-preheat' && inputs.candidate_kind != 'ci-glow-context'
         with:
@@ -1872,7 +1877,7 @@ jobs:
       expected_dmg_sha256: ${{ inputs.expected_dmg_sha256 }}
       scenario: ${{ inputs.journey_scenario || 'journey' }}
       expected_catalog_sha256: ${{ inputs.expected_catalog_sha256 }}
-      expected_pack_sha256: ${{ inputs.journey_scenario == 'normal-fresh-local-musicvideo' && '37fcee05d1ac334b20eb392c61cc3b7a94af165dc3b967c61602bc79d6dc4388' || '' }}
+      expected_pack_sha256: ${{ inputs.journey_scenario == 'normal-fresh-local-musicvideo' && (inputs.run_id == '45216062737' && inputs.source_sha == '116e812d86f8886b7657daf005f955500fb05648' && 'edee39f329cdb3c122fa4ab71fd1ae5cb8205185025bea9fc999568d2e670866' || '37fcee05d1ac334b20eb392c61cc3b7a94af165dc3b967c61602bc79d6dc4388') || '' }}
 
   signed-transport:
     needs: [source, transport-fixture]

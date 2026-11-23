@@ -81,6 +81,55 @@ class ReleaseRecoveryTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         checkpoint.internal_image_evidence(run, {'jobs': jobs}, SOURCE)
 
+    def test_internal_runtime_requires_verified_ci_tree_for_this_product(self):
+        import verified_pr_source_checks as checks
+        head, tree, source = 'b' * 40, 'c' * 40, checkpoint.INTERNAL_RUNTIME_SOURCE
+        repo = {'full_name': checkpoint.REPOSITORY}
+        base = 'iret77/rc-delivery-base-795'
+        ref = checkpoint.INTERNAL_RUNTIME_BRANCH
+        receipt = dict(schema='verified-pr-source/v2', repository=repo['full_name'], headRepository=repo['full_name'],
+                       runID=21, attempt=1, pullRequest=9, headSHA=head, baseRef=base,
+                       checkoutSHA='e' * 40, treeSHA=tree,
+                       checkResults={k: dict(outcome='success', conclusion='success') for k in checks.CHECKS})
+        proof = dict(schema='internal-runtime-pr-source/v1', sourceSHA=head, runID='51', attempt='1',
+                     originalReceipt=receipt, originalRun={'id': 21},
+                     originalPR=dict(number=9, merged=False, state='open', user={'login': 'iret77'},
+                                     head={'sha': head, 'ref': ref, 'repo': repo},
+                                     base={'ref': base, 'repo': repo, 'sha': source}),
+                     originalCheckoutCommit={'sha': receipt['checkoutSHA'], 'tree': {'sha': tree},
+                                             'parents': [{'sha': source}, {'sha': head}]})
+        for path, modes, role, run_id, current_tree, valid in (
+                ('scripts/release_checkpoint.py', '100644 100644', 'signed-journey', 51, tree, True),
+                ('scripts/release_checkpoint.py', '100644 100644', 'signed-release', 51, tree, True),
+                ('scripts/release_checkpoint.py', '100644 100755', 'signed-journey', 51, tree, False),
+                ('Sources/NexGenVideo/App.swift', '100644 100644', 'signed-release', 51, tree, False),
+                ('scripts/release_checkpoint.py', '100644 100644', 'signed-transport', 51, tree, False),
+                ('scripts/release_checkpoint.py', '100644 100644', 'signed-release', 52, tree, False),
+                ('scripts/release_checkpoint.py', '100644 100644', 'signed-release', 51, 'f' * 40, False)):
+            raw = (':' + modes + ' abcd dcba M\0' + path + '\0').encode()
+            with self.subTest(path=path, modes=modes, role=role, run=run_id, tree=current_tree), patch.dict(
+                    os.environ, GITHUB_SHA=head, GITHUB_REF_NAME=ref, GITHUB_RUN_ID=str(run_id), GITHUB_RUN_ATTEMPT='1'), \
+                    patch.object(checks, 'git', side_effect=[head, '', current_tree, '']), \
+                    patch.object(checkpoint.subprocess, 'check_output', return_value=raw):
+                if valid:
+                    self.assertEqual(checkpoint.internal_runtime_paths(source, checkpoint.INTERNAL_RUNTIME_RUN,
+                                     role, proof), {path})
+                else:
+                    with self.assertRaises(ValueError):
+                        checkpoint.internal_runtime_paths(source, checkpoint.INTERNAL_RUNTIME_RUN, role, proof)
+
+    def test_signed_runtime_does_not_admit_foreign_inputs(self):
+        request = dict(candidate_kind='signed-journey', verified_pr_run_id='12',
+                       source_sha=checkpoint.INTERNAL_RUNTIME_SOURCE, run_id=str(checkpoint.INTERNAL_RUNTIME_RUN),
+                       artifact_id='14848191988', expected_dmg_sha256=checkpoint.INTERNAL_RUNTIME_DMG,
+                       artifact_sha256='e6a5ba580e29b5c11b375c1a1ceec23e1a77b454945448e6fcc5bcbc10ac944c')
+        checkpoint.internal_runtime_inputs(request, 12)
+        for changes in ({'interface_scale': 'all'}, {'artifact_id': '3'}, {'source_sha': '0' * 40},
+                        {'expected_dmg_sha256': '0' * 64}, {'journey_scenario': 'normal-fresh-local-musicvideo'},
+                        {'test_bundle_run_id': '2'}, {'packaging_producer_source_sha': '0' * 40}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                checkpoint.internal_runtime_inputs(request | changes, 12)
+
     def native_checkpoint_fixture(self, root):
         scratch = root / 'scratch'
         binary = scratch / 'arm64-apple-macosx/release'
