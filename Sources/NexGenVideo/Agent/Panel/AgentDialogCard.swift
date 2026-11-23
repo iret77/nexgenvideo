@@ -41,6 +41,7 @@ struct AgentDialogCard: View {
     let onComplete: () -> Void
     let onCancel: () -> Void
 
+    @Environment(\.generationDecisionMaximumHeight) private var availableHeight
     @State private var localChoiceSelections: [String: Set<String>] = [:]
     @State private var localDraft = AgentDialogDraft()
     @State private var isDropTargeted = false
@@ -116,7 +117,8 @@ struct AgentDialogCard: View {
             footerRow
         }
         .padding(AppTheme.Spacing.md)
-        .frame(maxHeight: AppTheme.ComponentSize.agentDecisionMaxHeight)
+        .frame(maxHeight: min(availableHeight ?? AppTheme.ComponentSize.agentDecisionMaxHeight,
+                              AppTheme.ComponentSize.agentDecisionMaxHeight))
         .background(
             RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
                 .fill(AppTheme.Background.raisedColor)

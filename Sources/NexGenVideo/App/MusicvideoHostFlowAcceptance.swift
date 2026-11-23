@@ -164,13 +164,32 @@ final class MusicvideoHostFlowAcceptance {
     func finishPlanningIntake(sectionLabels: [String], finalResolution: VideoResolution = .res1080p,
                               conceptType: ConceptType = .narrative, reconfirmRangeAfterReanalysis: Bool = false,
                               beforeBriefApproval: (@MainActor (EditorViewModel) async throws -> Void)? = nil) async throws {
+        let materialActions = ProductionVisualSourcesDriver(window: window, output: evidenceURL, name: "hostflow-material-actions")
+        func clickMaterialAction(_ id: String, title: String, card: String, companion: String? = nil) async throws {
+            try await materialActions.waitForPresentation(of: window, control: id)
+            if let companion {
+                try require(materialActions.state(companion, in: window) == false, "An empty prepared character was actionable")
+                try materialActions.visible([id, companion], in: window)
+            } else {
+                try materialActions.visible([id], in: window)
+            }
+            guard let dialog = service.pendingDialog, let role = dialog.fileIntake?.attachAs,
+                  materialActions.text("agent.dialog.title", in: window) == dialog.title else {
+                throw Failure("The material dialog changed before its action")
+            }
+            try materialActions.capture(card, target: window)
+            try await materialActions.clickButton(id, title: title, in: window, settledTarget: .hoveredButton)
+            try materialActions.record("material action", fields: ["dialogID": dialog.id, "title": dialog.title,
+                "role": role, "button": title, "control": id])
+        }
         try await finishAnalysis(sectionLabels: sectionLabels)
         try await waitForDialog("Existing story", attachAs: "script")
         try require(editor.productionSelectedPhase == "brief", "Analysis approval left the old phase selected")
-        try await click("agent.dialog.confirm")
+        try await clickMaterialAction("agent.dialog.confirm", title: "Continue", card: "existing-story")
         try await waitForDialog("Prepared character 1", attachAs: "character")
         try require(service.pendingDialog?.fileIntake?.completionLabel == "Skip", "First empty character has no Skip action")
-        try await click("agent.dialog.complete")
+        try await clickMaterialAction("agent.dialog.complete", title: "Skip", card: "prepared-character",
+                                      companion: "agent.dialog.confirm")
         try await waitForDialog("Prepared location 1", attachAs: "location")
         let reference = ProcessInfo.processInfo.environment["NGV_FILE_DIALOG_TEST_CASE"] != nil
             ? evidenceURL.appendingPathComponent("Stage.png")
@@ -225,8 +244,15 @@ final class MusicvideoHostFlowAcceptance {
             "fileWithoutNameBlocked": true, "partialAttachBlocked": true, "partialDoneBlocked": true,
             "clearPreservedConfirmedIdentity": true, "doneAdvancedToStyle": true])
         try recordIntake(intakeDriver)
-        try await click("agent.dialog.confirm")
+        let precedingTurns = runtime.handoffs.count
+        try await clickMaterialAction("agent.dialog.confirm", title: "Continue", card: "style-references")
         try await waitForHandoff("brief")
+        guard let brief = runtime.handoffs.dropFirst(precedingTurns).last, brief.phase == "brief",
+              let instructions = brief.instructionsSHA256, let project = editor.projectId else {
+            throw Failure("The material decisions did not hand this project to Brief")
+        }
+        try materialActions.record("material intake handoff", fields: ["projectKey": project, "phase": brief.phase,
+            "turnID": brief.turnID, "instructionsSHA256": instructions])
         if let index = gateApprovals.firstIndex(where: { $0.phase == "analysis" }), let handoff = runtime.handoffs.last {
             gateApprovals[index].handoffPhase = handoff.phase
             gateApprovals[index].handoffHidden = service.messages.last(where: { $0.role == .user })?.hidden == true
@@ -236,6 +262,8 @@ final class MusicvideoHostFlowAcceptance {
         }
         try require(!FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent("import/script.md").path),
             "Skipping Existing story invented supplied material")
+        try JSONSerialization.data(withJSONObject: materialActions.result(), options: [.prettyPrinted, .sortedKeys])
+            .write(to: evidenceURL.appendingPathComponent("hostflow-material-actions-result.json"), options: .atomic)
         try await finishBrief(finalResolution: finalResolution, conceptType: conceptType,
             sectionLabels: sectionLabels, reconfirmRangeAfterReanalysis: reconfirmRangeAfterReanalysis,
             beforeBriefApproval: beforeBriefApproval)
@@ -466,16 +494,6 @@ final class MusicvideoHostFlowAcceptance {
         let filename = "hostflow-\(screenshots.count)-\(name).png"
         try data.write(to: evidenceURL.appendingPathComponent(filename), options: .atomic)
         screenshots.append(filename)
-    }
-
-    private func click(_ identifier: String) async throws {
-        try await waitUntil("control \(identifier)") {
-            self.window.contentView?.layoutSubtreeIfNeeded()
-            return WorkspaceUIAcceptance.probeState(identifier: identifier, in: self.window) == true
-        }
-        if let failure = WorkspaceUIAcceptance.click(identifier: identifier, in: window) {
-            throw Failure("\(identifier) is unreachable: \(failure)")
-        }
     }
 
     private func waitUntil(_ step: String = "native host control", _ ready: () throws -> Bool) async throws {

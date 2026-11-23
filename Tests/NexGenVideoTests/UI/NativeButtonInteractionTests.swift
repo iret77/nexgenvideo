@@ -1515,6 +1515,7 @@ struct NativePointerInteractionTests {
     }
 
     @Test func viewportWidthPreservesFieldAndNativeWheelAcrossScrollerStyles() async throws {
+        verifyWheelConvergenceInSceneViewport()
         for style in [NSScroller.Style.legacy, .overlay] {
             let fixture = try await Fixture("viewport-" + String(style.rawValue))
             defer { fixture.close() }
@@ -1627,7 +1628,6 @@ struct NativePointerInteractionTests {
                 "wheels": Array(wheels), "callbacks": fixture.capture.callbacks])
         }
     }
-
 
     @MainActor private final class CanonicalAXLeaf: NSView {
         var roleValue: NSAccessibility.Role? = .textField
@@ -2733,5 +2733,27 @@ private extension NativePointerInteractionTests {
         #expect(!observer.events.contains("FOV editor or probe differs at Tab"))
         #expect(!observer.events.contains("mouse:width") && !observer.events.contains("select:width"))
         #expect(values.width == 641)
+    }
+}
+
+extension NativePointerInteractionTests {
+    private func verifyWheelConvergenceInSceneViewport() {
+        let target = CGRect(x: 10, y: 662, width: 128, height: 48)
+        for flipped in [true, false] {
+            for initialOrigin in [CGFloat(0.5), 431.5, 472.5, 890.5] {
+                var viewport = CGRect(x: 0, y: initialOrigin, width: 378, height: 217)
+                var prior: ProductionVisualSourcesDriver.WheelResponse?
+                for _ in 0..<6 {
+                    if viewport.contains(target) { break }
+                    let delta = ProductionVisualSourcesDriver.revealWheelDelta(
+                        distance: target.midY - viewport.midY, flipped: flipped, prior: prior)
+                    let origin = viewport.minY
+                    let travel = CGFloat(delta) * 4.43 * (flipped ? -1 : 1)
+                    viewport.origin.y = min(891.5, max(0.5, origin + travel))
+                    prior = .init(delta: delta, displacement: viewport.minY - origin)
+                }
+                #expect(viewport.contains(target))
+            }
+        }
     }
 }
