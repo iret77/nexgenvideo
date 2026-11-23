@@ -115,6 +115,12 @@ let package = Package(
                 "Resources/AppIcon.icns",
                 "Resources/AppIcon.png",
                 "Resources/AppResources.txt",
+                "ThreeD/BpyMediaCancellationAcceptance.swift",
+                "ThreeD/BpyMemoryRuntimeAcceptance.swift",
+                "ThreeD/BpyReapedRecoveryAcceptance.swift",
+                "ThreeD/BpyRoleLockAcceptance.swift",
+                "ThreeD/BpySourceBindingAcceptance.swift",
+                "ThreeD/BpyStorageRecoveryAcceptance.swift",
             ],
             resources: appResourceEntries.map { .copy("Resources/\($0)") },
             linkerSettings: [
@@ -148,11 +154,13 @@ let package = Package(
                 .copy("Resources/FixtureFictionPack"),
             ]
         ),
+        .target(name: "BpyProcessTestSupport", path: "Tests/BpyProcessTestSupport"),
         .testTarget(
             name: "NexGenVideoTests",
             dependencies: [
                 "BpyRuntimeProtocol",
                 "BpySupervisorPOSIX",
+                "BpyProcessTestSupport",
                 "HangDiagnostics",
                 "NexGenVideo",
                 .product(name: "NexGenEngine", package: "Engine"),

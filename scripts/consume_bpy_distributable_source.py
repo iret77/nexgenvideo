@@ -241,7 +241,15 @@ def copy_actions(public, directory):
     run = api(f'/actions/runs/{run_id}')
     artifacts = pages(f'/actions/runs/{run_id}/artifacts', 'artifacts')
     if not any(item.get('id') == producer['artifactID'] and item.get('expired') is False for item in artifacts):
-        raise ValueError('Original source artifact expired or is unavailable before publication; run an explicit source qualification rebuild and review new pins')
+        if canonical_sha(public) != QUALIFIED_HANDOFF['publicSourceAssetSHA256']:
+            raise ValueError('Original source artifact expired or is unavailable before publication; run an explicit source qualification rebuild and review new pins')
+        from compiled_app_release import acquire_source_pair, commit_source_pair
+        base, anchor = physical_directory(directory)
+        with tempfile.TemporaryDirectory(prefix='qualified-bpy-source-') as temporary:
+            stage = Path(temporary)
+            acquire_source_pair(public, stage)
+            commit_source_pair(stage, directory, public, base, anchor)
+        return {'kind': 'actions', 'producer': producer}
     jobs = pages(f'/actions/runs/{run_id}/jobs?filter=all', 'jobs')
     artifact = require_original_producer(public, run, artifacts, jobs)
     with tempfile.TemporaryDirectory(prefix='bpy-source-download-') as temporary:

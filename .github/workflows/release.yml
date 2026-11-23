@@ -34,6 +34,10 @@ on:
         required: false
         default: false
         type: boolean
+      internal_image_only:
+        description: Prepare a private test image with runtime and GUI acceptance pending
+        type: boolean
+        default: false
       defer_private_audio:
         description: "Keep private audio pending while producing an unpublished candidate; requires artifact_only and dry_run"
         type: boolean
@@ -123,6 +127,8 @@ jobs:
           REL_VERSION: ${{ inputs.version }}
           ARTIFACT_ONLY: ${{ inputs.artifact_only }}
           DRY_RUN: ${{ inputs.dry_run }}
+          COMPILED_APP_TARGETS: ${{ inputs.compiled_app_targets_json }}
+          INTERNAL_IMAGE_ONLY: ${{ inputs.internal_image_only }}
           DEFER_PRIVATE_AUDIO: ${{ inputs.defer_private_audio }}
           RELEASE_TEST_RUN: ${{ inputs.completed_release_tests_run_id }}
           RELEASE_ENGINE_RUN: ${{ inputs.completed_engine_tests_run_id }}
@@ -139,6 +145,16 @@ jobs:
           set -euo pipefail
           echo "$REL_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
             || { echo "::error::version must be X.Y.Z"; exit 1; }
+          if [ "${INTERNAL_IMAGE_ONLY:-false}" = true ]; then
+            if [ -n "${COMPILED_APP_TARGETS:-}${RETAINED_PRODUCT_SOURCE:-}${RELEASE_TEST_RUN:-}${RELEASE_ENGINE_RUN:-}" ]; then
+              echo "::error::Internal images require fresh product sources and their release tests"
+              exit 1
+            fi
+            if [ "$ARTIFACT_ONLY" != true ] || [ "$DRY_RUN" != true ] || [ "$DEFER_PRIVATE_AUDIO" = true ] || [ -z "$VERIFIED_PR_RUN" ] || [ "$GITHUB_REF_NAME" != iret77/rc-delivery-base-795 ]; then
+              echo "::error::Internal images require the reviewed RC branch and artifact-only dry-run mode"
+              exit 1
+            fi
+          fi
           if [ -n "${RELEASE_ENGINE_RUN:-}" ] && { [ "$ARTIFACT_ONLY" != "true" ] || [ "$DRY_RUN" != "true" ] || [ -n "${RELEASE_TEST_RUN:-}" ] || [ -n "${SIGNED_BUILD_RUN:-}" ] || [ -n "${NOTARY_PROGRESS_RUN:-}" ]; }; then
             echo "::error::Engine backend continuation requires artifact_only and fresh App tests"
             exit 1
@@ -2078,7 +2094,7 @@ jobs:
 
   diagnostic-acceptance:
     needs: release
-    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    if: ${{ inputs.internal_image_only == false && !cancelled() && needs.release.result == 'success' }}
     runs-on: macrunner
     timeout-minutes: 30
     permissions:
@@ -2180,7 +2196,7 @@ jobs:
       actions: read
       pull-requests: read
     needs: release
-    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    if: ${{ inputs.internal_image_only == false && !cancelled() && needs.release.result == 'success' }}
     uses: ./.github/workflows/bpy-runtime-acceptance.yml
     with:
       packaging_producer_source_sha: ${{ needs.release.outputs.packaging_producer_source_sha }}
@@ -2196,7 +2212,7 @@ jobs:
 
   external-user-acceptance:
     needs: release
-    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    if: ${{ inputs.internal_image_only == false && !cancelled() && needs.release.result == 'success' }}
     permissions:
       contents: read
       actions: read
@@ -2221,7 +2237,7 @@ jobs:
 
   chat-hang-replay:
     needs: [release, diagnostic-acceptance, bpy-runtime]
-    if: ${{ !cancelled() && inputs.artifact_only && needs.release.result == 'success' && needs.diagnostic-acceptance.result == 'success' && needs.bpy-runtime.result == 'success' }}
+    if: ${{ inputs.internal_image_only == false && !cancelled() && inputs.artifact_only && needs.release.result == 'success' && needs.diagnostic-acceptance.result == 'success' && needs.bpy-runtime.result == 'success' }}
     permissions:
       contents: read
       actions: read
@@ -2240,7 +2256,7 @@ jobs:
 
   musicvideo-analysis-acceptance:
     needs: [release, diagnostic-acceptance, bpy-runtime]
-    if: ${{ !cancelled() && inputs.artifact_only && inputs.defer_private_audio == false && needs.release.result == 'success' && needs.diagnostic-acceptance.result == 'success' && needs.bpy-runtime.result == 'success' }}
+    if: ${{ inputs.internal_image_only == false && !cancelled() && inputs.artifact_only && inputs.defer_private_audio == false && needs.release.result == 'success' && needs.diagnostic-acceptance.result == 'success' && needs.bpy-runtime.result == 'success' }}
     permissions:
       contents: read
       actions: read
@@ -2323,6 +2339,20 @@ jobs:
       - name: Keep RC acceptance incomplete until private audio passes
         run: |
           echo '::error::Private audio acceptance remains pending for this exact candidate.'
+          exit 1
+
+  acceptance-pending:
+    needs: release
+    if: ${{ !cancelled() && inputs.internal_image_only && needs.release.result == 'success' }}
+    runs-on: macrunner
+    timeout-minutes: 5
+    steps:
+      - name: Keep the internal image pending runtime and GUI acceptance
+        env:
+          DMG_SHA256: ${{ needs.release.outputs.dmg_sha256 }}
+        run: |
+          [[ "$DMG_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
+          echo "::error::Internal DMG $DMG_SHA256 awaits runtime and GUI acceptance."
           exit 1
 
   publish:

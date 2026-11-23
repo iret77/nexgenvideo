@@ -3,9 +3,6 @@ import BpyRuntimeProtocol
 import Darwin
 import Foundation
 
-@_silgen_name("fileport_makeport")
-private func fileportMakePort(_ descriptor: Int32, _ port: UnsafeMutablePointer<mach_port_t>) -> Int32
-
 private typealias SandboxInit = @convention(c) (UnsafePointer<CChar>, UInt64,
     UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32
 private typealias SandboxFreeError = @convention(c) (UnsafeMutablePointer<CChar>?) -> Void
@@ -58,9 +55,6 @@ private func applyWorkerSandbox(root: String, configuration: BpySupervisorConfig
     let python = try escapedSandboxLiteral(configuration.python)
     let worker = try escapedSandboxLiteral(configuration.worker)
     let reads = try configuration.readPaths.map { "(literal \"\(try escapedSandboxLiteral($0))\")" }.joined(separator: "\n")
-    let execution = configuration.mode != .boundary || configuration.boundary == .diagnosticFootprintAfterExec
-        || configuration.boundary == .diagnosticPythonFootprint
-        ? "(allow process-exec (literal \"\(python)\"))" : ""
     let profile = """
     (version 1)
     (deny default)
@@ -80,7 +74,7 @@ private func applyWorkerSandbox(root: String, configuration: BpySupervisorConfig
         (require-all (extension-class "com.apple.app-sandbox.read") (subpath "\(runtime)")))
     (allow file-read* file-write* (literal "\(root)") (subpath "\(root)"))
     (allow file-read* \(reads))
-    \(execution)
+    (allow process-exec (literal "\(python)"))
     (allow sysctl-read)
     (allow process-info* (target self))
     (allow mach-lookup (global-name "com.apple.logd") (global-name "com.apple.system.logger")
@@ -111,6 +105,22 @@ private func awaitRelease(_ descriptor: Int32, parent: Int32) throws {
         }
     }
     throw SupervisorError.invalidParent
+}
+
+private func writeAll(_ descriptor: Int32, data: Data) throws {
+    try data.withUnsafeBytes { bytes in
+        var offset = 0
+        while offset < bytes.count {
+            let written = Darwin.write(
+                descriptor,
+                bytes.baseAddress!.advanced(by: offset),
+                bytes.count - offset
+            )
+            if written < 0 && errno == EINTR { continue }
+            guard written > 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+            offset += written
+        }
+    }
 }
 
 private func report(_ stage: BpyLaunchStage, pid: Int32 = getpid(), requestedBytes: UInt64? = nil,
@@ -179,45 +189,15 @@ private func ownExecutable() throws -> URL {
 private func launchChild(_ configuration: BpySupervisorConfiguration) throws -> Never {
     let root = try descriptorPath(BpyLaunchDescriptors.root, directory: true)
     _ = try descriptorPath(BpyLaunchDescriptors.configuration, directory: false)
-    if configuration.injections.contains(.childIgnoreTerm) { _ = Darwin.signal(SIGTERM, SIG_IGN) }
     try awaitRelease(BpyLaunchDescriptors.childRelease, parent: getppid())
     do { try applyWorkerSandbox(root: root, configuration: configuration) }
     catch SupervisorError.sandboxUnavailable { try? report(.sandboxUnavailable); Darwin.exit(BpyLaunchStage.sandboxUnavailable.rawValue) }
     catch { try? report(.sandboxRejected); Darwin.exit(BpyLaunchStage.sandboxRejected.rawValue) }
     do { try checkDenials(root: root, configuration: configuration) }
     catch { try? report(.denialCheckFailed); Darwin.exit(BpyLaunchStage.denialCheckFailed.rawValue) }
-    if configuration.mode == .boundary, let mode = configuration.boundary, mode.isHostDiagnostic {
-        if mode == .diagnosticPythonFootprint { try execMemoryPython(configuration) }
-        if mode == .diagnosticFootprintAfterExec {
-            let executable = try ownExecutable().path
-            let payload = try JSONEncoder().encode(configuration).base64EncodedString()
-            let values = [executable, "host-memory-child", payload].map { strdup($0) }
-            defer { values.forEach { free($0) } }
-            guard values.allSatisfy({ $0 != nil }) else { throw SupervisorError.invalidArguments }
-            var arguments = values + [nil]
-            var environment: [UnsafeMutablePointer<CChar>?] = [nil]
-            arguments.withUnsafeMutableBufferPointer { argv in
-                environment.withUnsafeMutableBufferPointer { envp in
-                    _ = execve(executable, argv.baseAddress!, envp.baseAddress!)
-                }
-            }
-            try? report(.execFailed)
-            Darwin.exit(BpyLaunchStage.execFailed.rawValue)
-        }
-        try runMemoryDiagnostic(mode)
-    }
     ngv_bpy_close_parent_lifeline()
     Darwin.close(BpyLaunchDescriptors.root)
     Darwin.close(BpyLaunchDescriptors.diagnosticRelease)
-    if configuration.mode == .boundary {
-        guard let mode = configuration.boundary else { throw SupervisorError.invalidArguments }
-        let loopbackPort = configuration.environment["NGV_BPY_BOUNDARY_LOOPBACK_PORT"].flatMap { UInt16($0) }
-        Darwin.close(BpyLaunchDescriptors.configuration)
-        closeReport()
-        try runBoundaryChild(root: URL(fileURLWithPath: root),
-            outsidePath: URL(fileURLWithPath: configuration.boundaryPath ?? configuration.canaryWrite),
-            mode: mode.rawValue, loopbackPort: loopbackPort)
-    }
     _ = fcntl(BpyLaunchDescriptors.report, F_SETFD, FD_CLOEXEC)
     guard fcntl(BpyLaunchDescriptors.configuration, F_SETFD, 0) == 0 else { throw SupervisorError.invalidArguments }
     if configuration.mode == .job {
@@ -265,11 +245,6 @@ private func supervise(_ configuration: BpySupervisorConfiguration, payload: Str
     if configuration.mode == .job { Darwin.close(BpyLaunchDescriptors.source) }
     Darwin.close(BpyLaunchDescriptors.childRelease)
     Darwin.close(BpyLaunchDescriptors.diagnosticRelease)
-    if configuration.injections.contains(.failChildIdentityCapture) {
-        try? report(.identityCaptureFailed)
-        return BpyLaunchStage.identityCaptureFailed.rawValue
-    }
-    if configuration.injections.contains(.failAfterChildStart) { throw SupervisorError.processLaunch }
     try report(.childReady, pid: process.processIdentifier)
     closeReport()
     while try process.isRunning {
@@ -283,361 +258,6 @@ private func supervise(_ configuration: BpySupervisorConfiguration, payload: Str
     let status = try process.waitUntilExit()
     reaped = true
     return status
-}
-
-private func execMemoryPython(_ configuration: BpySupervisorConfiguration) throws -> Never {
-    ngv_bpy_close_parent_lifeline()
-    Darwin.close(BpyLaunchDescriptors.root); Darwin.close(BpyLaunchDescriptors.configuration)
-    let script = """
-    import gc, json, os, random, sys, time
-    sys.path.insert(0, sys.argv[1] + '/site-packages')
-    import bpy
-    gc.collect()
-    def report(stage, requested=None):
-        value = {'schema':'nexgenvideo/bpy-launch-report/1', 'stage':stage, 'pid':os.getpid()}
-        if requested is not None:
-            value['requestedBytes'] = requested
-            value['allocationObjectBytes'] = sys.getsizeof(chunks[-1][0])
-        data = (json.dumps(value) + '\\n').encode()
-        if os.write(200, data) != len(data):
-            raise RuntimeError('diagnostic report failed')
-    report(2)
-    if os.read(205, 1) != b'\\x01':
-        raise RuntimeError('diagnostic release missing')
-    os.close(205)
-    generator = random.Random(0x4e4756)
-    chunks = []
-    for index in range(1, 65):
-        chunks.append([generator.randbytes(256) for _ in range(16384)])
-        report(5, index * 4 * 1024 * 1024)
-        time.sleep(0.05)
-    report(6, 256 * 1024 * 1024)
-    while True:
-        time.sleep(0.05)
-    """
-    let values = [configuration.python, "-I", "-S", "-c", script, configuration.runtime].map { strdup($0) }
-    let environment = configuration.environment.sorted { $0.key < $1.key }.map { strdup($0.key + "=" + $0.value) }
-    defer { values.forEach { free($0) }; environment.forEach { free($0) } }
-    guard values.allSatisfy({ $0 != nil }), environment.allSatisfy({ $0 != nil }) else { throw POSIXError(.ENOMEM) }
-    var argv = values + [nil], envp = environment + [nil]
-    argv.withUnsafeMutableBufferPointer { arguments in
-        envp.withUnsafeMutableBufferPointer { environment in
-            _ = execve(configuration.python, arguments.baseAddress!, environment.baseAddress!)
-        }
-    }
-    try? report(.execFailed)
-    Darwin.exit(BpyLaunchStage.execFailed.rawValue)
-}
-
-private func runMemoryDiagnostic(_ mode: BpyBoundaryMode) throws -> Never {
-    guard mode.isHostDiagnostic else { throw SupervisorError.invalidArguments }
-    try report(mode == .diagnosticFootprintAfterExec ? .diagnosticExecReady : .diagnosticReady)
-    try awaitRelease(BpyLaunchDescriptors.diagnosticRelease, parent: getppid())
-    ngv_bpy_close_parent_lifeline()
-    Darwin.close(BpyLaunchDescriptors.root); Darwin.close(BpyLaunchDescriptors.configuration)
-    if mode == .diagnosticStdoutBurst {
-        let flags = fcntl(STDOUT_FILENO, F_GETFL)
-        guard flags >= 0, let started = BpyRuntimeClock.read() else { throw SupervisorError.invalidArguments }
-        let data = Data(repeating: 0x52, count: 1_048_576)
-        try writeAll(STDOUT_FILENO, data: data)
-        guard let finished = BpyRuntimeClock.read() else { throw SupervisorError.invalidArguments }
-        try report(.stdoutBurstComplete, stdoutBurst: .init(flags: flags, bytes: data.count, started: started, finished: finished))
-        Darwin.exit(0)
-    }
-    if mode == .diagnosticPressureWait { while true { usleep(50_000) } }
-    if mode == .diagnosticVirtualMapping {
-        var limit = rlimit()
-        guard getrlimit(RLIMIT_AS, &limit) == 0, limit.rlim_cur == ngv_bpy_rlim_infinity() else { throw SupervisorError.invalidArguments }
-        let bytes = 8 * 1_024 * 1_024 * 1_024
-        let address = mmap(nil, bytes, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0)
-        guard address != MAP_FAILED else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
-        guard munmap(address, bytes) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
-        try report(.virtualMappingSucceeded, mapping: .init(bytes: UInt64(bytes), protection: PROT_NONE, deallocated: true))
-        Darwin.exit(0)
-    }
-    var allocations: [UnsafeMutableRawPointer] = []
-    let bytes = 4 * 1_024 * 1_024
-    for index in 1...64 {
-        guard let allocation = ngv_bpy_allocate_memory_probe(bytes) else { throw POSIXError(.init(rawValue: errno) ?? .ENOMEM) }
-        allocations.append(allocation)
-        try report(.diagnosticProgress, requestedBytes: UInt64(index * bytes))
-        usleep(50_000)
-    }
-    try report(.diagnosticAllocationCap, requestedBytes: 256 * 1_024 * 1_024)
-    while true { usleep(50_000); withExtendedLifetime(allocations) {} }
-}
-
-private struct BoundaryChildReport: Codable {
-    let schema: String
-    let mode: String
-    let processIdentifier: Int32
-    let parentProcessIdentifier: Int32
-    let allowedWriteSucceeded: Bool
-    let outsideWriteDeniedErrno: Int32
-    let forkDeniedErrno: Int32
-    let networkDeniedErrno: Int32
-    let signalDeniedErrnos: [Int32]
-    let resourceBytes: UInt64
-    let retentionDeniedErrno: Int32
-}
-
-private let boundaryResourceBytes = 1_024 * 1_024
-private let boundaryInternalResourceBytes = 128 * 1_024
-private let boundaryResourceModes: Set<String> = [
-    "open-unlinked-hold",
-    "readonly-unlinked-hold",
-    "mapped-unlinked-hold",
-    "external-readonly-hold",
-    "internal-linked-writable-hold",
-    "fileport-unlinked-hold",
-]
-
-private func writeAll(_ descriptor: Int32, data: Data) throws {
-    try data.withUnsafeBytes { bytes in
-        var offset = 0
-        while offset < bytes.count {
-            let written = Darwin.write(
-                descriptor,
-                bytes.baseAddress!.advanced(by: offset),
-                bytes.count - offset
-            )
-            if written < 0 && errno == EINTR { continue }
-            guard written > 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
-            offset += written
-        }
-    }
-}
-
-private func writeBoundaryResource(_ descriptor: Int32, byteCount: Int) throws {
-    let chunk = Data(repeating: 0x5a, count: 64 * 1_024)
-    for _ in 0..<(byteCount / chunk.count) {
-        try writeAll(descriptor, data: chunk)
-    }
-    guard Darwin.fsync(descriptor) == 0 else {
-        throw POSIXError(.init(rawValue: errno) ?? .EIO)
-    }
-}
-
-private func boundaryConnectionErrno(port: UInt16) throws -> Int32 {
-    let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
-    guard descriptor >= 0 else { return errno }
-    defer { Darwin.close(descriptor) }
-    guard fcntl(descriptor, F_SETFL, O_NONBLOCK) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
-    var address = sockaddr_in()
-    let length = socklen_t(MemoryLayout<sockaddr_in>.size)
-    address.sin_len = UInt8(length)
-    address.sin_family = sa_family_t(AF_INET)
-    address.sin_port = port.bigEndian
-    address.sin_addr.s_addr = UInt32(0x7f000001).bigEndian
-    let connected = withUnsafePointer(to: &address) { pointer in
-        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(descriptor, $0, length) }
-    }
-    if connected == 0 { return 0 }
-    let failure = errno
-    guard failure == EINPROGRESS else { return failure }
-    var socket = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
-    let ready = Darwin.poll(&socket, 1, 1_000)
-    guard ready > 0 else { throw POSIXError(.init(rawValue: ready == 0 ? ETIMEDOUT : errno) ?? .EIO) }
-    var status: Int32 = 0
-    var size = socklen_t(MemoryLayout<Int32>.size)
-    guard Darwin.getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &status, &size) == 0 else {
-        throw POSIXError(.init(rawValue: errno) ?? .EIO)
-    }
-    return status
-}
-
-private func runBoundaryChild(root writeRoot: URL, outsidePath: URL, mode: String, loopbackPort: UInt16?) throws -> Never {
-    let reportURL = writeRoot.appendingPathComponent("child.json")
-    if boundaryResourceModes.contains(mode) { _ = Darwin.signal(SIGTERM, SIG_IGN) }
-
-
-    if boundaryResourceModes.contains(mode) {
-        let path = mode == "external-readonly-hold"
-            ? outsidePath.path
-            : writeRoot.appendingPathComponent("retained-resource.bin").path
-        var retainedDescriptor: Int32 = -1
-        var retentionDeniedErrno: Int32 = 0
-        var resourceBytes = boundaryResourceBytes
-        if mode == "open-unlinked-hold" {
-            retainedDescriptor = Darwin.open(
-                path,
-                O_CREAT | O_TRUNC | O_RDWR,
-                S_IRUSR | S_IWUSR
-            )
-            guard retainedDescriptor >= 0 else {
-                throw POSIXError(.init(rawValue: errno) ?? .EIO)
-            }
-            guard Darwin.unlink(path) == 0 else {
-                Darwin.close(retainedDescriptor)
-                throw POSIXError(.init(rawValue: errno) ?? .EIO)
-            }
-            try writeBoundaryResource(retainedDescriptor, byteCount: resourceBytes)
-        } else if mode == "readonly-unlinked-hold" || mode == "mapped-unlinked-hold" {
-            let writer = Darwin.open(
-                path,
-                O_CREAT | O_TRUNC | O_RDWR,
-                S_IRUSR | S_IWUSR
-            )
-            guard writer >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
-            do {
-                try writeBoundaryResource(writer, byteCount: resourceBytes)
-                Darwin.close(writer)
-            } catch {
-                Darwin.close(writer)
-                throw error
-            }
-            retainedDescriptor = Darwin.open(path, O_RDONLY)
-            guard retainedDescriptor >= 0 else {
-                throw POSIXError(.init(rawValue: errno) ?? .EIO)
-            }
-            if mode == "mapped-unlinked-hold" {
-                let mapping = Darwin.mmap(
-                    nil,
-                    boundaryResourceBytes,
-                    PROT_READ,
-                    MAP_PRIVATE,
-                    retainedDescriptor,
-                    0
-                )
-                guard let mapping,
-                      mapping != UnsafeMutableRawPointer(bitPattern: -1) else {
-                    Darwin.close(retainedDescriptor)
-                    throw POSIXError(.init(rawValue: errno) ?? .EIO)
-                }
-                guard mapping.load(as: UInt8.self) == 0x5a else {
-                    Darwin.close(retainedDescriptor)
-                    throw CocoaError(.fileReadCorruptFile)
-                }
-                Darwin.close(retainedDescriptor)
-                retainedDescriptor = -1
-            }
-            guard Darwin.unlink(path) == 0 else {
-                if retainedDescriptor >= 0 { Darwin.close(retainedDescriptor) }
-                throw POSIXError(.init(rawValue: errno) ?? .EIO)
-            }
-        } else if mode == "external-readonly-hold" {
-            retainedDescriptor = Darwin.open(path, O_RDONLY)
-            guard retainedDescriptor >= 0 else {
-                throw POSIXError(.init(rawValue: errno) ?? .EIO)
-            }
-            var status = stat()
-            guard Darwin.fstat(retainedDescriptor, &status) == 0,
-                  status.st_size >= Int64(boundaryResourceBytes) else {
-                Darwin.close(retainedDescriptor)
-                throw CocoaError(.fileReadCorruptFile)
-            }
-        } else if mode == "internal-linked-writable-hold" {
-            resourceBytes = boundaryInternalResourceBytes
-            retainedDescriptor = Darwin.open(
-                path,
-                O_CREAT | O_TRUNC | O_RDWR,
-                S_IRUSR | S_IWUSR
-            )
-            guard retainedDescriptor >= 0 else {
-                throw POSIXError(.init(rawValue: errno) ?? .EIO)
-            }
-            try writeBoundaryResource(retainedDescriptor, byteCount: resourceBytes)
-        } else {
-            retainedDescriptor = Darwin.open(
-                path,
-                O_CREAT | O_TRUNC | O_RDWR,
-                S_IRUSR | S_IWUSR
-            )
-            guard retainedDescriptor >= 0 else {
-                throw POSIXError(.init(rawValue: errno) ?? .EIO)
-            }
-            try writeBoundaryResource(retainedDescriptor, byteCount: resourceBytes)
-            guard Darwin.unlink(path) == 0 else {
-                Darwin.close(retainedDescriptor)
-                throw POSIXError(.init(rawValue: errno) ?? .EIO)
-            }
-            var port = mach_port_t(MACH_PORT_NULL)
-            errno = 0
-            if fileportMakePort(retainedDescriptor, &port) != 0 {
-                retentionDeniedErrno = errno
-            }
-            Darwin.close(retainedDescriptor)
-            retainedDescriptor = -1
-        }
-        let report = BoundaryChildReport(
-            schema: "nexgenvideo/bpy-boundary-child/2",
-            mode: mode,
-            processIdentifier: getpid(),
-            parentProcessIdentifier: getppid(),
-            allowedWriteSucceeded: true,
-            outsideWriteDeniedErrno: 0,
-            forkDeniedErrno: 0,
-            networkDeniedErrno: 0,
-            signalDeniedErrnos: [],
-            resourceBytes: UInt64(resourceBytes),
-            retentionDeniedErrno: retentionDeniedErrno
-        )
-        try JSONEncoder().encode(report).write(to: reportURL, options: .atomic)
-        while true { pause() }
-    }
-
-    let allowedWriteSucceeded = (try? Data("allowed".utf8).write(
-        to: writeRoot.appendingPathComponent("allowed-write"),
-        options: .atomic
-    )) != nil
-    errno = 0
-    let outsideDescriptor = Darwin.open(
-        outsidePath.path,
-        O_CREAT | O_TRUNC | O_WRONLY,
-        S_IRUSR | S_IWUSR
-    )
-    let outsideErrno: Int32
-    if outsideDescriptor >= 0 {
-        outsideErrno = 0
-        Darwin.close(outsideDescriptor)
-    } else {
-        outsideErrno = errno
-    }
-
-    var forkErrno: Int32 = 0
-    let forkProbeError = ngv_bpy_probe_fork(&forkErrno)
-    guard forkProbeError == 0 else {
-        throw POSIXError(.init(rawValue: forkProbeError) ?? .EIO)
-    }
-
-    guard mode == "denials", let loopbackPort, loopbackPort != 0 else { throw SupervisorError.invalidArguments }
-    let networkErrno = try boundaryConnectionErrno(port: loopbackPort)
-
-    var signalErrnos: [Int32] = []
-    for value in [Int32(0), SIGSTOP, SIGKILL] {
-        errno = 0
-        signalErrnos.append(Darwin.kill(getppid(), value) == 0 ? 0 : errno)
-    }
-    let report = BoundaryChildReport(
-        schema: "nexgenvideo/bpy-boundary-child/2",
-        mode: mode,
-        processIdentifier: getpid(),
-        parentProcessIdentifier: getppid(),
-        allowedWriteSucceeded: allowedWriteSucceeded,
-        outsideWriteDeniedErrno: outsideErrno,
-        forkDeniedErrno: forkErrno,
-        networkDeniedErrno: networkErrno,
-        signalDeniedErrnos: signalErrnos,
-        resourceBytes: 0,
-        retentionDeniedErrno: 0
-    )
-    try JSONEncoder().encode(report).write(to: reportURL, options: .atomic)
-    let denied = [EPERM, EACCES]
-    guard allowedWriteSucceeded,
-          denied.contains(outsideErrno),
-          [EPERM, EAGAIN].contains(forkErrno),
-          denied.contains(networkErrno),
-          signalErrnos.count == 3,
-          signalErrnos.allSatisfy({ denied.contains($0) }) else {
-        Darwin.exit(70)
-    }
-    let acknowledgment = writeRoot.appendingPathComponent("service-observed")
-    let deadline = ProcessInfo.processInfo.systemUptime + 10
-    while !FileManager.default.fileExists(atPath: acknowledgment.path) {
-        guard ProcessInfo.processInfo.systemUptime < deadline else { throw SupervisorError.processLaunch }
-        usleep(5_000)
-    }
-    Darwin.exit(0)
 }
 
 private func reapBeforeExiting(_ process: BpyOwnedProcess) {
@@ -660,16 +280,13 @@ private enum BpySupervisorMain {
             guard CommandLine.arguments.count == 3, CommandLine.arguments[2].utf8.count <= 131_072,
                   let data = Data(base64Encoded: CommandLine.arguments[2]),
                   let configuration = try? JSONDecoder().decode(BpySupervisorConfiguration.self, from: data),
-                  configuration.schema == "nexgenvideo/bpy-supervisor/2" else { throw SupervisorError.invalidArguments }
+                  configuration.schema == "nexgenvideo/bpy-supervisor/2",
+                  [.probe, .job, .verify].contains(configuration.mode),
+                  configuration.injections.isEmpty, configuration.boundary == nil else { throw SupervisorError.invalidArguments }
             _ = Darwin.signal(SIGPIPE, SIG_IGN)
             switch CommandLine.arguments[1] {
             case "host-supervise": Darwin.exit(try supervise(configuration, payload: CommandLine.arguments[2]))
             case "host-child": try launchChild(configuration)
-            case "host-memory-child":
-                guard configuration.mode == .boundary, configuration.boundary == .diagnosticFootprintAfterExec else {
-                    throw SupervisorError.invalidArguments
-                }
-                try runMemoryDiagnostic(.diagnosticFootprintAfterExec)
             default: throw SupervisorError.invalidArguments
             }
         } catch {

@@ -61,21 +61,6 @@ nonisolated final class BpyHostMonitor: NSObject, BpyHostMonitorProtocol, @unche
         try launcher.authorize(execution: execution, pid: pid, start: start)
     }
 
-    func diagnosticGate(execution: UUID) throws -> BpyHeldGateEvidence { try launcher.diagnosticGate(execution: execution) }
-    func diagnosticEnded(execution: UUID) throws -> BpyMonitorResponse { try launcher.diagnosticEnded(execution: execution) }
-    func diagnosticReapedLaunch(execution: UUID) throws -> Bool { try launcher.diagnosticReapedLaunch(execution: execution) }
-    func diagnosticRecovered() throws -> Bool { try launcher.diagnosticRecovered() }
-
-    func inspectDiagnostic(_ request: BpyMonitorRequest) throws -> BpyMonitorResponse {
-        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false else { throw POSIXError(.EPERM) }
-        return try queue.sync {
-            guard let peer = try inspector.process(peerPID()),
-                  peer.executable == (try inspector.canonical(layout.service.appendingPathComponent("Contents/MacOS/NexGenVideoBpyService"))),
-                  try inspector.matches(peer) else { throw POSIXError(.EPERM) }
-            return try launcher.inspect(request, service: peer)
-        }
-    }
-
     private final class Reply: @unchecked Sendable {
         let body: (Data) -> Void
         init(_ body: @escaping (Data) -> Void) { self.body = body }

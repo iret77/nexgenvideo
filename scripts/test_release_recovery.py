@@ -664,7 +664,7 @@ class ReleaseRecoveryTests(unittest.TestCase):
             return set(needs).union(*(ancestors(parent) for parent in needs))
         self.assertEqual({name for name in jobs if "release" in ancestors(name)}, {
             "diagnostic-acceptance", "bpy-runtime", "external-user-acceptance", "chat-hang-replay",
-            "musicvideo-analysis-acceptance", "private-audio-pending", "publish",
+            "musicvideo-analysis-acceptance", "private-audio-pending", "acceptance-pending", "publish",
         })
         for name, job in jobs.items():
             if "release" not in ancestors(name):
@@ -672,7 +672,8 @@ class ReleaseRecoveryTests(unittest.TestCase):
             direct = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
             for artifact_only in (True, False):
                 for deferred in ((False, True) if artifact_only else (False,)):
-                    if name == 'private-audio-pending':expected = artifact_only and deferred
+                    if name == 'acceptance-pending':expected = False
+                    elif name == 'private-audio-pending':expected = artifact_only and deferred
                     elif name == 'musicvideo-analysis-acceptance':expected = artifact_only and not deferred
                     elif name == 'chat-hang-replay':expected = artifact_only
                     elif name == 'publish':expected = not artifact_only

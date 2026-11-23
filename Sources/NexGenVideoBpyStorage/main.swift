@@ -49,11 +49,6 @@ private func runStorageCommand(arguments: [String]) throws -> Int32 {
             completed: completed, ownerPID: owner, ownerStart: ownerStart), directoryFD: descriptor)
     }
     try journal(completed: false)
-    if ProcessInfo.processInfo.environment["NGV_BPY_STORAGE_CRASH_AFTER_JOURNAL"] == "1",
-       Array(arguments.dropFirst(7)) == ["info", "-plist"] {
-        kill(getpid(), SIGKILL)
-        Darwin.exit(71)
-    }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
     process.arguments = Array(arguments.dropFirst(7))

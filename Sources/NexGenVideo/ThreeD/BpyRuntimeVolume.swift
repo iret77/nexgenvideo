@@ -66,44 +66,6 @@ final class BpyRuntimeVolume: @unchecked Sendable {
     }
     private static let roleLocks = RoleLocks()
 
-    static func nativeHoldDataRole(slot: String, cancellation: BpyOperationCancellation,
-                                   maximumDuration: TimeInterval, releaseRequested: @escaping @Sendable () -> Bool,
-                                   acquired: @escaping @Sendable (BpyClockReading) -> Void) throws -> RoleHold {
-        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false,
-              bpyRuntimeServiceNames.contains(slot), maximumDuration.isFinite, maximumDuration >= 5 else { throw BpyAdmissionFailure.closed }
-        let coordination = roleLocks.forRole(slot + "-data")
-        let deadline = try BpyRuntimeClock.awakeSeconds() + 2
-        while !coordination.try() {
-            try cancellation.check()
-            guard try BpyRuntimeClock.awakeSeconds() < deadline else { throw BpyRuntimeError.timedOut }
-            Thread.sleep(forTimeInterval: 0.005)
-        }
-        defer { coordination.unlock() }
-        try cancellation.check()
-        guard let began = BpyRuntimeClock.read() else { throw BpyAdmissionFailure.sensorUnavailable }
-        acquired(began)
-        while true {
-            try cancellation.check()
-            let now = try BpyRuntimeClock.awakeSeconds()
-            if now >= began.awake + 5, releaseRequested() { break }
-            guard now < began.awake + maximumDuration else { throw BpyRuntimeError.timedOut }
-            Thread.sleep(forTimeInterval: 0.005)
-        }
-        guard let ended = BpyRuntimeClock.read() else { throw BpyAdmissionFailure.sensorUnavailable }
-        return .init(slot: slot, role: .data, acquired: began, heldThrough: ended)
-    }
-
-    func nativeRefreshWorkerRole() throws -> BpyClockReading {
-        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false else { throw BpyAdmissionFailure.closed }
-        let coordination = Self.roleLocks.forRole(directory.lastPathComponent)
-        coordination.lock()
-        defer { coordination.unlock() }
-        guard !released, record.role == .worker, let service = try BpyKernelInspection.process(record.servicePID),
-              service.start == record.serviceStart else { throw BpyStorageRecoveryError.unverifiable }
-        try bindService(service.pid)
-        guard let ended = BpyRuntimeClock.read() else { throw BpyAdmissionFailure.sensorUnavailable }
-        return ended
-    }
     let lease: BpyStorageLease
     private let directory: URL
     private var record: Record

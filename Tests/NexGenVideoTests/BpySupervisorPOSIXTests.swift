@@ -1,3 +1,4 @@
+import BpyProcessTestSupport
 import BpySupervisorPOSIX
 import Darwin
 import XCTest

@@ -258,18 +258,3 @@ int ngv_bpy_parent_alive(pid_t expected_parent) {
 }
 
 void ngv_bpy_close_parent_lifeline(void) { close(parent_lifeline); }
-
-void *ngv_bpy_allocate_memory_probe(size_t bytes) {
-    if (bytes == 0 || bytes > 4 * 1024 * 1024) { errno = EINVAL; return NULL; }
-    void *allocation = malloc(bytes);
-    if (allocation == NULL) { errno = ENOMEM; return NULL; }
-    volatile uint8_t *target = allocation;
-    uint64_t state = (uint64_t)(uintptr_t)allocation ^ UINT64_C(0x9e3779b97f4a7c15);
-    for (size_t index = 0; index < bytes; index++) {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        target[index] = (uint8_t)state;
-    }
-    return allocation;
-}
