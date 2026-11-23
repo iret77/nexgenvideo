@@ -166,7 +166,8 @@ nonisolated final class BpyRuntimeObservation: @unchecked Sendable {
         guard enabled else { return }
         let clock = BpyRuntimeClock.read()
         queue.async { [self] in
-            guard trace.activity.count < 16_384 else { trace.overflow = true; return }
+            // Allow 8,192 events per 30 seconds across the 49-minute acceptance deadline.
+            guard trace.activity.count < 98 * 8_192 else { trace.overflow = true; return }
             trace.activity.append(.init(id: id, parent: parent, scope: scope, event: event, clock: clock))
         }
     }
