@@ -263,15 +263,12 @@ struct StoryboardPlanningView: View {
                             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                                 Text("Moment \(momentIndex + 1) · \(duration(moment.offsetTicks))").fontWeight(AppTheme.FontWeight.medium)
                                 if let image = sketches[moment.id] {
-                                    Button {
+                                    StoryboardSketchThumbnail(image: image, intent: moment.intent) {
                                         guard let asset = moment.asset, let home = editor.workingRoot,
                                               let root = DataRootResolver.dataRoot(of: home) else { return }
                                         imageInspection = .init(url: root.appendingPathComponent(asset.image.path),
                                             sha256: asset.image.sha256, title: moment.intent)
-                                    } label: {
-                                        Image(image, scale: 1, label: Text(moment.intent)).resizable().aspectRatio(contentMode: .fit)
-                                            .frame(height: AppTheme.Layout.previewMinHeight)
-                                    }.buttonStyle(.plain).accessibilityLabel("Inspect sketch: \(moment.intent)")
+                                    }
                                     .reviewAcceptanceProbe("storyboard.sketch.inspect.\(moment.id)")
                                 } else {
                                     Label(moment.asset == nil ? "Sketch missing" : "Sketch unavailable", systemImage: "photo.badge.exclamationmark")
@@ -512,5 +509,18 @@ struct StoryboardPlanningView: View {
         editor.storyboardPlanningSelection = .init(home: home, fingerprint: snapshot.fingerprint, shot: shot, number: number,
             steps: snapshot.storyboard.steps.filter { shot.stepIDs.contains($0.id) }, timebase: snapshot.timing.timebase,
             sketchProblems: snapshot.sketchProblems)
+    }
+}
+
+struct StoryboardSketchThumbnail: View {
+    let image: CGImage
+    let intent: String
+    let inspect: () -> Void
+
+    var body: some View {
+        Button(action: inspect) {
+            Image(image, scale: 1, label: Text(intent)).resizable().aspectRatio(contentMode: .fit)
+                .scrollViewportFittedHeight(AppTheme.Layout.storyboardSketchThumbnailMaxHeight)
+        }.buttonStyle(.plain).accessibilityLabel("Inspect sketch: \(intent)")
     }
 }
