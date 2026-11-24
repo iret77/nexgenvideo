@@ -66,6 +66,10 @@ struct SpatialSceneActivity: Equatable {
         reading = false; operating = false; readFailed = !succeeded
         if succeeded { firstReadPending = false }
     }
+
+    mutating func listRefreshed() {
+        if !firstReadPending { readFailed = false }
+    }
 }
 
 @MainActor @Observable
@@ -567,6 +571,7 @@ final class SpatialSceneSession {
             return (try SpatialSceneStore.load(head, in: root), index)
         }
         locations = index.scenes
+        refreshError = nil; activity.listRefreshed()
         showRevision(loaded)
     }
 
@@ -591,6 +596,7 @@ final class SpatialSceneSession {
 
     private func applyCommitted(_ committed: SpatialSceneCommit) {
         locations = committed.index.scenes
+        refreshError = nil; activity.listRefreshed()
         showRevision(committed.revision)
         error = nil
     }

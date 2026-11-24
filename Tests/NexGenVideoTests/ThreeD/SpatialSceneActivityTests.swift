@@ -43,4 +43,22 @@ struct SpatialSceneActivityTests {
         activity.operating = false
         #expect(!activity.busy)
     }
+
+    @Test func aLaterSuccessfulListReadClearsABackgroundReadFailure() {
+        var activity = SpatialSceneActivity()
+        reading(&activity)
+        activity.finishRead(succeeded: true)
+        activity.finishRead(succeeded: false)
+        #expect(activity.offersReload)
+        activity.listRefreshed()
+        #expect(!activity.offersReload && !activity.busy)
+    }
+
+    @Test func aListRefreshCannotUnlockBeforeTheFirstSuccessfulRead() {
+        var activity = SpatialSceneActivity()
+        reading(&activity)
+        activity.finishRead(succeeded: false)
+        activity.listRefreshed()
+        #expect(activity.busy && activity.offersReload)
+    }
 }
