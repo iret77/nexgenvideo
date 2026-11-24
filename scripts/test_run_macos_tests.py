@@ -159,7 +159,8 @@ raise SystemExit(7)
     def invoke(self, root, *, filter="", scope="all", exits=None, empty=(), console=None,
                receipt_change=None, query_error=None, capture_error=None, watchdog_error=None, preflight_error=None,
                app_diagnostic=None, diagnostic_status="verified", product_source_sha=None, checkout_source=None,
-               retained=False, output_capture=None, retained_engine=None, function_counts=None, serialize_app=False):
+               retained=False, output_capture=None, retained_engine=None, function_counts=None, serialize_app=False,
+               debug=False):
         binary_root = root / "built products"
         binary_root.mkdir(exist_ok=True)
         host = binary_root / "NexGenVideoAppKitTestHost"
@@ -173,8 +174,9 @@ raise SystemExit(7)
         compiler.touch()
         platform = root / "selected macOS.platform"
         platform.mkdir(exist_ok=True)
-        args = argparse.Namespace(cache_path="dependency cache", configuration="debug" if retained else "release",
-                                  scratch_path=None if retained else "release scratch", swiftc_flag=[] if retained else ["-enable-testing"],
+        args = argparse.Namespace(cache_path="dependency cache", configuration="debug" if retained or debug else "release",
+                                  scratch_path=None if retained or debug else "release scratch",
+                                  swiftc_flag=[] if retained or debug else ["-enable-testing"],
                                   evidence=root / "evidence", filter=filter, scope=scope,
                                   app_diagnostic=app_diagnostic,
                                   retained_release_engine=retained_engine, serialize_app_tests=serialize_app,
@@ -420,6 +422,19 @@ raise SystemExit(7)
                 self.assertEqual('--no-parallel' in command, name == 'app-swift-testing')
                 self.assertNotIn('--filter', command)
                 self.assertNotIn('--skip', command)
+            self.assertEqual(receipt['combinedFrameworks']['completedRuns'], {'swiftTesting': 2, 'xctest': 2})
+
+    def test_complete_debug_app_serialization_passes_no_parallel_only_to_the_app_host(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code, receipt, calls, _ = self.invoke(Path(directory), serialize_app=True, debug=True)
+            self.assertEqual(code, 0, receipt)
+            self.assertTrue(receipt['serialAppTests'])
+            self.assertEqual(receipt['configuration'], 'debug')
+            self.assertEqual([call[0] for call in calls], ['xctest', 'engine-swift-testing', 'app-swift-testing'])
+            for name, command, _ in calls:
+                self.assertEqual('--no-parallel' in command, name == 'app-swift-testing')
+                if name != 'app-swift-testing':
+                    self.assertEqual(command[command.index('-c') + 1], 'debug')
             self.assertEqual(receipt['combinedFrameworks']['completedRuns'], {'swiftTesting': 2, 'xctest': 2})
 
     def test_app_serialization_rejects_partial_debug_and_diagnostic_contexts(self):
