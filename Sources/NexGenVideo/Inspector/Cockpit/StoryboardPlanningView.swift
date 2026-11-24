@@ -17,6 +17,7 @@ struct StoryboardPlanningView: View {
     @State private var importFailure: String?
     @State private var loadGeneration = 0
     @State private var restoringShotID: String?
+    @State private var restoringPlayback: (timing: StoryboardTimingV1, tick: Int64, cameraID: String?)?
     @State private var editRequest: StoryboardNativeEditRequest?
     @State private var imageInspection: SketchInspection?
     @State private var deletingShot: StoryboardTimingV1.PlannedShot?
@@ -436,6 +437,7 @@ struct StoryboardPlanningView: View {
         if !loading {
             let selection = editor.storyboardPlanningSelection
             restoringShotID = selection?.home == editor.workingRoot ? selection?.shot.id : nil
+            restoringPlayback = playback.failure == nil ? playback.timing.map { ($0, playback.tick, playback.cameraID) } : nil
         }
         editor.storyboardPlanningSelection = nil
         if editor.storyboardAnimaticPlayback === playback { editor.storyboardAnimaticPlayback = nil }
@@ -458,10 +460,16 @@ struct StoryboardPlanningView: View {
 
     private func read(_ request: Int) async {
         guard request == loadGeneration else { return }
-        defer { if request == loadGeneration { loading = false } }
+        defer {
+            if request == loadGeneration {
+                loading = false
+                restoringShotID = nil
+                restoringPlayback = nil
+            }
+        }
         guard let home = editor.workingRoot, let session, editor.openWorkingCopyGeneration == session,
               let root = DataRootResolver.dataRoot(of: home) else {
-            snapshot = nil; sketches = [:]; restoringShotID = nil
+            snapshot = nil; sketches = [:]
             return
         }
         func current() -> Bool {
@@ -471,7 +479,7 @@ struct StoryboardPlanningView: View {
             _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: editor.declaredPluginName,
                 declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
             guard FileManager.default.fileExists(atPath: root.appendingPathComponent(StoryboardV2.currentPath).path) else {
-                snapshot = nil; sketches = [:]; restoringShotID = nil
+                snapshot = nil; sketches = [:]
                 return
             }
             let value = try await Task.detached(priority: .userInitiated) {
@@ -479,20 +487,23 @@ struct StoryboardPlanningView: View {
                 return (snapshot, try ProductionPlanningPresentation.sketchImages(snapshot, dataRoot: root))
             }.value
             guard current() else { return }
-            let position = playback.timing == value.0.timing && playback.failure == nil ? playback.tick : nil
             await playback.configure(value.0.timing, dataRoot: root)
             guard current() else { return }
-            if let position, playback.timing == value.0.timing { playback.seek(to: position) }
+            if let restoringPlayback, playback.timing == restoringPlayback.timing {
+                if let camera = restoringPlayback.cameraID, value.0.timing.shots.contains(where: { $0.cameraID == camera }) {
+                    playback.cameraID = camera
+                }
+                playback.seek(to: restoringPlayback.tick)
+            }
             sketches = value.1
             snapshot = value.0
             if animatic { editor.storyboardAnimaticPlayback = playback }
             if let restoringShotID, let index = value.0.timing.shots.firstIndex(where: { $0.id == restoringShotID }) {
                 select(shot: value.0.timing.shots[index], number: index + 1, snapshot: value.0)
             }
-            restoringShotID = nil
         } catch {
             guard current() else { return }
-            snapshot = nil; sketches = [:]; restoringShotID = nil; failure = error.localizedDescription
+            snapshot = nil; sketches = [:]; failure = error.localizedDescription
         }
     }
 

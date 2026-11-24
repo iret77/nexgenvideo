@@ -166,10 +166,6 @@ enum ProductionSpatialClayAcceptance {
                                                         fingerprint: original.fingerprint)
                 try await driver.reveal(control, in: window)
                 try await driver.waitForPresentation(of: window, control: control, ready: boardReady)
-                guard let position = driver.storyboardPosition(control),
-                      let read = Int(driver.text("storyboard.board.read", in: window) ?? "") else {
-                    throw failed("The saved sketch menu has no visible position on the loaded Board.")
-                }
                 try await driver.menu(control, title: "Create from location…", in: window, preDown: boardReady)
                 let sheet = try await driver.sheet("storyboard.spatial.sheet")
                 try await driver.waitForSpatialLocations(scene, prefix: "storyboard.spatial.", in: sheet)
@@ -177,6 +173,8 @@ enum ProductionSpatialClayAcceptance {
                 try await driver.chooseSpatialCamera(scene: scene, cameraID: camera.id, cameraTitle: camera.name, prefix: "storyboard.spatial.", locationControl: "scene", in: sheet)
                 try driver.visible(["storyboard.spatial.cancel", "storyboard.spatial.assign"], in: sheet)
                 try driver.capture(cancel ? "camera-selected-cancel" : "camera-selected-assign", target: sheet)
+                let position = cancel ? driver.storyboardPosition(control) : nil
+                if cancel && position == nil { throw failed("The saved sketch menu has no visible position before cancellation.") }
                 try await driver.click(cancel ? "storyboard.spatial.cancel" : "storyboard.spatial.assign", in: sheet)
                 try await driver.wait("native camera sketch decision completed", seconds: 90) {
                     window.attachedSheet == nil || driver.text("storyboard.spatial.failure", in: sheet) != nil
@@ -185,15 +183,15 @@ enum ProductionSpatialClayAcceptance {
                 let written = try await Task.detached { try PlanningWriterIO.storyboard(dataRoot: root) }.value
                 if cancel {
                     guard written.fingerprint == original.fingerprint else { throw failed("Canceling a native location sketch changed the Storyboard.") }
+                    guard let position else { throw failed("The previous Board position is missing.") }
                     try await driver.waitForPresentation(of: window, control: control) {
-                        guard boardReady(), let next = Int(driver.text("storyboard.board.read", in: window) ?? ""), next > read,
-                              let after = driver.storyboardPosition(control) else { return false }
-                        let tolerance = 1 / window.backingScaleFactor
-                        return abs(after.minX - position.minX) <= tolerance && abs(after.minY - position.minY) <= tolerance
+                        boardReady() && driver.storyboardPosition(control)?.preserves(position) == true
+                    }
+                    guard let after = driver.storyboardPosition(control), after.preserves(position) else {
+                        throw failed("Canceling a sketch moved the visible Storyboard moment.")
                     }
                     try driver.record("canceled sketch preserved the visible Board position", fields: [
-                        "momentID": momentID, "fingerprint": original.fingerprint, "before": NSStringFromRect(position),
-                        "after": driver.storyboardPosition(control).map(NSStringFromRect) ?? ""])
+                        "momentID": momentID, "fingerprint": original.fingerprint, "before": position.evidence, "after": after.evidence])
                 } else {
                     guard let asset = written.timing.shots.first(where: { $0.id == shotID })?.moments.first(where: { $0.id == momentID })?.asset,
                           written.fingerprint != original.fingerprint else { throw failed("The real location sketch was not assigned to its chosen moment.") }

@@ -961,10 +961,36 @@ final class ProductionVisualSourcesDriver {
         try persist()
     }
 
-    func storyboardPosition(_ control: String) -> NSRect? {
+    struct BoardPosition {
+        let scroll: NSScrollView
+        let clip: NSClipView
+        let origin: NSPoint
+        let targetOrigin: NSPoint
+        let read: Int
+        let scale: CGFloat
+
+        func preserves(_ previous: Self) -> Bool {
+            guard previous.scroll === scroll, previous.clip === clip, previous.scale == scale, read > previous.read else { return false }
+            let limit = 1 / scale
+            return abs(origin.x - previous.origin.x) <= limit && abs(origin.y - previous.origin.y) <= limit
+                && abs(targetOrigin.x - previous.targetOrigin.x) <= limit && abs(targetOrigin.y - previous.targetOrigin.y) <= limit
+        }
+
+        var evidence: [String: Any] {
+            ["scroll": String(describing: ObjectIdentifier(scroll)), "clip": String(describing: ObjectIdentifier(clip)),
+             "origin": [origin.x, origin.y], "targetOrigin": [targetOrigin.x, targetOrigin.y], "read": read, "backingScale": scale]
+        }
+    }
+
+    func storyboardPosition(_ control: String) -> BoardPosition? {
         guard let root = window.contentView, let target = probe(control, in: window), let scroll = target.enclosingScrollView,
-              fullyVisible(target, root: root), scroll === probe("storyboard.board.content", in: window)?.enclosingScrollView else { return nil }
-        return target.convert(target.bounds, to: root)
+              fullyVisible(target, root: root), scroll === probe("storyboard.board.content", in: window)?.enclosingScrollView,
+              state("storyboard.board.read", in: window) == true,
+              let read = Int(text("storyboard.board.read", in: window) ?? ""), read > 0,
+              window.backingScaleFactor.isFinite, window.backingScaleFactor > 0 else { return nil }
+        let clip = scroll.contentView
+        return BoardPosition(scroll: scroll, clip: clip, origin: clip.bounds.origin, targetOrigin: target.convert(target.bounds, to: root).origin,
+                             read: read, scale: window.backingScaleFactor)
     }
 
     func revealStoryboardMoment(_ control: String, shotID: String, orderedShots: [String], fingerprint: String) async throws {
