@@ -818,6 +818,12 @@ final class EditorViewModel {
         workflowHandoffPending = false
     }
 
+    // A kickoff that could not be sent while the agent backend was unavailable is sent once it becomes ready.
+    private func retryPendingWorkflowHandoff() {
+        guard workflowHandoffPending else { return }
+        Task { await refreshEngineState() }
+    }
+
     /// Whether every production-start affordance must be disabled.
     var productionStarted: Bool { productionStarting || hasProductionPipeline }
 
@@ -1585,15 +1591,18 @@ final class EditorViewModel {
             }
         )
         agentService.editor = self
+        agentService.onBackendReady = { [weak self] in self?.retryPendingWorkflowHandoff() }
         searchIndex.assetsProvider = { [weak self] in self?.mediaAssets ?? [] }
 
-        // Re-check media presence when the app regains focus: a user may have
-        // deleted/moved backing files in Finder (or ejected a volume) while we
-        // were inactive. `refreshMissingMediaCache` stats off the main thread.
+        // Files and engine state can change outside the app only while it is inactive; in-app panels and sheets are not external changes.
         didBecomeActiveObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshMissingMediaCache() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.refreshMissingMediaCache()
+                Task { await self.refreshEngineState() }
+            }
         }
     }
 

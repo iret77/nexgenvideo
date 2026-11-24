@@ -24,6 +24,7 @@ enum ProductionSpatialHashCancellationAcceptance {
         let runtime = operation.session
         let authority = try PipelineSpatialSceneAuthority(editor: context.editor, runtime: runtime)
         let session = SpatialSceneSession(pipelineRoot: context.dataRoot, runtime: runtime, authority: authority)
+        await session.readPersistedLocations()
         var scenes: [SpatialSceneRevision] = []
         for name in ["Hash cancellation A", "Hash cancellation B"] {
             await session.create(name: name)

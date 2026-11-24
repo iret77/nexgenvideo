@@ -48,13 +48,40 @@ protocol SpatialSceneAuthority: AnyObject {
     ) async throws -> SpatialSceneCommit
 }
 
+struct SpatialSceneActivity: Equatable {
+    var operating = false
+    var reading = false
+    private(set) var firstReadPending = true
+    private(set) var readFailed = false
+
+    // Location controls stay locked until the persisted list has been read successfully once.
+    var busy: Bool { operating || firstReadPending }
+    var working: Bool { operating || (firstReadPending && !readFailed) }
+    var readingLocations: Bool { reading || (firstReadPending && !readFailed) }
+    var cancellable: Bool { operating && !firstReadPending }
+    var admitsRead: Bool { !operating }
+    var offersReload: Bool { readFailed && !operating }
+
+    mutating func finishRead(succeeded: Bool) {
+        reading = false; operating = false; readFailed = !succeeded
+        if succeeded { firstReadPending = false }
+    }
+
+    mutating func listRefreshed() {
+        if !firstReadPending { readFailed = false }
+    }
+}
+
 @MainActor @Observable
 final class SpatialSceneSession {
     private(set) var locations: [SpatialSceneHead] = []
     private(set) var current: SpatialSceneRevision?
     private(set) var snapshot: BpySpatialSnapshot?
     private(set) var snapshotRevision = UUID()
-    private(set) var busy = false
+    private(set) var activity = SpatialSceneActivity()
+    var busy: Bool { activity.busy }
+    var working: Bool { activity.working }
+    var offersReload: Bool { activity.offersReload }
     private(set) var commitProgress: SpatialSceneCommitProgress?
     private var actionError: String?
     private(set) var error: String? {
@@ -83,7 +110,7 @@ final class SpatialSceneSession {
     private(set) var historyIntent: SpatialSceneHistoryIntent?
     private(set) var historyTrace = SpatialSceneHistoryTrace()
     @ObservationIgnored private var historyAdmissionObserver: (@MainActor (SpatialSceneHistoryIntent) -> Void)?
-    private(set) var readingLocations = false
+    var readingLocations: Bool { activity.readingLocations }
     private var refreshError: String?
 
     init(pipelineRoot: URL, runtime: BpyRuntimeSession, authority: any SpatialSceneAuthority,
@@ -98,7 +125,7 @@ final class SpatialSceneSession {
     var selectedCamera: BpySpatialCamera? { snapshot?.cameras.first { $0.id == selectedCameraID } }
     var canUndo: Bool { !busy && historyTarget(undo: true) != nil }
     var canRedo: Bool { !busy && historyTarget(undo: false) != nil }
-    var canCancel: Bool { busy && commitProgress == nil && !userCancellationRequested }
+    var canCancel: Bool { activity.cancellable && commitProgress == nil && !userCancellationRequested }
     var historyNotice: String? {
         switch historyIntent?.status {
         case .rejectedBusy:
@@ -112,7 +139,7 @@ final class SpatialSceneSession {
     }
 
     private func beginOperation() {
-        busy = true; userCancellationRequested = false; error = nil; historyIntent = nil
+        activity.operating = true; userCancellationRequested = false; error = nil; historyIntent = nil
     }
 
     private func operationFailed(_ error: any Error) {
@@ -150,34 +177,43 @@ final class SpatialSceneSession {
             let (heads, loaded) = try await readLocations()
             guard !Task.isCancelled, !busy, snapshotRevision == previousSnapshot else { return false }
             applyLocations(heads, selected: loaded)
+            activity.finishRead(succeeded: true)
         } catch {
             guard !Task.isCancelled, !busy, snapshotRevision == previousSnapshot else { return false }
             refreshError = error.localizedDescription
+            activity.finishRead(succeeded: false)
         }
         return true
     }
 
     func reload() {
-        guard !busy else { return }
+        guard activity.admitsRead else { return }
         beginOperation()
-        readingLocations = true
+        activity.reading = true
         refreshTask = Task {
-            defer { readingLocations = false; busy = false; refreshTask = nil }
+            var succeeded = false
+            defer { activity.finishRead(succeeded: succeeded); refreshTask = nil }
             do {
                 let (heads, selected) = try await readLocations()
                 try Task.checkCancellation()
                 applyLocations(heads, selected: selected)
+                succeeded = true
             } catch {
                 if !Task.isCancelled { refreshError = error.localizedDescription }
             }
         }
     }
 
+    func readPersistedLocations() async {
+        reload()
+        await refreshTask?.value
+    }
+
     func open(_ head: SpatialSceneHead) {
         guard !busy else { return }
         beginOperation()
         refreshTask = Task {
-            defer { busy = false; refreshTask = nil }
+            defer { activity.operating = false; refreshTask = nil }
             do {
                 try await authority.requireReadableScene()
                 try await load(head)
@@ -275,7 +311,7 @@ final class SpatialSceneSession {
         let task = Task { await performEvaluation(current, frame: frame) }
         operationTask = task
         await task.value
-        operationTask = nil; busy = false
+        operationTask = nil; activity.operating = false
     }
 
     private func performEvaluation(_ current: SpatialSceneRevision, frame: Int) async {
@@ -328,7 +364,7 @@ final class SpatialSceneSession {
         let task = Task { await performCameraRender(current, cameraID: cameraID) }
         operationTask = task
         await task.value
-        operationTask = nil; busy = false
+        operationTask = nil; activity.operating = false
     }
 
     private func performCameraRender(_ current: SpatialSceneRevision, cameraID: String) async {
@@ -352,7 +388,7 @@ final class SpatialSceneSession {
     func dismissCameraPreview() { cameraPreview = nil }
 
     func cancel() {
-        guard busy, commitProgress == nil else { return }
+        guard activity.cancellable, commitProgress == nil else { return }
         userCancellationRequested = true
         refreshTask?.cancel()
         operationTask?.cancel()
@@ -390,7 +426,7 @@ final class SpatialSceneSession {
         operationTask = task
         await task.value
         operationTask = nil
-        busy = false
+        activity.operating = false
     }
 
     private func performEdit(_ command: [String: Any], newName: String?,
@@ -501,7 +537,7 @@ final class SpatialSceneSession {
             completed.observedUptime = ProcessInfo.processInfo.systemUptime
             recordHistory(completed)
             operationTask = nil
-            busy = false
+            activity.operating = false
         }
         operationTask = task
         return (intent.id, task)
@@ -535,6 +571,7 @@ final class SpatialSceneSession {
             return (try SpatialSceneStore.load(head, in: root), index)
         }
         locations = index.scenes
+        refreshError = nil; activity.listRefreshed()
         showRevision(loaded)
     }
 
@@ -559,6 +596,7 @@ final class SpatialSceneSession {
 
     private func applyCommitted(_ committed: SpatialSceneCommit) {
         locations = committed.index.scenes
+        refreshError = nil; activity.listRefreshed()
         showRevision(committed.revision)
         error = nil
     }

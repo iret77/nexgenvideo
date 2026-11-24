@@ -72,6 +72,11 @@ struct SpatialSceneView: View {
     private var inspectorContent: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
             Text("Locations").interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+            if session.offersReload {
+                Button("Reload locations") { session.reload() }
+                    .accessibilityIdentifier("spatial.location.reload")
+                    .reviewAcceptanceProbe("spatial.location.reload")
+            }
             ForEach(session.locations) { head in
                 Button(head.name) { session.open(head) }
                     .buttonStyle(.capsule(isSelected: head.id == session.current?.manifest.sceneID))
@@ -131,7 +136,7 @@ struct SpatialSceneView: View {
             Button("Redo") { _ = session.requestRedo() }.disabled(!editingEnabled || !session.canRedo)
                 .fixedSize(horizontal: true, vertical: false)
                 .reviewAcceptanceProbe("spatial.redo", state: editingEnabled && session.canRedo)
-            if session.busy {
+            if session.working {
                 ProgressView().controlSize(.small)
                 if session.canCancel {
                     Button("Cancel") { session.cancel() }

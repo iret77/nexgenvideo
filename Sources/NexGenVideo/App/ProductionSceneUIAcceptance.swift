@@ -17,8 +17,12 @@ enum ProductionSceneUIAcceptance {
                 try await waitForViewport(NSSize(width: 960, height: 640), driver: driver)
                 try await ProductionV2PlanningAcceptance.selectPhase("production_design", context: context, driver: driver)
                 try await driver.segment("production-design.view", title: "Locations · 3D", titles: ["Design", "Locations · 3D"], expected: "locations", in: window)
+                // Edit only after every persisted location is listed; the list reflows the name field.
+                let persisted = try await Task.detached { try SpatialSceneStore.index(in: root).scenes.map(\.id.uuidString) }.value
                 try await driver.wait("real location runtime ready", seconds: 90) {
-                    driver.state("spatial.location.create", in: window) == true || driver.text("spatial.workspace.error", in: window) != nil
+                    driver.text("spatial.workspace.error", in: window) != nil
+                        || (driver.state("spatial.location.create", in: window) == true
+                            && persisted.allSatisfy { driver.state("spatial.location." + $0, in: window) == true })
                 }
                 if let error = driver.text("spatial.workspace.error", in: window) { throw failed(error) }
                 let name = "Pale room \(Int(scale * 100))"

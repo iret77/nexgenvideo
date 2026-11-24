@@ -47,30 +47,28 @@ struct CapsuleButtonStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .interfaceFont(size: fontSize, weight: AppTheme.FontWeight.medium)
-                .foregroundStyle(foreground)
                 .padding(.horizontal, hPadding)
                 .padding(.vertical, AppTheme.Spacing.xs)
                 .frame(minHeight: (size == .small ? AppTheme.Control.compactHeight : AppTheme.Control.regularHeight) * textScale)
-                .background(RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous).fill(background))
-                .overlay(
-                    RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous).fill(
-                        AppTheme.Text.primaryColor.opacity(
-                            hovered && isEnabled ? AppTheme.Opacity.faint : AppTheme.Opacity.transparent
+                // Scoped so an enabled-state change never animates the button's position when its container relayouts.
+                .animation(reduceMotion ? nil : .easeOut(duration: AppTheme.Anim.hover)) { chrome in
+                    chrome
+                        .foregroundStyle(foreground)
+                        .background(RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous).fill(background))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous).fill(
+                                AppTheme.Text.primaryColor.opacity(
+                                    hovered && isEnabled ? AppTheme.Opacity.faint : AppTheme.Opacity.transparent
+                                )
+                            )
                         )
-                    )
-                )
+                        .opacity(isEnabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabledControl)
+                }
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
                 .modifier(ControlKeyboardFocusRing(radius: AppTheme.Radius.sm))
-                .opacity(opacity)
+                .opacity(isEnabled && configuration.isPressed ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
                 .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous))
                 .onHover { hovered = isEnabled && $0 }
-                .animation(reduceMotion ? nil : .easeOut(duration: AppTheme.Anim.hover), value: hovered)
-                .animation(reduceMotion ? nil : .easeOut(duration: AppTheme.Anim.hover), value: isEnabled)
-        }
-
-        private var opacity: Double {
-            guard isEnabled else { return AppTheme.Opacity.disabledControl }
-            return configuration.isPressed ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque
         }
     }
 }
