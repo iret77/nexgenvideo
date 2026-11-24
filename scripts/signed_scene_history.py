@@ -3,6 +3,7 @@
 from fractions import Fraction
 from functools import lru_cache
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -65,7 +66,7 @@ def acquire_image(root, inputs, product):
     require(len(pending) == 1 and pending[0]['conclusion'] == 'failure' and pending[0]['run_attempt'] == 1
             and pending[0]['run_id'] == producer and pending[0]['head_sha'] == product, 'Unexpected release gate result')
     mounted = internal_image_evidence(run, inventory, product)
-    require(mounted['dmgSHA256'] == expected and mounted['app']['CFBundleVersion'] == '143'
+    require(mounted['dmgSHA256'] == expected and mounted['app']['CFBundleVersion'] == '144'
             and mounted['app']['CFBundleShortVersionString'] == '1.8.0', 'The original mounted receipt differs')
     release, = [job for job in inventory['jobs'] if job['name'] == 'release']
     item = original_item(run, release, 'release-user-journey-input')
@@ -341,6 +342,17 @@ def editing_result(directory, product, pid, installed):
     return dict(appScopePassed=True, movies=movies, decoders=decoders, assignmentRenders=assignments, geometry=geometry)
 
 
+def verify_launch_presentation(proof, pid):
+    number = proof['windowNumber']
+    screen = proof['onScreenWindowNumbers']
+    shown, ordered, observed = proof['shownUptime'], proof['orderedOutUptime'], proof['observedUptime']
+    require(type(proof['pid']) is int and proof['pid'] == pid
+            and type(number) is int and number > 0 and isinstance(screen, list) and screen
+            and all(type(item) is int and item > 0 for item in screen) and number not in screen
+            and all(type(t) in (int, float) and math.isfinite(t) for t in (shown, ordered, observed))
+            and 0 < shown <= ordered <= observed, 'The real splash must leave the screen before scene input')
+
+
 def execute_history(installed, root, evidence, product, scope='scene-history'):
     executable = installed / 'Contents/MacOS/NexGenVideo'
     child = environment(os.environ, root / 'home')
@@ -373,6 +385,8 @@ def execute_history(installed, root, evidence, product, scope='scene-history'):
             write(evidence / 'scene-launch.json', launch)
     require(code == 0, f'Scene history exited with {code}')
     require(launch['notificationOptOutObserved'], 'The App did not confirm its notification preference')
+    presentation = json.loads((native / 'launch-presentation.json').read_bytes())
+    verify_launch_presentation(presentation, process.pid)
     write(native / 'process-result.json', dict(pid=process.pid, sourceSHA=product, mode='runtime', returncode=code))
     if scope == 'scene-editing':
         return editing_result(native, product, process.pid, installed)

@@ -35,6 +35,9 @@ class SignedSceneHistoryTests(unittest.TestCase):
                 def start(*args, **kwargs):
                     kwargs['stderr'].write(b'[app] NOTICE: notifications disabled in settings\n')
                     kwargs['stderr'].flush()
+                    native = Path(kwargs['env']['NGV_SELFTEST_BPY'])
+                    history.write(native / 'launch-presentation.json', dict(pid=proc.pid, windowNumber=34,
+                        onScreenWindowNumbers=[40], shownUptime=68.1, orderedOutUptime=70.5, observedUptime=70.6))
                     return proc
 
                 with patch.dict(os.environ, {'NGV_SELFTEST_OLD': '1', 'GH_TOKEN': 'test-placeholder'}), \
@@ -60,6 +63,14 @@ class SignedSceneHistoryTests(unittest.TestCase):
                     self.assertEqual(env['HOME'], env['CFFIXED_USER_HOME'])
                     self.assertNotIn('GH_TOKEN', env)
                     self.assertNotIn('NGV_SELFTEST_OLD', env)
+
+    def test_splash_proof_requires_the_launched_process_and_a_departed_window(self):
+        proof = dict(pid=47, windowNumber=34, onScreenWindowNumbers=[40], shownUptime=0.4, orderedOutUptime=1.4, observedUptime=1.6)
+        for change in (dict(pid=49), dict(windowNumber=True), dict(onScreenWindowNumbers=[34, 40]),
+                       dict(onScreenWindowNumbers=[]), dict(onScreenWindowNumbers=[True]), dict(onScreenWindowNumbers='40'),
+                       dict(shownUptime=2), dict(orderedOutUptime=True), dict(observedUptime=1), dict(observedUptime=float('inf'))):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                history.verify_launch_presentation(proof | change, 47)
 
     def test_render_timing_requires_the_complete_planned_interval(self):
         proof = dict(request=dict(startFrame=7, endFrame=9, width=128, height=96),

@@ -23,6 +23,7 @@ enum BpyRuntimeSelfTest {
                     withIntermediateDirectories: true
                 )
                 outputDirectory = output
+                try await recordLaunchPresentation(in: output)
                 switch ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY_SCOPE"] {
                 case "scene-history":
                     pendingResult = try await runSceneHistory(output: output)
@@ -51,6 +52,39 @@ enum BpyRuntimeSelfTest {
                 Darwin.exit(1)
             }
         }
+    }
+
+    private static func recordLaunchPresentation(in output: URL) async throws {
+        let splash = SplashScreenController.shared
+        guard let number = splash.presentedWindowNumber, number > 0 else {
+            throw GateBlocked("The scene workflow requires the ordinary launch splash.")
+        }
+        var shownUptime: TimeInterval?
+        let deadline = ProcessInfo.processInfo.systemUptime + 15
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            if let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] {
+                let numbers = rows.compactMap { ($0[kCGWindowNumber as String] as? NSNumber)?.intValue }
+                if shownUptime == nil, splash.orderedOutUptime == nil, rows.contains(where: {
+                    ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == number
+                        && ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid()
+                }) {
+                    shownUptime = ProcessInfo.processInfo.systemUptime
+                }
+                if let shownUptime, let orderedOut = splash.orderedOutUptime,
+                   numbers.count == rows.count, !numbers.isEmpty, !numbers.contains(number) {
+                    let proof: [String: Any] = [
+                        "pid": getpid(), "windowNumber": number, "onScreenWindowNumbers": numbers,
+                        "shownUptime": shownUptime, "orderedOutUptime": orderedOut,
+                        "observedUptime": ProcessInfo.processInfo.systemUptime
+                    ]
+                    try JSONSerialization.data(withJSONObject: proof).write(
+                        to: output.appendingPathComponent("launch-presentation.json"), options: .atomic)
+                    return
+                }
+            }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        throw GateBlocked("The launch splash did not leave the screen before the scene workflow.")
     }
 
     private static func recordInspectionFailureDiagnostic() {

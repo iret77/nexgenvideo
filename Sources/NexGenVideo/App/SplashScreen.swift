@@ -9,6 +9,8 @@ import SwiftUI
 final class SplashScreenController {
     static let shared = SplashScreenController()
 
+    private(set) var presentedWindowNumber: Int?
+    private(set) var orderedOutUptime: TimeInterval?
     private var window: NSWindow?
     private var didShow = false
     private var onDismiss: (() -> Void)?
@@ -35,6 +37,7 @@ final class SplashScreenController {
         window.onClick = { [weak self] in self?.dismiss() }
         window.orderFrontRegardless()
         self.window = window
+        presentedWindowNumber = window.windowNumber
 
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(AppTheme.Anim.splashHold))
@@ -57,6 +60,9 @@ final class SplashScreenController {
         Task {
             try? await Task.sleep(for: .seconds(AppTheme.Anim.splashFade))
             window.orderOut(nil)
+            if !window.isVisible {
+                self.orderedOutUptime = ProcessInfo.processInfo.systemUptime
+            }
         }
     }
 }

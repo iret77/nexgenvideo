@@ -35,13 +35,14 @@ final class ProductionVisualSourcesDriver {
         guard ready() else { throw GateBlocked("Native visual sources: " + label + "; " + diagnostic()) }
     }
 
-    func waitForPresentation(of window: NSWindow, control id: String? = nil, requiredViewport: NSSize? = nil) async throws {
+    func waitForPresentation(of window: NSWindow, control id: String? = nil, requiredViewport: NSSize? = nil,
+                             ready: () -> Bool = { true }) async throws {
         var previous: [NSRect] = []
         var previousRoot: NSView?, previousControl: NSView?
         var previousNumber = -1, samples = 0
         var stableSince = 0.0, stableFor = 0.0
         try await wait(requiredViewport == nil ? "native window presentation" : "minimum scene viewport") {
-            guard window.isVisible, let root = window.contentView, root.window === window,
+            guard ready(), window.isVisible, let root = window.contentView, root.window === window,
                   requiredViewport.map({ $0 == root.bounds.size }) ?? true,
                   let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
                     as? [[String: Any]] else {
@@ -282,15 +283,17 @@ final class ProductionVisualSourcesDriver {
         return Double(size)
     }
 
-    func click(_ id: String, in target: NSWindow, enabled: Bool = true, fraction: NSPoint = .init(x: 0.5, y: 0.5)) async throws {
+    func click(_ id: String, in target: NSWindow, enabled: Bool = true, fraction: NSPoint = .init(x: 0.5, y: 0.5),
+               preDown: (() -> Bool)? = nil) async throws {
         let transaction = try NativeAcceptancePointer.claim()
         defer { NativeAcceptancePointer.release(transaction) }
-        try await click(id, in: target, enabled: enabled, fraction: fraction, transaction: transaction)
+        try await click(id, in: target, enabled: enabled, fraction: fraction, transaction: transaction, preDown: preDown)
     }
 
     private func click(_ id: String, in target: NSWindow, enabled: Bool = true,
                        fraction: NSPoint = .init(x: 0.5, y: 0.5), transaction: UUID,
-                       localButton: (title: String, target: LocalButtonTarget)? = nil, editingText: Bool = false) async throws {
+                       localButton: (title: String, target: LocalButtonTarget)? = nil, editingText: Bool = false,
+                       preDown: (() -> Bool)? = nil) async throws {
         guard [fraction.x, fraction.y].allSatisfy({ $0.isFinite && (0...1).contains($0) }) else {
             throw GateBlocked("The native pointer fraction is invalid: " + id)
         }
@@ -340,7 +343,7 @@ final class ProductionVisualSourcesDriver {
             "windowPoint": [windowPoint.x, windowPoint.y]])
         do {
             try await NativeAcceptancePointer.click(view, window: target, fraction: fraction, token: transaction,
-                                                    buttonReadiness: readiness, editing: editing) { evidence in
+                                                    buttonReadiness: readiness, editing: editing, preDown: preDown) { evidence in
                 self.interactions[index]["nativeInput"] = evidence
                 self.interactions[index]["localMonitorEvents"] = (evidence["received"] as? [[String: Any]])?.filter {
                     [NSEvent.EventType.leftMouseDown.rawValue, NSEvent.EventType.leftMouseUp.rawValue].contains($0["type"] as? UInt ?? 0)
@@ -1838,12 +1841,18 @@ enum NativeAcceptancePointer {
                                editing: FieldTarget = .ordinary,
                                windowFailure: ([String: Any]) -> Void,
                                accessibilityFailure: ([String: Any]) -> Void) throws -> Target {
-        guard NSApp.isActive, window.isVisible, window.isKeyWindow, !window.ignoresMouseEvents,
-              let root = window.contentView, probe.window === window,
-              !probe.isHiddenOrHasHiddenAncestor,
-              [fraction.x, fraction.y].allSatisfy({ $0.isFinite && (0...1).contains($0) }),
-              let screen = NSScreen.screens.first else {
-            throw GateBlocked("The original native pointer target is unavailable.")
+        let root = window.contentView
+        let screen = NSScreen.screens.first
+        let availability: [(String, Bool)] = [
+            ("appActive", NSApp.isActive), ("windowVisible", window.isVisible), ("windowKey", window.isKeyWindow),
+            ("windowReceivesMouse", !window.ignoresMouseEvents), ("contentView", root != nil),
+            ("probeInWindow", probe.window === window), ("probeVisible", !probe.isHiddenOrHasHiddenAncestor),
+            ("validFraction", [fraction.x, fraction.y].allSatisfy { $0.isFinite && (0...1).contains($0) }),
+            ("screen", screen != nil)
+        ]
+        let missing = availability.compactMap { $0.1 ? nil : $0.0 }
+        guard missing.isEmpty, let root, let screen else {
+            throw GateBlocked("The original native pointer target is unavailable (\(missing.joined(separator: ", "))).")
         }
         let frame = probe.convert(probe.bounds, to: root)
         guard [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite),
@@ -2135,7 +2144,7 @@ enum NativeAcceptancePointer {
 
     static func click(_ probe: NSView, window: NSWindow, fraction: NSPoint,
                       token: UUID, buttonReadiness: LocalButtonReadiness? = nil,
-                      editing: FieldTarget = .ordinary,
+                      editing: FieldTarget = .ordinary, preDown: (() -> Bool)? = nil,
                       record: ([String: Any]) throws -> Void) async throws {
         guard owner == token, CGPreflightPostEventAccess(),
               !CGEventSource.buttonState(.combinedSessionState, button: .left) else {
@@ -2227,6 +2236,7 @@ enum NativeAcceptancePointer {
         var movementTargetComparisons: [String: Bool] = [:]
         var movementTarget: [String: Any] = [:]
         let preDownClauseNames = ["pointerX", "pointerY", "buttonReleased", "originalTarget"]
+            + (preDown == nil ? [] : ["actionReady"])
         var preDownClauses = Dictionary(uniqueKeysWithValues: preDownClauseNames.map { ($0, "NOT_EVALUATED") })
         var preDownFirstFailure: String?
         var preDownActualPoint: NSPoint?
@@ -2312,6 +2322,9 @@ enum NativeAcceptancePointer {
                   preDownClause("buttonReleased", !CGEventSource.buttonState(.combinedSessionState, button: .left)),
                   preDownClause("originalTarget", try originalTargetUnchanged()) else {
                 throw GateBlocked("The actual system pointer or original control changed before Down.")
+            }
+            if let preDown, !preDownClause("actionReady", preDown()) {
+                throw GateBlocked("The expected workspace state changed before Down.")
             }
             try record(evidence("prepared"))
             try Task.checkCancellation()

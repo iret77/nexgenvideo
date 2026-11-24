@@ -114,17 +114,17 @@ struct StoryboardPlanningView: View {
                 if loading { ProgressView().controlSize(.small) }
             }
             .padding(.horizontal, AppTheme.Spacing.lg)
-            if let snapshot {
+            if snapshot != nil || loading {
                 HStack(spacing: AppTheme.Spacing.md) {
-                    Button("Undo") { history(redo: false, snapshot: snapshot) }
+                    Button("Undo") { history(redo: false) }
                         .disabled(!canAttachSketch || !PipelineStoryboardEditor.canUndo(editor: editor))
                         .reviewAcceptanceProbe("storyboard.undo", state: canAttachSketch && PipelineStoryboardEditor.canUndo(editor: editor))
-                    Button("Redo") { history(redo: true, snapshot: snapshot) }
+                    Button("Redo") { history(redo: true) }
                         .disabled(!canAttachSketch || !PipelineStoryboardEditor.canRedo(editor: editor))
                         .reviewAcceptanceProbe("storyboard.redo", state: canAttachSketch && PipelineStoryboardEditor.canRedo(editor: editor))
                     Spacer(minLength: AppTheme.Spacing.sm)
                 }.buttonStyle(InlineActionButtonStyle()).padding(.horizontal, AppTheme.Spacing.lg)
-                if !canAttachSketch {
+                if snapshot != nil && !canAttachSketch {
                     Text(editingGuidance).foregroundStyle(AppTheme.Text.secondaryColor)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, AppTheme.Spacing.lg)
@@ -408,8 +408,8 @@ struct StoryboardPlanningView: View {
         }
     }
 
-    private func history(redo: Bool, snapshot: StoryboardBundleSnapshot) {
-        guard canAttachSketch else { return }
+    private func history(redo: Bool) {
+        guard let snapshot, canAttachSketch else { return }
         playback.pause()
         importing = true
         Task {

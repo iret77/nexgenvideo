@@ -162,15 +162,24 @@ enum ProductionV2PlanningAcceptance {
               changed.moments.contains(where: { $0.offsetTicks == offset && $0.intent == intent }) else {
             throw failed("Adding a sketch moment changed shot identity/timing or failed to preserve the typed moment.")
         }
-        let beforeUndo = editor.engineStateRevision
-        try await driver.click("storyboard.undo", in: window)
+        func clickHistoryButton(_ id: String, fingerprint: String) async throws -> Int {
+            func ready() -> Bool {
+                window.isKeyWindow && window.attachedSheet == nil && !busy(editor)
+                    && driver.text("storyboard.v2.workspace", in: window) == fingerprint
+                    && driver.state(id, in: window) == true
+            }
+            try await driver.waitForPresentation(of: window, control: id, ready: ready)
+            let revision = editor.engineStateRevision
+            try await driver.click(id, in: window, preDown: ready)
+            return revision
+        }
+        let beforeUndo = try await clickHistoryButton("storyboard.undo", fingerprint: added.fingerprint)
         try await driver.wait("Storyboard Undo committed", seconds: 30) { editor.engineStateRevision > beforeUndo && !busy(editor) }
         let undone = try await board(context, requireVisuals: false)
         guard sameBoardContents(undone, initial), undone.storyboard.header.revision > added.storyboard.header.revision else {
             throw failed("Native Storyboard Undo did not restore the preceding moments and timing.")
         }
-        let beforeRedo = editor.engineStateRevision
-        try await driver.click("storyboard.redo", in: window)
+        let beforeRedo = try await clickHistoryButton("storyboard.redo", fingerprint: undone.fingerprint)
         try await driver.wait("Storyboard Redo committed", seconds: 30) { editor.engineStateRevision > beforeRedo && !busy(editor) }
         let restored = try await board(context, requireVisuals: false)
         guard sameBoardContents(restored, added), restored.storyboard.header.revision > undone.storyboard.header.revision else {
