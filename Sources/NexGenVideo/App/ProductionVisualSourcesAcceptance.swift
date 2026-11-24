@@ -24,7 +24,19 @@ enum ProductionVisualSourcesAcceptance {
                 guard let shot = board.timing.shots.first, let moment = shot.moments.first else { throw failed("Storyboard fixture has no moments.") }
                 let prefix = "storyboard.native-sketch."
                 func open(_ mode: String, _ title: String) async throws -> NSWindow {
-                    try await driver.menu("storyboard.sketch.sources." + moment.id, title: title, in: window)
+                    let current = try await readBoard(context)
+                    let control = "storyboard.sketch.sources." + moment.id
+                    guard current.timing.shots.first(where: { $0.id == shot.id })?.moments.contains(where: { $0.id == moment.id }) == true else {
+                        throw failed("The sketch moment no longer belongs to the selected shot.")
+                    }
+                    func ready() -> Bool {
+                        window.isKeyWindow && window.attachedSheet == nil && driver.state(control, in: window) == true
+                            && driver.text("storyboard.v2.workspace", in: window) == current.fingerprint
+                    }
+                    try await driver.revealStoryboardMoment(control, shotID: shot.id, orderedShots: current.timing.shots.map(\.id),
+                                                            fingerprint: current.fingerprint)
+                    try await driver.waitForPresentation(of: window, control: control, ready: ready)
+                    try await driver.menu(control, title: title, in: window, preDown: ready)
                     let sheet = try await driver.sheet(prefix + "sheet")
                     try await driver.wait("native sketch mode " + mode) { driver.text(prefix + "sheet", in: sheet) == mode }
                     try driver.visible([prefix + "choose", prefix + "cancel", prefix + "confirm"], in: sheet)

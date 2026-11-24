@@ -251,6 +251,11 @@ enum ProductionV2PlanningAcceptance {
                 let sheet = try await driver.sheet("storyboard.native-sketch.choose", waitForControl: true)
                 guard driver.state("storyboard.native-sketch.confirm", in: sheet) == false else { throw failed("An unprepared sketch is assignable.") }
                 try await driver.chooseFile(sourceVideo, in: sheet)
+                try await driver.wait("selected source video and time entry") {
+                    window.attachedSheet === sheet && sheet.isKeyWindow
+                        && driver.text("storyboard.native-sketch.source-video", in: sheet) == sourceHash
+                        && driver.state("storyboard.native-sketch.source-seconds", in: sheet) == true
+                }
                 let time = ProductionTimeEntry.seconds(moment.offsetTicks, timebase: current.timing.timebase)
                 try await driver.fill("storyboard.native-sketch.source-seconds", value: time, in: sheet)
                 try await driver.click("storyboard.native-sketch.preview-frame", in: sheet)

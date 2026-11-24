@@ -45,13 +45,14 @@ struct StoryboardNativeSketchSheet: View {
                         .buttonStyle(InlineActionButtonStyle()).disabled(!active)
                         .reviewAcceptanceProbe("storyboard.native-sketch.choose", state: active)
                     if let source, let root = DataRootResolver.dataRoot(of: home) {
-                        ProductionInputPreview(reference: source.source, dataRoot: root, title: source.originalFilename)
                         TextField("Source position (seconds)", text: $sourceSeconds).disabled(!active)
-                            .reviewAcceptanceProbe("storyboard.native-sketch.source-seconds", text: sourceSeconds)
+                            .reviewAcceptanceProbe("storyboard.native-sketch.source-seconds", state: active, text: sourceSeconds)
                         Text("Source duration: \(String(format: "%.6f", source.timebase.seconds(for: source.durationTicks))) s")
                             .foregroundStyle(AppTheme.Text.secondaryColor)
                         Button("Preview frame") { extract() }.buttonStyle(InlineActionButtonStyle()).disabled(!active)
                             .reviewAcceptanceProbe("storyboard.native-sketch.preview-frame", state: active)
+                        ProductionInputPreview(reference: source.source, dataRoot: root, title: source.originalFilename)
+                            .reviewAcceptanceProbe("storyboard.native-sketch.source-video", text: source.source.sha256)
                     }
                     if let image {
                         Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)

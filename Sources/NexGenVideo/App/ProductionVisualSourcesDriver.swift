@@ -268,35 +268,47 @@ final class ProductionVisualSourcesDriver {
             var previousGeometry: [NSRect] = []
             var stableSince: TimeInterval?
             var stableSamples = 0
-            try await wait("native scroll ended with settled target geometry " + id, seconds: 2) {
-                root.layoutSubtreeIfNeeded()
-                guard completion.ended, target.contentView === root, self.probe(id, in: target) === view,
-                      view.window === target, scroll.window === target, scroll.contentView === clip,
-                      scroll.documentView === document else {
-                    previousGeometry = []
-                    stableSince = nil
-                    stableSamples = 0
-                    return false
+            do {
+                try await wait("native scroll ended with settled target geometry " + id, seconds: 2) {
+                    root.layoutSubtreeIfNeeded()
+                    guard completion.ended, target.contentView === root, self.probe(id, in: target) === view,
+                          view.window === target, scroll.window === target, scroll.contentView === clip,
+                          scroll.documentView === document else {
+                        previousGeometry = []
+                        stableSince = nil
+                        stableSamples = 0
+                        return false
+                    }
+                    let geometry = [clip.bounds, clip.frame, document.frame, view.convert(view.bounds, to: root)]
+                    guard geometry.allSatisfy({ frame in
+                        [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite)
+                            && frame.width > 0 && frame.height > 0
+                    }) else {
+                        previousGeometry = []
+                        stableSince = nil
+                        stableSamples = 0
+                        return false
+                    }
+                    let now = ProcessInfo.processInfo.systemUptime
+                    if geometry != previousGeometry {
+                        previousGeometry = geometry
+                        stableSince = now
+                        stableSamples = 1
+                        return false
+                    }
+                    stableSamples += 1
+                    return now - (stableSince ?? now) >= 0.25
                 }
-                let geometry = [clip.bounds, clip.frame, document.frame, view.convert(view.bounds, to: root)]
-                guard geometry.allSatisfy({ frame in
-                    [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite)
-                        && frame.width > 0 && frame.height > 0
-                }) else {
-                    previousGeometry = []
-                    stableSince = nil
-                    stableSamples = 0
-                    return false
-                }
-                let now = ProcessInfo.processInfo.systemUptime
-                if geometry != previousGeometry {
-                    previousGeometry = geometry
-                    stableSince = now
-                    stableSamples = 1
-                    return false
-                }
-                stableSamples += 1
-                return now - (stableSince ?? now) >= 0.25
+            } catch {
+                try record("native scroll did not settle", fields: ["id": id, "window": target.windowNumber,
+                    "nativeScrollEnded": completion.ended, "sameRoot": target.contentView === root,
+                    "sameControl": self.probe(id, in: target) === view, "sameControlWindow": view.window === target,
+                    "sameScrollWindow": scroll.window === target, "sameClip": scroll.contentView === clip,
+                    "sameDocument": scroll.documentView === document, "before": NSStringFromRect(originalBounds),
+                    "after": NSStringFromRect(clip.bounds), "documentFrame": NSStringFromRect(document.frame),
+                    "targetFrame": NSStringFromRect(view.convert(view.bounds, to: root)), "stableSamples": stableSamples,
+                    "stableSeconds": stableSince.map { ProcessInfo.processInfo.systemUptime - $0 } ?? 0])
+                throw error
             }
             previousClip = clip
             previousDocument = document
@@ -947,6 +959,38 @@ final class ProductionVisualSourcesDriver {
         interactions.append(["kind": context ? "context-menu" : "menu", "id": id,
             "item": path.last!, "path": path, "titles": tracking.titles.first ?? [], "menus": tracking.titles, "closed": tracking.closed])
         try persist()
+    }
+
+    struct BoardPosition {
+        let scroll: NSScrollView
+        let clip: NSClipView
+        let origin: NSPoint
+        let targetOrigin: NSPoint
+        let read: Int
+        let scale: CGFloat
+
+        func preserves(_ previous: Self) -> Bool {
+            guard previous.scroll === scroll, previous.clip === clip, previous.scale == scale, read > previous.read else { return false }
+            let limit = 1 / scale
+            return abs(origin.x - previous.origin.x) <= limit && abs(origin.y - previous.origin.y) <= limit
+                && abs(targetOrigin.x - previous.targetOrigin.x) <= limit && abs(targetOrigin.y - previous.targetOrigin.y) <= limit
+        }
+
+        var evidence: [String: Any] {
+            ["scroll": String(describing: ObjectIdentifier(scroll)), "clip": String(describing: ObjectIdentifier(clip)),
+             "origin": [origin.x, origin.y], "targetOrigin": [targetOrigin.x, targetOrigin.y], "read": read, "backingScale": scale]
+        }
+    }
+
+    func storyboardPosition(_ control: String) -> BoardPosition? {
+        guard let root = window.contentView, let target = probe(control, in: window), let scroll = target.enclosingScrollView,
+              fullyVisible(target, root: root), scroll === probe("storyboard.board.content", in: window)?.enclosingScrollView,
+              state("storyboard.board.read", in: window) == true,
+              let read = Int(text("storyboard.board.read", in: window) ?? ""), read > 0,
+              window.backingScaleFactor.isFinite, window.backingScaleFactor > 0 else { return nil }
+        let clip = scroll.contentView
+        return BoardPosition(scroll: scroll, clip: clip, origin: clip.bounds.origin, targetOrigin: target.convert(target.bounds, to: root).origin,
+                             read: read, scale: window.backingScaleFactor)
     }
 
     func revealStoryboardMoment(_ control: String, shotID: String, orderedShots: [String], fingerprint: String) async throws {
@@ -2110,6 +2154,9 @@ enum NativeAcceptancePointer {
         let frame = probe.convert(probe.bounds, to: root)
         guard [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite),
               frame.width > 0, frame.height > 0, root.bounds.contains(frame) else {
+            windowFailure(["targetFrame": NSStringFromRect(frame), "rootBounds": NSStringFromRect(root.bounds),
+                           "positiveSize": frame.width > 0 && frame.height > 0, "contained": root.bounds.contains(frame),
+                           "finite": [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite)])
             throw GateBlocked("The native pointer target has no complete finite frame.")
         }
         let clippingAncestors = ClipGeometry.ancestors(of: probe)

@@ -66,7 +66,7 @@ def acquire_image(root, inputs, product):
     require(len(pending) == 1 and pending[0]['conclusion'] == 'failure' and pending[0]['run_attempt'] == 1
             and pending[0]['run_id'] == producer and pending[0]['head_sha'] == product, 'Unexpected release gate result')
     mounted = internal_image_evidence(run, inventory, product)
-    require(mounted['dmgSHA256'] == expected and mounted['app']['CFBundleVersion'] == '146'
+    require(mounted['dmgSHA256'] == expected and mounted['app']['CFBundleVersion'] == '147'
             and mounted['app']['CFBundleShortVersionString'] == '1.8.0', 'The original mounted receipt differs')
     release, = [job for job in inventory['jobs'] if job['name'] == 'release']
     item = original_item(run, release, 'release-user-journey-input')
@@ -268,6 +268,24 @@ def validate_chunks(directory, proof, outputs):
     return jobs
 
 
+def verify_canceled_sketch(row, assigned):
+    read, = [e['evidence'] for e in row['interactions'] if e.get('label') == 'canceled sketch preserved the visible Board position']
+    before, after = read['before'], read['after']
+    scale = row['backingScale']
+    require(read['momentID'] == assigned['momentID'] and re.fullmatch('[0-9a-f]{64}', read['fingerprint'])
+            and type(scale) in (int, float) and math.isfinite(scale) and scale > 0
+            and before['backingScale'] == after['backingScale'] == scale
+            and all(isinstance(before[k], str) and before[k] and before[k] == after[k] for k in ('scroll', 'clip'))
+            and type(before['read']) is int and type(after['read']) is int and 0 < before['read'] < after['read'],
+            'Cancel did not return to a newly read version of the same Board viewport')
+    for key in ('origin', 'targetOrigin'):
+        start, end = before[key], after[key]
+        require(len(start) == len(end) == 2
+                and all(type(v) in (int, float) and math.isfinite(v) for v in [*start, *end])
+                and all(abs(x - y) * scale <= 1 for x, y in zip(start, end)),
+                'Cancel moved the visible Storyboard moment or scroll position')
+
+
 def validate_render(directory, state, scene, pose, tools):
     movie = directory / 'clay.mov'
     receipt = directory / 'sequence.v1.json'
@@ -330,6 +348,7 @@ def editing_result(directory, product, pid, installed):
     assignments = []
     for row in value['nativeSpatialStoryboardUI']:
         state, = [e['evidence'] for e in row['interactions'] if e.get('label') == 'native location sketch assigned']
+        verify_canceled_sketch(row, state)
         assignments.append(validate_assignment(directory, f"storyboard-{round(row['scale'] * 100)}", state, scene, tools))
     for row in value['nativeBibleUI']:
         require(all(row[key] is True for key in ('nativeSceneAndCameraSelection', 'requiredPurpose', 'realRenderedPreview',

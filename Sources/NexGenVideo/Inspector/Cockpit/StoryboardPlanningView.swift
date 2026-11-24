@@ -3,6 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct StoryboardPlanningView: View {
+    let session: UUID?
     @Environment(EditorViewModel.self) private var editor
     @State private var snapshot: StoryboardBundleSnapshot?
     @State private var sketches: [String: CGImage] = [:]
@@ -15,6 +16,8 @@ struct StoryboardPlanningView: View {
     @State private var importing = false
     @State private var importFailure: String?
     @State private var loadGeneration = 0
+    @State private var restoringShotID: String?
+    @State private var restoringPlayback: (timing: StoryboardTimingV1, tick: Int64, cameraID: String?)?
     @State private var editRequest: StoryboardNativeEditRequest?
     @State private var imageInspection: SketchInspection?
     @State private var deletingShot: StoryboardTimingV1.PlannedShot?
@@ -124,7 +127,7 @@ struct StoryboardPlanningView: View {
                         .reviewAcceptanceProbe("storyboard.redo", state: canAttachSketch && PipelineStoryboardEditor.canRedo(editor: editor))
                     Spacer(minLength: AppTheme.Spacing.sm)
                 }.buttonStyle(InlineActionButtonStyle()).padding(.horizontal, AppTheme.Spacing.lg)
-                if snapshot != nil && !canAttachSketch {
+                if snapshot != nil && !loading && !canAttachSketch {
                     Text(editingGuidance).foregroundStyle(AppTheme.Text.secondaryColor)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, AppTheme.Spacing.lg)
@@ -137,7 +140,10 @@ struct StoryboardPlanningView: View {
                     Button("Reload Storyboard") { Task { await load() } }.buttonStyle(InlineActionButtonStyle())
                 }.padding(AppTheme.Spacing.lg)
             } else if let snapshot {
-                if animatic { animaticView(snapshot) } else { board(snapshot) }
+                Group {
+                    if animatic { animaticView(snapshot) } else { board(snapshot) }
+                }
+                .disabled(loading)
             } else if !loading {
                 CockpitStateView.empty(icon: "rectangle.split.3x1", title: "No Storyboard yet",
                     message: "The Storyboard combines the Script, planned cuts and sketches for visual review.")
@@ -145,28 +151,30 @@ struct StoryboardPlanningView: View {
         }
         .padding(.top, AppTheme.Spacing.md)
         .interfaceFont(size: AppTheme.Typography.ui)
-        .reviewAcceptanceProbe("storyboard.v2.workspace", text: snapshot?.fingerprint)
+        .reviewAcceptanceProbe("storyboard.v2.workspace", state: snapshot != nil && !loading, text: loading ? nil : snapshot?.fingerprint)
+        .reviewAcceptanceProbe("storyboard.board.read", state: snapshot != nil && !loading, text: String(loadGeneration))
         .task(id: "\(editor.workingRoot?.path ?? ""):\(editor.engineStateRevision)") { await load() }
         .onChange(of: animatic) { _, active in
             playback.pause()
-            editor.storyboardAnimaticPlayback = active ? playback : nil
+            editor.storyboardAnimaticPlayback = active && !loading && snapshot != nil ? playback : nil
         }
-        .onAppear { if animatic { editor.storyboardAnimaticPlayback = playback } }
+        .onAppear { if animatic && !loading && snapshot != nil { editor.storyboardAnimaticPlayback = playback } }
         .onDisappear {
+            loadGeneration += 1
             playback.pause()
             if editor.storyboardAnimaticPlayback === playback { editor.storyboardAnimaticPlayback = nil }
         }
-        .sheet(item: $editRequest, onDismiss: { Task { await load() } }) { request in
+        .sheet(item: $editRequest, onDismiss: refreshAfterDismissal) { request in
             StoryboardNativeEditSheet(request: request).environment(editor)
         }
         .sheet(item: $imageInspection) { image in
             ProductionImageInspectionView(url: image.url, sha256: image.sha256, title: image.title)
         }
-        .sheet(item: $spatialSketch, onDismiss: { Task { await load() } }) { target in
+        .sheet(item: $spatialSketch, onDismiss: refreshAfterDismissal) { target in
             StoryboardSpatialSketchSheet(home: target.home, shotID: target.shotID, momentID: target.momentID,
                 intent: target.intent, fingerprint: target.fingerprint).environment(editor)
         }
-        .sheet(item: $nativeSketch, onDismiss: { Task { await load() } }) { request in
+        .sheet(item: $nativeSketch, onDismiss: refreshAfterDismissal) { request in
             StoryboardNativeSketchSheet(home: request.target.home, shotID: request.target.shotID,
                 momentID: request.target.momentID, intent: request.target.intent, fingerprint: request.target.fingerprint,
                 mode: request.mode).environment(editor)
@@ -320,7 +328,7 @@ struct StoryboardPlanningView: View {
                     .reviewAcceptanceProbe("storyboard.plan.\(shot.id)", text: shot.primaryStepID)
                 }
             }.padding(AppTheme.Spacing.lg)
-                .reviewAcceptanceProbe("storyboard.board.content", text: snapshot.fingerprint)
+                .reviewAcceptanceProbe("storyboard.board.content", state: !loading, text: loading ? nil : snapshot.fingerprint)
         }
     }
 
@@ -424,33 +432,78 @@ struct StoryboardPlanningView: View {
         }
     }
 
-    private func load() async {
-        loadGeneration += 1
-        let generation = loadGeneration
-        let home = editor.workingRoot
-        let selectedID = editor.storyboardPlanningSelection?.home == home ? editor.storyboardPlanningSelection?.shot.id : nil
+    private func beginRead() -> Int? {
+        guard let session, editor.openWorkingCopyGeneration == session else { return nil }
+        if !loading {
+            let selection = editor.storyboardPlanningSelection
+            restoringShotID = selection?.home == editor.workingRoot ? selection?.shot.id : nil
+            restoringPlayback = playback.failure == nil ? playback.timing.map { ($0, playback.tick, playback.cameraID) } : nil
+        }
         editor.storyboardPlanningSelection = nil
-        playback.pause(); snapshot = nil; sketches = [:]; loading = true; failure = nil
-        defer { if generation == loadGeneration { loading = false } }
-        guard let home, let root = DataRootResolver.dataRoot(of: home) else { snapshot = nil; return }
+        if editor.storyboardAnimaticPlayback === playback { editor.storyboardAnimaticPlayback = nil }
+        playback.pause()
+        loading = true
+        failure = nil
+        loadGeneration += 1
+        return loadGeneration
+    }
+
+    private func refreshAfterDismissal() {
+        guard let request = beginRead() else { return }
+        Task { await read(request) }
+    }
+
+    private func load() async {
+        guard let request = beginRead() else { return }
+        await read(request)
+    }
+
+    private func read(_ request: Int) async {
+        guard request == loadGeneration else { return }
+        defer {
+            if request == loadGeneration {
+                loading = false
+                restoringShotID = nil
+                restoringPlayback = nil
+            }
+        }
+        guard let home = editor.workingRoot, let session, editor.openWorkingCopyGeneration == session,
+              let root = DataRootResolver.dataRoot(of: home) else {
+            snapshot = nil; sketches = [:]
+            return
+        }
+        func current() -> Bool {
+            request == loadGeneration && !Task.isCancelled && editor.workingRoot == home && editor.openWorkingCopyGeneration == session
+        }
         do {
             _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: editor.declaredPluginName,
                 declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
-            guard FileManager.default.fileExists(atPath: root.appendingPathComponent(StoryboardV2.currentPath).path) else { snapshot = nil; return }
+            guard FileManager.default.fileExists(atPath: root.appendingPathComponent(StoryboardV2.currentPath).path) else {
+                snapshot = nil; sketches = [:]
+                return
+            }
             let value = try await Task.detached(priority: .userInitiated) {
                 let snapshot = try PlanningWriterIO.storyboard(dataRoot: root, requireVisuals: false)
                 return (snapshot, try ProductionPlanningPresentation.sketchImages(snapshot, dataRoot: root))
             }.value
-            guard generation == loadGeneration, !Task.isCancelled, editor.workingRoot == home else { return }
+            guard current() else { return }
             await playback.configure(value.0.timing, dataRoot: root)
-            guard generation == loadGeneration, !Task.isCancelled, editor.workingRoot == home else { return }
-            sketches = value.1; snapshot = value.0
-            if let selectedID, let index = value.0.timing.shots.firstIndex(where: { $0.id == selectedID }) {
+            guard current() else { return }
+            if let restoringPlayback, playback.timing == restoringPlayback.timing {
+                if let camera = restoringPlayback.cameraID, value.0.timing.shots.contains(where: { $0.cameraID == camera }) {
+                    playback.cameraID = camera
+                }
+                playback.seek(to: restoringPlayback.tick)
+            }
+            sketches = value.1
+            snapshot = value.0
+            if animatic { editor.storyboardAnimaticPlayback = playback }
+            if let restoringShotID, let index = value.0.timing.shots.firstIndex(where: { $0.id == restoringShotID }) {
                 select(shot: value.0.timing.shots[index], number: index + 1, snapshot: value.0)
             }
         } catch {
-            guard generation == loadGeneration, !Task.isCancelled, editor.workingRoot == home else { return }
-            snapshot = nil; failure = error.localizedDescription
+            guard current() else { return }
+            snapshot = nil; sketches = [:]; failure = error.localizedDescription
         }
     }
 
