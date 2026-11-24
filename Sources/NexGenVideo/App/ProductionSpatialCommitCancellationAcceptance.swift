@@ -29,6 +29,7 @@ enum ProductionSpatialCommitCancellationAcceptance {
         let session = SpatialSceneSession(pipelineRoot: context.dataRoot, runtime: operation.session,
             authority: authority, commitObserver: observer.progress)
         observer.session = session
+        await session.readPersistedLocations()
         await session.create(name: "Commit cancellation control")
         guard session.error == nil, let prior = session.current else { throw SpatialSceneError.changed }
         observer.armed = true

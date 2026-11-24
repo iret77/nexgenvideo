@@ -85,6 +85,7 @@ enum ProductionSpatialHistoryAcceptance {
         let session = SpatialSceneSession(pipelineRoot: context.dataRoot, runtime: operation.session,
             authority: authority, commitObserver: observer.progress)
         observer.session = session
+        await session.readPersistedLocations()
         await session.create(name: "History admission control")
         guard session.error == nil, let empty = session.current, !session.canUndo,
               session.requestUndo() == nil, session.historyIntent?.status == .rejectedHistory,
