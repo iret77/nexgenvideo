@@ -176,9 +176,7 @@ enum ProductionBlockoutRecoveryAcceptance {
     }
 
     private static func open(_ shotID: String, driver: ProductionVisualSourcesDriver) async throws {
-        if WorkspaceUIAcceptance.probeFrame(identifier: "shot-planning.reload." + shotID, in: driver.window) != nil {
-            try await driver.click("shot-planning.reload." + shotID, in: driver.window)
-        }
+        try await driver.requireUnconflictedShotPlanningRow(shotID, in: driver.window)
         try await driver.click("shot-planning.blockout.open." + shotID, in: driver.window)
     }
 

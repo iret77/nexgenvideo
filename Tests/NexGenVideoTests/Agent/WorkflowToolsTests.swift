@@ -1404,6 +1404,22 @@ struct WorkflowToolsTests {
         #expect(readiness.approval.blocker?.contains("already approved") == true)
     }
 
+    @Test("A native edit holding the project lock reports busy phase controls, not a failure")
+    func nativeEditLockIsBusyNotFailed() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let coordinator = h.editor.pipelinePhaseRunCoordinator, home = FrameInventory.projectHome(of: dataRoot)
+        let id = try #require(coordinator.beginMutation(projectRoot: dataRoot, label: "Edit Shot Planning"))
+        let busy = await NativeGateWriter.controlReadiness(projectDir: home, phase: nil, declaredPack: nil,
+            executionCoordinator: coordinator)
+        #expect(busy.activeOperation == "Edit Shot Planning")
+        #expect(PhaseControlReadiness(busy) == .busy("Edit Shot Planning"))
+        coordinator.endMutation(projectRoot: dataRoot, id: id)
+        let settled = await NativeGateWriter.controlReadiness(projectDir: home, phase: nil, declaredPack: nil,
+            executionCoordinator: coordinator)
+        #expect(PhaseControlReadiness(settled) == .ready)
+    }
+
     @Test("Brief work is structurally blocked until its host-owned intake is resolved")
     func briefWaitsForCreativeIntake() async throws {
         let cleanup = FileManager.default.temporaryDirectory

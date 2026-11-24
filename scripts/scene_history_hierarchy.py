@@ -282,6 +282,39 @@ def expected_locator_failure(files, source, pid):
     return {'expectedLocatorFailure': True, 'windowNumber': button['window'], 'appScopePassed': False}
 
 
+MOUSE_DOWN, MOUSE_UP = 1, 2
+
+
+def history_pointer_release(pointer, callback):
+    # Control tracking can consume the Up before local monitors; the control's own later admission proves delivery.
+    native = pointer.get('nativeInput')
+    require(type(native) is dict and native.get('status') == 'delivered' and native.get('error') is None
+        and native.get('ownedDownPosted') is True and native.get('ownedUpPosted') is True
+        and native.get('cleanupUpPosted') is False and native.get('buttonDownObserved') is True
+        and native.get('buttonReleased') is True and pointer.get('localMonitorDownObserved') is True,
+        'The History pointer lacks a complete owned button lifecycle')
+    tag = native.get('tag')
+    finite = lambda value: type(value) in (int, float) and math.isfinite(value)
+    posted = [e for e in native.get('posted', []) if e.get('type') in (MOUSE_DOWN, MOUSE_UP)]
+    require(type(tag) is int and [e.get('type') for e in posted] == [MOUSE_DOWN, MOUSE_UP]
+        and all(e.get('tag') == tag and e.get('cleanup') is False and finite(e.get('postedUptime')) for e in posted)
+        and posted[0]['postedUptime'] < posted[1]['postedUptime'], 'The owned Down/Up pair differs')
+    down_at, up_at = posted[0]['postedUptime'], posted[1]['postedUptime']
+    received = [e for e in native.get('received', []) if e.get('type') in (MOUSE_DOWN, MOUSE_UP)]
+    require(all(e.get('tag') == tag and finite(e.get('observedUptime')) for e in received),
+        'Foreign or untimed button events were observed')
+    downs = [e for e in received if e['type'] == MOUSE_DOWN]
+    require(len(downs) == 1 and downs[0].get('buttonDown') is True
+        and down_at <= downs[0]['observedUptime'] <= up_at, 'The tagged Down was not observed before the posted Up')
+    if pointer.get('localMonitorUpObserved') is True:
+        require(any(e['type'] == MOUSE_UP and e['observedUptime'] >= up_at for e in received),
+            'The local Up observation precedes its posting')
+    admitted = callback['admitted']
+    require(finite(callback.get('observerCreatedUptime')) and callback['observerCreatedUptime'] <= down_at
+        and finite(admitted.get('observedUptime')) and admitted['observedUptime'] >= up_at,
+        'The History admission is not bound to the posted Up')
+
+
 def scoped_success(files, source, pid):
     require(not any(name in files for name in ('process-failure.json', 'spatial-history-failure.json',
         'runtime-failure-observation.json')), 'Success cannot retain a native failure report')
@@ -295,11 +328,14 @@ def scoped_success(files, source, pid):
     history = value['historyAdmission']
     events = history['interactions']
     pointers = [e for e in events if e.get('kind') == 'pointer']
-    require([e.get('id') for e in pointers] == ['spatial.undo', 'spatial.redo']
-        and all(e.get('localMonitorDownObserved') is True and e.get('localMonitorUpObserved') is True for e in pointers),
-        'Both genuine History pointer paths are required')
+    require([e.get('id') for e in pointers] == ['spatial.undo', 'spatial.redo'], 'Both genuine History pointer paths are required')
     callbacks = [e['evidence'] for e in events if e.get('label') == 'actual history callback reload order']
     require([e.get('action') for e in callbacks] == ['undo', 'redo'], 'Both actual admission callbacks are required')
+    order = [e.get('id') if e.get('kind') == 'pointer' else e['evidence']['action'] for e in events
+        if e.get('kind') == 'pointer' or e.get('label') == 'actual history callback reload order']
+    require(order == ['spatial.undo', 'undo', 'spatial.redo', 'redo'], 'Each History admission must follow its own click')
+    for pointer, callback in zip(pointers, callbacks):
+        history_pointer_release(pointer, callback)
     for item in callbacks:
         admitted, committed, rejected = item['admitted'], item['completed'], item['concurrentRejection']
         require(item.get('admissionCallbacks') == 1 and item.get('admissionFailure') is None

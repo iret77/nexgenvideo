@@ -112,6 +112,21 @@ def failure_files():
     return files
 
 
+def pointer(name, tag=77, up_observed=True):
+    posted = [{'type': 5, 'tag': tag, 'postedUptime': 1.1},
+        {'type': 1, 'tag': tag, 'postedUptime': 1.2, 'cleanup': False},
+        {'type': 2, 'tag': tag, 'postedUptime': 1.3, 'cleanup': False}]
+    received = [{'type': 5, 'tag': tag, 'observedUptime': 1.15, 'buttonDown': False},
+        {'type': 1, 'tag': tag, 'observedUptime': 1.25, 'buttonDown': True}]
+    if up_observed:
+        received.append({'type': 2, 'tag': tag, 'observedUptime': 1.35, 'buttonDown': False})
+    native = {'kind': 'native-pointer', 'status': 'delivered', 'tag': tag, 'posted': posted, 'received': received,
+        'ownedDownPosted': True, 'ownedUpPosted': True, 'cleanupUpPosted': False, 'buttonDownObserved': True,
+        'buttonReleased': True, 'localMonitorDownObserved': True, 'localMonitorUpObserved': up_observed}
+    return {'kind': 'pointer', 'id': name, 'window': 931, 'nativeInput': native,
+        'localMonitorDownObserved': True, 'localMonitorUpObserved': up_observed}
+
+
 def successful_files():
     files = {name: value for name, value in failure_files().items()
         if not name.endswith(('index.v1.json', 'manifest.v1.json', 'snapshot.v1.json', 'scene.blend'))
@@ -137,9 +152,10 @@ def successful_files():
         'undoRevision': identifiers[3], 'redoRevision': identifiers[4], 'emptyRejected': True,
         'busyReloadRejectedWithRetryNotice': True, 'invalidatedRedoRejectedWithoutRetryInstruction': True,
         'cancelledBeforeWork': True, 'awaitedCompletionVerified': True, 'historyTrace': {'overflow': False, 'events': trace}}
-    events = [{'kind': 'pointer', 'id': name, 'window': 931, 'localMonitorDownObserved': True,
-        'localMonitorUpObserved': True} for name in ['spatial.undo', 'spatial.redo']]
-    events += callbacks + [{'kind': 'verified-state', 'label': 'history admission regression complete', 'evidence': complete}]
+    events = []
+    for name, callback in zip(['spatial.undo', 'spatial.redo'], callbacks):
+        events += [pointer(name), callback]
+    events += [{'kind': 'verified-state', 'label': 'history admission regression complete', 'evidence': complete}]
     history = {'interactions': events, 'screenshots': ['retry.png', 'failure.png', 'restored.png'], 'canonicalProject': {
         'project': 'spatial-history-project.ngv', 'manifest': 'spatial-history-project-files.json',
         'sha256': hashlib.sha256(files['spatial-history-project-files.json']).hexdigest()}}
@@ -311,7 +327,7 @@ class SceneHistoryHierarchyTests(unittest.TestCase):
         files = successful_files()
         self.assertTrue(diagnostic.scoped_success(files, 'a' * 40, 900)['appScopePassed'])
         changed = dict(files); result = json.loads(changed['result.json'])
-        result['historyAdmission']['interactions'][0]['localMonitorUpObserved'] = False
+        result['historyAdmission']['interactions'][0]['nativeInput']['buttonReleased'] = False
         changed['result.json'] = json.dumps(result).encode()
         with self.assertRaises(ValueError):
             diagnostic.scoped_success(changed, 'a' * 40, 900)
@@ -326,6 +342,33 @@ class SceneHistoryHierarchyTests(unittest.TestCase):
         refresh_project(changed, 'completed')
         with self.assertRaises(ValueError):
             diagnostic.scoped_success(changed, 'a' * 40, 900)
+
+    def test_history_up_hidden_by_control_tracking_is_proven_only_by_a_later_admission(self):
+        def outcome(change):
+            files = successful_files()
+            result = json.loads(files['result.json'])
+            events = result['historyAdmission']['interactions']
+            undo = events[0]
+            hidden = pointer('spatial.undo', up_observed=False)
+            undo.clear(); undo.update(hidden)
+            change(events)
+            files['result.json'] = json.dumps(result).encode()
+            return diagnostic.scoped_success(files, 'a' * 40, 900)
+        self.assertTrue(outcome(lambda events: None)['appScopePassed'])
+        def admitted_before_up(events):
+            events[1]['evidence']['admitted']['observedUptime'] = 1.28
+        def missing_up(events):
+            native = events[0]['nativeInput']
+            native['posted'] = native['posted'][:2]; native['ownedUpPosted'] = False
+        def unobserved_down(events):
+            events[0]['nativeInput']['received'] = events[0]['nativeInput']['received'][:1]
+        def cleanup_release(events):
+            events[0]['nativeInput']['cleanupUpPosted'] = True
+        def admission_before_click(events):
+            events[0], events[1] = events[1], events[0]
+        for change in (admitted_before_up, missing_up, unobserved_down, cleanup_release, admission_before_click):
+            with self.subTest(change=change.__name__), self.assertRaises(ValueError):
+                outcome(change)
 
     def test_screenshots_require_full_crc_and_complete_pixel_payload(self):
         raw = screenshot()

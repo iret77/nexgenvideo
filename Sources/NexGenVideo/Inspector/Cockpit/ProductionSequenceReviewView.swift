@@ -114,7 +114,7 @@ struct ProductionSequenceReviewView: View {
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                 if let snapshot {
                     VideoPlayer(player: player)
-                        .frame(height: AppTheme.Layout.previewMinHeight)
+                        .scrollViewportFittedHeight(AppTheme.Layout.reviewPlayerMaxHeight)
                         .reviewAcceptanceProbe("sequence.player")
                     Text("\(snapshot.durationFrames) frames · \(snapshot.cutFrames.count) picture boundaries · \(snapshot.input.references.count) bound sources and production records")
                         .foregroundStyle(AppTheme.Text.secondaryColor)

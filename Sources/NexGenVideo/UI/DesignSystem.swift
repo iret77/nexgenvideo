@@ -148,4 +148,11 @@ extension View {
                        design: Font.Design = .default) -> some View {
         modifier(InterfaceFont(size: size, weight: weight, design: design))
     }
+
+    // Keeps a scrolled preview fully revealable when the phase dock shrinks the viewport.
+    func scrollViewportFittedHeight(_ maximum: CGFloat) -> some View {
+        containerRelativeFrame(.vertical) { length, _ in
+            min(maximum, length * AppTheme.Layout.scrollPreviewViewportFraction)
+        }
+    }
 }

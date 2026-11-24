@@ -108,7 +108,7 @@ struct SequenceReviewView: View {
                     .reviewAcceptanceProbe("sequence.play", state: playing)
                     .disabled(busy)
                     VideoPlayer(player: player)
-                        .frame(height: AppTheme.Layout.previewMinHeight)
+                        .scrollViewportFittedHeight(AppTheme.Layout.reviewPlayerMaxHeight)
                         .reviewAcceptanceProbe("sequence.player")
                     Text("\(snapshot.plan.selectedMedia.count) sources · \(snapshot.reel.durationFrames) frames · exact EDL \(snapshot.reel.edlSHA256.prefix(10))")
                         .foregroundStyle(AppTheme.Text.secondaryColor)

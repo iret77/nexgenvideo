@@ -133,9 +133,7 @@ struct PipelinePanelView: View {
     @State private var approvalReadiness = NativeGateApprovalReadiness.blocked(
         "The pipeline state is unavailable."
     )
-    @State private var mutationReadiness = NativeGateApprovalReadiness.blocked(
-        "The pipeline state is unavailable."
-    )
+    @State private var mutationReadiness = PhaseControlReadiness.checking
     @State private var pendingRewind: RewindRequest?
     @State private var showsReadinessDiagnostics = false
 
@@ -389,8 +387,14 @@ struct PipelinePanelView: View {
                             .background { acceptanceProbe("dock.continue", enabled: !gateWriting && mutationReadiness.isReady) }
                         }
                     }
-                    if !approvalReadiness.isReady, let diagnostic = approvalReadiness.blocker,
-                       approvalPhase == phase.phase, !workIsRunning {
+                    if case .failed = mutationReadiness, !gateWriting, !workIsRunning, readinessTask == nil {
+                        Button("Retry phase controls") { refreshApprovalReadiness() }
+                            .buttonStyle(.inlineAction(.neutral))
+                            .background { acceptanceProbe("dock.retry", enabled: true) }
+                    }
+                    if mutationReadiness.isReady || mutationReadiness.failure != nil,
+                       let diagnostic = mutationReadiness.failure ?? approvalReadiness.blocker,
+                       mutationReadiness.failure != nil || approvalPhase == phase.phase, !workIsRunning {
                         Button("Diagnostics") { showsReadinessDiagnostics = true }
                             .buttonStyle(.inlineAction(.neutral))
                             .background { acceptanceProbe("dock.diagnostics", enabled: true) }
@@ -422,7 +426,7 @@ struct PipelinePanelView: View {
                             .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.secondaryColor)
                             .fixedSize(horizontal: false, vertical: true)
-                        if !gateWriting, !workIsRunning, !mutationReadiness.isReady, readinessTask == nil {
+                        if !gateWriting, !workIsRunning, mutationReadiness.failure != nil, readinessTask == nil {
                             Button("Retry phase controls") { refreshApprovalReadiness() }
                                 .buttonStyle(.inlineAction(.neutral))
                         }
@@ -467,11 +471,13 @@ struct PipelinePanelView: View {
     private var revisionBlockedReason: String? {
         if gateWriting { return "Saving the phase decision…" }
         if workIsRunning { return "Wait for the current operation to finish before revising this phase." }
-        if !mutationReadiness.isReady {
-            if readinessTask != nil { return "Checking whether this phase can be revised…" }
+        switch mutationReadiness {
+        case .ready: return nil
+        case .checking: return "Checking whether this phase can be revised…"
+        case .busy: return mutationReadiness.dockMessage
+        case .failed:
             return "The saved workflow could not be verified. Retry the check. If it still fails, reopen the project."
         }
-        return nil
     }
 
     private func continuePhase(_ phase: String) {
@@ -655,7 +661,7 @@ struct PipelinePanelView: View {
         if editor.agentService.isComposerBlocked { return "Your input is needed in the decision below." }
         if editor.agentService.currentTaskPhase == phase { return "AI is working on \(PhaseDisplay.label(phase)). The result will appear here for review." }
         if approvalPhase != phase { return "Checking phase readiness…" }
-        if !mutationReadiness.isReady { return "Phase controls are unavailable. Resolve the project or workflow error before continuing." }
+        if let message = mutationReadiness.dockMessage { return message }
         if approvalReadiness.isReady { return "Review this phase’s artifact, then approve it to continue." }
         return approvalReadiness.userMessage
             ?? "This phase is incomplete. Continue the phase before approval."
@@ -1043,13 +1049,13 @@ struct PipelinePanelView: View {
         else {
             approvalPhase = nil
             approvalReadiness = .blocked("The pipeline state is unavailable.")
-            mutationReadiness = .blocked("The pipeline state is unavailable.")
+            mutationReadiness = .failed("The pipeline state is unavailable.")
             return
         }
         let phase = data.nextPhaseName
         approvalPhase = phase
         approvalReadiness = .blocked("Checking approval readiness.")
-        mutationReadiness = .blocked("Checking gate controls.")
+        mutationReadiness = .checking
         readinessRefreshQueued = true
         guard readinessTask == nil else { return }
         readinessTask = Task { @MainActor in
@@ -1072,7 +1078,7 @@ struct PipelinePanelView: View {
                       approvalPhase == currentPhase,
                       editor.workingRoot == currentDir
                 else { continue }
-                mutationReadiness = readiness.mutations
+                mutationReadiness = PhaseControlReadiness(readiness)
                 approvalReadiness = readiness.approval
             } while readinessRefreshQueued
             readinessTask = nil
@@ -1110,8 +1116,47 @@ struct PipelinePanelView: View {
         case .failure(let error):
             approvalPhase = nil
             approvalReadiness = .blocked("The pipeline state is unavailable.")
-            mutationReadiness = .blocked("The pipeline state is unavailable.")
+            mutationReadiness = .failed("The pipeline state is unavailable.")
             state = .failed(error)
         }
+    }
+}
+
+enum PhaseControlReadiness: Equatable {
+    case checking
+    case busy(String)
+    case failed(String)
+    case ready
+
+    static let failurePrefix = "Phase controls are unavailable."
+
+    init(_ controls: NativeGateControlReadiness) {
+        if let operation = controls.activeOperation { self = .busy(operation) }
+        else if let reason = controls.mutations.blocker { self = .failed(reason) }
+        else { self = .ready }
+    }
+
+    var isReady: Bool { self == .ready }
+
+    var failure: String? {
+        if case .failed(let reason) = self { return reason }
+        return nil
+    }
+
+    var dockMessage: String? {
+        switch self {
+        case .ready: nil
+        case .checking: "Checking phase readiness…"
+        case .busy(let operation): "Wait for \(Self.operationName(operation)) to finish."
+        case .failed: Self.failurePrefix + " Open Diagnostics for the reason, then retry."
+        }
+    }
+
+    // Phase jobs and gate writes report phase IDs; native edits report a readable operation label.
+    static func operationName(_ label: String) -> String {
+        let parts = label.split(separator: " ", maxSplits: 1).map(String.init)
+        if parts.count == 1 { return PhaseDisplay.label(label) }
+        guard parts[1].allSatisfy({ $0.isLowercase || $0 == "_" }) else { return label }
+        return parts[0] + " " + PhaseDisplay.label(parts[1])
     }
 }
