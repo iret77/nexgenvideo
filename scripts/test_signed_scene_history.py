@@ -1,6 +1,8 @@
 import json
 import os
 from pathlib import Path
+import plistlib
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -8,7 +10,56 @@ from unittest.mock import Mock, patch
 import signed_scene_history as history
 
 
+def source_commit(root, build):
+    plist = root / history.SOURCE_PLIST
+    plist.parent.mkdir(parents=True, exist_ok=True)
+    plist.write_bytes(plistlib.dumps({'CFBundleVersion': build, 'CFBundleShortVersionString': '1.8.0'}))
+    git = ['git', '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', '-C', str(root)]
+    subprocess.run(git + ['add', history.SOURCE_PLIST], check=True)
+    subprocess.run(git + ['commit', '-q', '--no-gpg-sign', '-m', 'build ' + build], check=True)
+    return subprocess.check_output(git + ['rev-parse', 'HEAD'], text=True).strip()
+
+
 class SignedSceneHistoryTests(unittest.TestCase):
+    def test_mounted_build_is_the_product_source_build_after_the_release_bump(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            older = source_commit(root, '148')
+            newer = source_commit(root, '311')
+            mounted = lambda build, version='1.8.0': {'dmgSHA256': 'b' * 64,
+                                                      'app': {'CFBundleVersion': build, 'CFBundleShortVersionString': version}}
+            history.verify_mounted_identity(mounted('149'), 'b' * 64, older, root)
+            history.verify_mounted_identity(mounted('312'), 'b' * 64, newer, root)
+            for value, product in ((mounted('148'), older), (mounted('147'), older), (mounted('149'), newer),
+                                   (mounted('311'), newer), (mounted('312', '1.8.1'), newer)):
+                with self.subTest(value=value, product=product), self.assertRaises(ValueError):
+                    history.verify_mounted_identity(value, 'b' * 64, product, root)
+            with self.assertRaises(ValueError):
+                history.verify_mounted_identity(mounted('312'), 'c' * 64, newer, root)
+            for build in ('0', '14a', ''):
+                with self.subTest(build=build), self.assertRaises(ValueError):
+                    history.released_build(source_commit(root, build), root)
+
+    def test_image_acquisition_accepts_the_derived_build_of_any_product(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            product = source_commit(root, '311')
+            run = dict(id=12345, run_attempt=1, head_sha=product, repository={'full_name': 'iret77/nexgenvideo'},
+                       actor={'login': 'iret77'}, path='.github/workflows/release.yml', head_branch=history.BASE,
+                       event='workflow_dispatch', status='completed')
+            pending = dict(name='acceptance-pending', conclusion='failure', run_attempt=1, run_id=12345, head_sha=product)
+            inventory = dict(total_count=1, jobs=[pending])
+            inputs = dict(run_id='12345', expected_dmg_sha256='b' * 64)
+            for build, accepted in (('312', True), ('311', False), ('147', False)):
+                mounted = {'dmgSHA256': 'b' * 64, 'app': {'CFBundleVersion': build, 'CFBundleShortVersionString': '1.8.0'}}
+                with self.subTest(build=build), patch.object(history, 'REPOSITORY', root), \
+                        patch.object(history, 'api', side_effect=[run, inventory]), \
+                        patch.object(history, 'internal_image_evidence', return_value=mounted), \
+                        self.assertRaisesRegex(ValueError, 'not enough values to unpack' if accepted else 'mounted receipt differs'):
+                    history.acquire_image(root, inputs, product)
+
     def test_signed_scene_rejects_unrelated_dispatch_modes_and_selectors(self):
         base = dict(candidate_kind='signed-scene-history', run_id='12345', source_sha='c' * 40,
                     artifact_id='123', artifact_sha256='a' * 64, expected_dmg_sha256='b' * 64, verified_pr_run_id='456')

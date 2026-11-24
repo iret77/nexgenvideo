@@ -7,6 +7,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import plistlib
 import re
 import shutil
 import subprocess
@@ -30,6 +31,8 @@ from acceptance import metadata, tree_sha256
 
 BASE = 'iret77/rc-delivery-base-795'
 INSTALLED = Path('/Applications/NexGenVideo.app')
+REPOSITORY = Path(__file__).resolve().parents[1]
+SOURCE_PLIST = 'Sources/NexGenVideo/Resources/Info.plist'
 
 
 def validate_dispatch(inputs):
@@ -42,6 +45,20 @@ def validate_dispatch(inputs):
             and all(re.fullmatch('[0-9a-f]{64}', inputs[k]) for k in ('artifact_sha256', 'expected_dmg_sha256'))
             and all(v == neutral.get(k, '') for k, v in inputs.items() if k not in required),
             'Unsupported selector or incomplete signed scene inputs')
+
+
+# release.yml's Bump version ships the committed source build plus one.
+def released_build(product, repository=None):
+    source = plistlib.loads(subprocess.check_output(['git', 'show', f'{product}:{SOURCE_PLIST}'], cwd=repository or REPOSITORY,
+                                                    stdin=subprocess.DEVNULL, timeout=30))
+    build = source.get('CFBundleVersion')
+    require(type(build) is str and re.fullmatch('[1-9][0-9]*', build), 'The product source build number is invalid')
+    return str(int(build) + 1)
+
+
+def verify_mounted_identity(mounted, expected, product, repository=None):
+    require(mounted['dmgSHA256'] == expected and mounted['app']['CFBundleVersion'] == released_build(product, repository)
+            and mounted['app']['CFBundleShortVersionString'] == '1.8.0', 'The original mounted receipt differs')
 
 
 def original_item(run, job, name):
@@ -66,8 +83,7 @@ def acquire_image(root, inputs, product):
     require(len(pending) == 1 and pending[0]['conclusion'] == 'failure' and pending[0]['run_attempt'] == 1
             and pending[0]['run_id'] == producer and pending[0]['head_sha'] == product, 'Unexpected release gate result')
     mounted = internal_image_evidence(run, inventory, product)
-    require(mounted['dmgSHA256'] == expected and mounted['app']['CFBundleVersion'] == '147'
-            and mounted['app']['CFBundleShortVersionString'] == '1.8.0', 'The original mounted receipt differs')
+    verify_mounted_identity(mounted, expected, product)
     release, = [job for job in inventory['jobs'] if job['name'] == 'release']
     item = original_item(run, release, 'release-user-journey-input')
     require(item['id'] == int(inputs['artifact_id']) and item['digest'] == 'sha256:' + inputs['artifact_sha256']
