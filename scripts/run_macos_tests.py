@@ -625,8 +625,8 @@ def run(args):
     retained_root = getattr(args, "bin_root", None)
     retained_engine = getattr(args, "retained_release_engine", None)
     serial_app = getattr(args, "serialize_app_tests", False)
-    if serial_app and (args.scope != "all" or args.configuration != "release" or args.filter or profile or retained_root):
-        raise VerificationError("App serialization requires the complete normal Release selection")
+    if serial_app and (args.scope != "all" or args.filter or profile or retained_root):
+        raise VerificationError("App serialization requires the complete normal selection")
     if retained_engine and (args.scope != "all" or args.configuration != "release" or args.filter
             or profile or retained_root or not args.scratch_path or args.swiftc_flag != ["-enable-testing"]):
         raise VerificationError("Retained Engine proof requires the full normal testable Release configuration")
