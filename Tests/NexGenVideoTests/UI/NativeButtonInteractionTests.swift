@@ -2006,8 +2006,10 @@ struct NativePointerInteractionTests {
         sheet.contentView = Hosting(rootView: Controls(capture: capture))
         fixture.window.beginSheet(sheet, completionHandler: nil)
         defer { fixture.window.endSheet(sheet); sheet.orderOut(nil) }
-        let readySheet = try await fixture.driver.sheet("pointer.Undo", parent: fixture.window, waitForControl: true)
+        let readySheet = try await fixture.driver.sheet("pointer.Undo", parent: fixture.window)
         try #require(readySheet === sheet && fixture.window.attachedSheet === sheet)
+        let settled = try #require(fixture.driver.interactions.last { $0["label"] as? String == "native window presentation stable" }?["evidence"] as? [String: Any])
+        #expect(settled["window"] as? Int == sheet.windowNumber)
         try await fixture.driver.click("pointer.Undo", in: readySheet)
         try await fixture.driver.wait("presented sheet delivered Undo") { capture.count("Undo") == 1 }
         let input = try #require(fixture.driver.interactions.last { $0["id"] as? String == "pointer.Undo" }?["nativeInput"] as? [String: Any])
