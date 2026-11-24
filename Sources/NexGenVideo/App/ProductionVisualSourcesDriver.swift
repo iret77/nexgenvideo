@@ -123,10 +123,11 @@ final class ProductionVisualSourcesDriver {
             return sheet.isKeyWindow && self.probe(id, in: sheet) != nil
         }
         guard let result = parent.attachedSheet else { throw GateBlocked("The native sheet disappeared.") }
-        if waitForControl {
-            try await waitForPresentation(of: result, control: id)
-            guard parent.attachedSheet === result, result.isKeyWindow else { throw GateBlocked("The native sheet changed during presentation.") }
+        // Pointer targets bind the window-server bounds, which keep moving until the sheet animation ends.
+        try await waitForPresentation(of: result, control: waitForControl ? id : nil) {
+            parent.attachedSheet === result && result.isKeyWindow
         }
+        guard parent.attachedSheet === result, result.isKeyWindow else { throw GateBlocked("The native sheet changed during presentation.") }
         return result
     }
 
