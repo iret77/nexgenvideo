@@ -234,9 +234,18 @@ enum ProductionV2PlanningAcceptance {
                                       driver: ProductionVisualSourcesDriver) async throws {
         let current = try await board(context, requireVisuals: false)
         let sourceHash = try await Task.detached { try FileDigest.sha256(of: sourceVideo) }.value
+        var expectedFingerprint = current.fingerprint
         for shot in current.timing.shots {
             for moment in shot.moments {
-                try await driver.menu("storyboard.sketch.sources." + moment.id, title: "Capture source video frame…", in: driver.window)
+                let id = "storyboard.sketch.sources." + moment.id
+                let window = driver.window
+                let fingerprint = expectedFingerprint
+                func ready() -> Bool {
+                    window.isKeyWindow && window.attachedSheet == nil && !busy(context.editor)
+                        && driver.text("storyboard.v2.workspace", in: window) == fingerprint && driver.state(id, in: window) == true
+                }
+                try await driver.waitForPresentation(of: window, control: id, ready: ready)
+                try await driver.menu(id, title: "Capture source video frame…", in: window, preDown: ready)
                 let sheet = try await driver.sheet("storyboard.native-sketch.choose", waitForControl: true)
                 guard driver.state("storyboard.native-sketch.confirm", in: sheet) == false else { throw failed("An unprepared sketch is assignable.") }
                 try await driver.chooseFile(sourceVideo, in: sheet)
@@ -273,6 +282,7 @@ enum ProductionV2PlanningAcceptance {
                         == (moment.offsetTicks % current.timing.timebase.ticksPerSecond) * clock.ticksPerSecond else {
                     throw failed("The assigned sketch differs from its preview, source bytes or chosen moment time.")
                 }
+                expectedFingerprint = saved.fingerprint
                 try driver.record("native sketch assignment", fields: ["shotID": shot.id, "momentID": moment.id,
                     "imageSHA256": assigned.image.sha256, "sourceSHA256": sourceHash, "sourceTime": time])
             }

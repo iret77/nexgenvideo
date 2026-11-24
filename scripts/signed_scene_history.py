@@ -66,7 +66,7 @@ def acquire_image(root, inputs, product):
     require(len(pending) == 1 and pending[0]['conclusion'] == 'failure' and pending[0]['run_attempt'] == 1
             and pending[0]['run_id'] == producer and pending[0]['head_sha'] == product, 'Unexpected release gate result')
     mounted = internal_image_evidence(run, inventory, product)
-    require(mounted['dmgSHA256'] == expected and mounted['app']['CFBundleVersion'] == '144'
+    require(mounted['dmgSHA256'] == expected and mounted['app']['CFBundleVersion'] == '145'
             and mounted['app']['CFBundleShortVersionString'] == '1.8.0', 'The original mounted receipt differs')
     release, = [job for job in inventory['jobs'] if job['name'] == 'release']
     item = original_item(run, release, 'release-user-journey-input')
