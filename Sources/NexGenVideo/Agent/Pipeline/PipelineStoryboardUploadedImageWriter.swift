@@ -43,9 +43,9 @@ enum PipelineStoryboardUploadedImageWriter {
                     framingSHA256: try shot.framing.fingerprint(), image: image, source: .uploaded(original: image, selectionReceiptID: id))
                 try PipelineStoryboardSketchEvidence.recordSelection(proof: proof, receiptID: id, originalName: url.lastPathComponent,
                     expectedFingerprint: expectedFingerprint, dataRoot: staging)
-                let proofPath = "storyboard/sketch-proofs/" + id + ".v1.json"
+                let proofPath = try StoryboardSketchProofV1.path(id: id)
                 let proofBytes = try PlanningWriterIO.json(proof)
-                _ = try ProjectLocalFile.ensureDirectory("storyboard/sketch-proofs", dataRoot: staging)
+                _ = try ProjectLocalFile.ensureDirectory(StoryboardSketchProofV1.directory, dataRoot: staging)
                 try proofBytes.write(to: staging.appendingPathComponent(proofPath), options: .atomic)
                 let asset = StoryboardTimingV1.SketchAsset(image: image,
                     proof: PlanningWriterIO.reference(proofPath, id: "sketch-proof." + id, role: "core.storyboard-sketch-proof", bytes: proofBytes))

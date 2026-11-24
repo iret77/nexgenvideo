@@ -147,6 +147,20 @@ struct ProductionPlanningV1Tests {
         }
     }
 
+    @Test func sketchProofOutsideTheProofDirectoryIsRejected() throws {
+        let image = CanonicalArtifactReferenceV1(id: "sketch", role: "core.storyboard-sketch",
+            path: "storyboard/sketches/namespace/spatial-view/clay.png", sha256: String(repeating: "a", count: 64))
+        func withProof(_ path: String) -> StoryboardTimingV1 {
+            let proof = CanonicalArtifactReferenceV1(id: "sketch-proof", role: "core.storyboard-sketch-proof",
+                path: path, sha256: String(repeating: "b", count: 64))
+            return timing(moments: [.init(id: "m1", offsetTicks: 0, intent: "The figure at 0", asset: .init(image: image, proof: proof))])
+        }
+        try validate(withProof(try StoryboardSketchProofV1.path(id: "spatial-view")))
+        for path in ["storyboard/sketches/namespace/spatial-view/sketch-proof.v1.json", "storyboard/spatial-view.v1.json"] {
+            #expect(throws: ProductionPlanningError.invalid("storyboard.moment.assetPaths")) { try validate(withProof(path)) }
+        }
+    }
+
     private func header(revision: Int = 1) -> PlanningArtifactHeaderV1 {
         .init(projectID: projectID, revision: revision, origin: .agentProposal, inputs: [])
     }

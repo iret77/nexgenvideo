@@ -144,7 +144,12 @@ struct StoryboardSpatialSketchSheet: View {
                 dismiss()
             } catch is CancellationError {
                 failure = "The render was cancelled. The Storyboard was not changed."
-            } catch { failure = error.localizedDescription }
+            } catch let error as GateBlocked {
+                failure = error.message
+            } catch {
+                Log.project.error("Location sketch assignment failed shot=\(shotID) moment=\(momentID): \(Log.detail(error))")
+                failure = "The location sketch couldn’t be assigned. The Storyboard was not changed."
+            }
         }
     }
 }

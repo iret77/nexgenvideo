@@ -140,4 +140,32 @@ struct StoryboardBundlePublicationTests {
         }
         #expect(try PlanningWriterIO.storyboard(dataRoot: context.dataRoot).fingerprint == current.fingerprint)
     }
+
+    @Test func locationSketchEntryPassesTheStoryboardBundleValidator() async throws {
+        let (context, board) = try await fixture()
+        defer { context.document.close() }
+        let root = context.dataRoot
+        let shot = try #require(board.timing.shots.first), moment = try #require(shot.moments.first)
+        let binding = PipelineSpatialDerivationWriter.StoryboardBinding(shotID: shot.id, momentID: moment.id,
+            intentSHA256: FileDigest.sha256(of: Data(moment.intent.utf8)), framingSHA256: try shot.framing.fingerprint())
+        let entry = try PipelineSpatialDerivationWriter.storyboardSketchEntry(derivationID: UUID(),
+            derivationData: Data("spatial derivation".utf8), outputFilename: "clay-00000000.png",
+            outputSHA256: String(repeating: "a", count: 64), projectID: board.storyboard.header.projectID,
+            binding: binding, dataRoot: root)
+        #expect(entry.asset.image.path == entry.directory + "/clay-00000000.png")
+        let timing = StoryboardTimingV1(header: board.timing.header, timebase: board.timing.timebase, mode: board.timing.mode,
+            rangeStartTicks: board.timing.rangeStartTicks, rangeDurationTicks: board.timing.rangeDurationTicks,
+            audio: board.timing.audio, shots: board.timing.shots.map { value -> StoryboardTimingV1.PlannedShot in
+                .init(id: value.id, primaryStepID: value.primaryStepID, additionalStepIDs: value.additionalStepIDs,
+                    startTicks: value.startTicks, durationTicks: value.durationTicks, cameraID: value.cameraID,
+                    framing: value.framing, moments: value.moments.map { item -> StoryboardTimingV1.Moment in
+                        guard value.id == shot.id, item.id == moment.id else { return item }
+                        return .init(id: item.id, offsetTicks: item.offsetTicks, intent: item.intent, asset: entry.asset)
+                    })
+            })
+        try StoryboardBundleValidator.validate(storyboard: board.storyboard, causality: board.causality, timing: timing,
+            identity: board.identity, script: try PlanningWriterIO.script(dataRoot: root),
+            priorIdentity: try ProductionPlanningStoreV1.readStoryboardIdentityHistory(dataRoot: root,
+                through: board.identity.header.revision - 1), requireVisuals: false)
+    }
 }

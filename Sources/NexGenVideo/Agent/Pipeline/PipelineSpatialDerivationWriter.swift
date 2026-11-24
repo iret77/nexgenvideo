@@ -164,31 +164,46 @@ enum PipelineSpatialDerivationWriter {
         try SpatialClayRenderer.validate(candidate, against: revision, cancellation: cancellation)
         guard candidate.proof.request.owner == .storyboard, candidate.proof.outputs.count == 1,
               let output = candidate.proof.outputs.first, output.mediaKind == "image/png" else { throw changed() }
-        let proofPath = try ProductionWorkflowRecoveryMigration.outputPath(area: "storyboard/sketches",
-            leaf: "spatial-\(candidate.proof.id.uuidString.lowercased())/derivation.v1.json", dataRoot: dataRoot)
-        let directory = (proofPath as NSString).deletingLastPathComponent
-        let derivation = PlanningWriterIO.reference(directory + "/derivation.v1.json", id: "spatial-derivation.\(candidate.proof.id)",
-            role: "core.spatial-derivation", bytes: candidate.proofData)
-        let image = CanonicalArtifactReferenceV1(id: "spatial-sketch.\(candidate.proof.id)", role: "core.storyboard-sketch",
-            path: directory + "/" + output.filename, sha256: output.sha256)
+        let entry = try storyboardSketchEntry(derivationID: candidate.proof.id, derivationData: candidate.proofData,
+            outputFilename: output.filename, outputSHA256: output.sha256, projectID: projectID, binding: binding, dataRoot: dataRoot)
+        let adoption = Adoption(id: candidate.proof.id, projectID: projectID, ownerArtifact: owner, storyboardBinding: binding,
+            proof: entry.derivation, media: [output.filename: entry.asset.image], sceneManifest: manifestReference(revision))
+        let files: [(path: String, bytes: Data)] = try candidate.lease.withConsumer(cancellation: cancellation) { work, token in
+            try candidate.files.map { (entry.directory + "/" + $0.key,
+                try $0.value.verifiedData(maximum: candidate.lease.limits.outputBytes,
+                    checking: { try token.check(); try work.check() })) }
+        }
+            + [(entry.derivation.path, candidate.proofData), (entry.asset.proof.path, entry.proofData),
+               (adoptionPath(candidate.proof.id), try PlanningWriterIO.json(adoption))]
+        return PreparedSketch(targetShotID: binding.shotID, targetMomentID: binding.momentID, asset: entry.asset, files: files)
+    }
+
+    struct StoryboardSketchEntry: Sendable {
+        let directory: String
+        let derivation: CanonicalArtifactReferenceV1
+        let proofData: Data
+        let asset: StoryboardTimingV1.SketchAsset
+    }
+
+    static func storyboardSketchEntry(derivationID: UUID, derivationData: Data, outputFilename: String, outputSHA256: String,
+                                      projectID: String, binding: StoryboardBinding, dataRoot: URL) throws -> StoryboardSketchEntry {
+        let name = "spatial-" + derivationID.uuidString.lowercased()
+        let derivationPath = try ProductionWorkflowRecoveryMigration.outputPath(area: "storyboard/sketches",
+            leaf: name + "/derivation.v1.json", dataRoot: dataRoot)
+        let directory = (derivationPath as NSString).deletingLastPathComponent
+        let derivation = PlanningWriterIO.reference(derivationPath, id: "spatial-derivation.\(derivationID)",
+            role: "core.spatial-derivation", bytes: derivationData)
+        let image = CanonicalArtifactReferenceV1(id: "spatial-sketch.\(derivationID)", role: "core.storyboard-sketch",
+            path: directory + "/" + outputFilename, sha256: outputSHA256)
         let proof = StoryboardSketchProofV1(projectID: projectID, shotID: binding.shotID, momentID: binding.momentID,
             intentSHA256: binding.intentSHA256, framingSHA256: binding.framingSHA256, image: image,
             source: .spatialDerived(proof: derivation))
         try proof.validate()
         let proofData = try PlanningWriterIO.json(proof)
-        let proofReference = PlanningWriterIO.reference(directory + "/sketch-proof.v1.json", id: "sketch-proof.\(candidate.proof.id)",
+        let proofReference = PlanningWriterIO.reference(try StoryboardSketchProofV1.path(id: name), id: "sketch-proof.\(derivationID)",
             role: "core.storyboard-sketch-proof", bytes: proofData)
-        let adoption = Adoption(id: candidate.proof.id, projectID: projectID, ownerArtifact: owner, storyboardBinding: binding,
-            proof: derivation, media: [output.filename: image], sceneManifest: manifestReference(revision))
-        let files: [(path: String, bytes: Data)] = try candidate.lease.withConsumer(cancellation: cancellation) { work, token in
-            try candidate.files.map { (directory + "/" + $0.key,
-                try $0.value.verifiedData(maximum: candidate.lease.limits.outputBytes,
-                    checking: { try token.check(); try work.check() })) }
-        }
-            + [(derivation.path, candidate.proofData), (proofReference.path, proofData),
-               (adoptionPath(candidate.proof.id), try PlanningWriterIO.json(adoption))]
-        return PreparedSketch(targetShotID: binding.shotID, targetMomentID: binding.momentID,
-            asset: .init(image: image, proof: proofReference), files: files)
+        return StoryboardSketchEntry(directory: directory, derivation: derivation, proofData: proofData,
+            asset: .init(image: image, proof: proofReference))
     }
 
     static func background<Value: Sendable>(cancellation: BpyOperationCancellation, dataRoot: URL,

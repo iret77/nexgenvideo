@@ -404,7 +404,7 @@ enum PipelineStoryboardNativeMedia {
         try proof.validate()
         guard FileDigest.sha256(of: imageBytes) == proof.image.sha256 else { throw changed() }
         let id = UUID().uuidString.lowercased()
-        let path = "storyboard/sketch-proofs/" + id + ".v1.json"
+        let path = try StoryboardSketchProofV1.path(id: id)
         let bytes = try PlanningWriterIO.json(proof)
         return Prepared(targetShotID: proof.shotID, targetMomentID: proof.momentID,
             asset: .init(image: proof.image, proof: PlanningWriterIO.reference(path, id: "sketch-proof-" + id,
