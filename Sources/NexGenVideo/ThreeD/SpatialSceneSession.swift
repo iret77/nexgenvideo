@@ -52,13 +52,20 @@ struct SpatialSceneActivity: Equatable {
     var operating = false
     var reading = false
     private(set) var firstReadPending = true
+    private(set) var readFailed = false
 
-    // A new session reads its persisted locations before any location control may act.
+    // Location controls stay locked until the persisted list has been read successfully once.
     var busy: Bool { operating || firstReadPending }
-    var readingLocations: Bool { reading || firstReadPending }
+    var working: Bool { operating || (firstReadPending && !readFailed) }
+    var readingLocations: Bool { reading || (firstReadPending && !readFailed) }
+    var cancellable: Bool { operating && !firstReadPending }
     var admitsRead: Bool { !operating }
+    var offersReload: Bool { readFailed && !operating }
 
-    mutating func finishRead() { reading = false; operating = false; firstReadPending = false }
+    mutating func finishRead(succeeded: Bool) {
+        reading = false; operating = false; readFailed = !succeeded
+        if succeeded { firstReadPending = false }
+    }
 }
 
 @MainActor @Observable
@@ -69,6 +76,8 @@ final class SpatialSceneSession {
     private(set) var snapshotRevision = UUID()
     private(set) var activity = SpatialSceneActivity()
     var busy: Bool { activity.busy }
+    var working: Bool { activity.working }
+    var offersReload: Bool { activity.offersReload }
     private(set) var commitProgress: SpatialSceneCommitProgress?
     private var actionError: String?
     private(set) var error: String? {
@@ -112,7 +121,7 @@ final class SpatialSceneSession {
     var selectedCamera: BpySpatialCamera? { snapshot?.cameras.first { $0.id == selectedCameraID } }
     var canUndo: Bool { !busy && historyTarget(undo: true) != nil }
     var canRedo: Bool { !busy && historyTarget(undo: false) != nil }
-    var canCancel: Bool { activity.operating && commitProgress == nil && !userCancellationRequested }
+    var canCancel: Bool { activity.cancellable && commitProgress == nil && !userCancellationRequested }
     var historyNotice: String? {
         switch historyIntent?.status {
         case .rejectedBusy:
@@ -164,9 +173,11 @@ final class SpatialSceneSession {
             let (heads, loaded) = try await readLocations()
             guard !Task.isCancelled, !busy, snapshotRevision == previousSnapshot else { return false }
             applyLocations(heads, selected: loaded)
+            activity.finishRead(succeeded: true)
         } catch {
             guard !Task.isCancelled, !busy, snapshotRevision == previousSnapshot else { return false }
             refreshError = error.localizedDescription
+            activity.finishRead(succeeded: false)
         }
         return true
     }
@@ -176,11 +187,13 @@ final class SpatialSceneSession {
         beginOperation()
         activity.reading = true
         refreshTask = Task {
-            defer { activity.finishRead(); refreshTask = nil }
+            var succeeded = false
+            defer { activity.finishRead(succeeded: succeeded); refreshTask = nil }
             do {
                 let (heads, selected) = try await readLocations()
                 try Task.checkCancellation()
                 applyLocations(heads, selected: selected)
+                succeeded = true
             } catch {
                 if !Task.isCancelled { refreshError = error.localizedDescription }
             }
@@ -371,7 +384,7 @@ final class SpatialSceneSession {
     func dismissCameraPreview() { cameraPreview = nil }
 
     func cancel() {
-        guard activity.operating, commitProgress == nil else { return }
+        guard activity.cancellable, commitProgress == nil else { return }
         userCancellationRequested = true
         refreshTask?.cancel()
         operationTask?.cancel()
