@@ -388,7 +388,7 @@ jobs:
 
       - name: Test
         if: inputs.completed_full_core_run_id == ''
-        timeout-minutes: 30
+        timeout-minutes: 45
         env:
           HOME: ${{ runner.temp }}/nexgenvideo-test-home
           CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
@@ -427,6 +427,7 @@ jobs:
             --evidence "$RUNNER_TEMP/render-review-test-diagnostic" --log test.log \
             --swift-testing-runs 2 --xctest-runs 2 --without-runloop-probe -- \
             python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+              --serialize-app-tests \
               --evidence "$RUNNER_TEMP/render-review-test-diagnostic/hosted-suite"
 
       - name: Upload App assertion continuation proof
