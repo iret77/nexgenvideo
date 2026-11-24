@@ -54,6 +54,10 @@ nonisolated enum BpyHostConfiguration {
 
     static func freeze(_ data: Data, context: Context) throws -> Data {
         guard UInt64(data.count) <= maximumBytes else { throw BpyRuntimeError.invalidInput("The worker configuration is too large.") }
+        if context.mode == .boundary {
+            guard data == Data("{}".utf8) else { throw SpatialSceneError.changed }
+            return data
+        }
         var config = try JSONDecoder().decode(Configuration.self, from: data)
         let session = context.dataMount + "/" + context.identity.transport.uuidString
         let workerSession = context.workerMount + "/" + context.identity.transport.uuidString
@@ -89,7 +93,12 @@ nonisolated enum BpyHostConfiguration {
                   config.scenePath == workerSession + "/jobs/" + job.uuidString + "/worker/outputs/scene.blend",
                   context.readPaths.contains(config.scenePath ?? ""),
                   (config.diagnosticDeniedPaths ?? []) == context.diagnosticDeniedPaths else { throw SpatialSceneError.changed }
-        case .autoexecPositive, .boundary: throw SpatialSceneError.changed
+        case .autoexecPositive:
+            guard let job = context.identity.job, context.identity.diagnosticAutoexec,
+                  config.jobID == job.uuidString, config.manifest == context.root + "/manifest.json",
+                  config.scenePath == context.root + "/positive-control.blend", config.sourcePath == nil,
+                  config.confirmedScene == nil, config.inputDirectory == nil, config.outputDirectory == nil else { throw SpatialSceneError.changed }
+        case .boundary: throw SpatialSceneError.changed
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]

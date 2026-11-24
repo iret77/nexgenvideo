@@ -46,8 +46,7 @@ for slot in 0 1; do
   )
   cp "$ROOT/Runtime/bpy/worker.py" "$DESTINATION/worker.py"
   cp "$ROOT/Runtime/bpy/scene_operations.py" "$DESTINATION/scene_operations.py"
-  test ! -e "$DESTINATION/storage_probe.py"
-  test ! -L "$DESTINATION/storage_probe.py"
+  cp "$ROOT/Runtime/bpy/storage_probe.py" "$DESTINATION/storage_probe.py"
   chmod 755 "$DESTINATION/python/bin/python3"*
   cp "$SUPERVISOR_BINARY" "$XPC/Contents/MacOS/NexGenVideoBpySupervisor"
   chmod 755 "$XPC/Contents/MacOS/NexGenVideoBpySupervisor"
