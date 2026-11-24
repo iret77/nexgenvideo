@@ -113,7 +113,7 @@ struct StoryboardPlanningView: View {
                 Picker("Storyboard view", selection: $animatic) {
                     Text("Board").tag(false)
                     Text("Animatic").tag(true)
-                }.pickerStyle(.segmented).reviewAcceptanceProbe("storyboard.view", state: animatic)
+                }.pickerStyle(.segmented).reviewAcceptanceProbe("storyboard.view", text: animatic ? "animatic" : "board")
                 if loading { ProgressView().controlSize(.small) }
             }
             .padding(.horizontal, AppTheme.Spacing.lg)

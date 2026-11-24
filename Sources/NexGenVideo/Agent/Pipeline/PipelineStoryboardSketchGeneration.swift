@@ -157,7 +157,7 @@ enum PipelineStoryboardSketchGeneration {
                 providerRequestID: completed.providerRequestID, generationEventID: media.id,
                 generationReceipt: receiptRef, inputs: inputs))
         let proofBytes = try PlanningWriterIO.json(proof)
-        let proofPath = "storyboard/sketch-proofs/" + FileDigest.sha256(of: proofBytes) + ".v1.json"
+        let proofPath = try StoryboardSketchProofV1.path(id: FileDigest.sha256(of: proofBytes))
         let asset = StoryboardTimingV1.SketchAsset(image: image, proof: PlanningWriterIO.reference(proofPath,
             id: "sketch-proof-" + receiptID, role: "core.storyboard-sketch-proof", bytes: proofBytes))
         var files: [(path: String, bytes: Data)] = [(imagePath, imageBytes), (receiptPath, receiptBytes), (proofPath, proofBytes)] + (try evidence.unpublishedFiles(dataRoot: root))

@@ -47,7 +47,7 @@ enum PipelineStoryboardImageReassignment {
         let selection = try PipelineStoryboardSketchEvidence.selectionFile(proof: proof, receiptID: receiptID,
             originalName: "Reassigned sketch",
             expectedFingerprint: expectedFingerprint)
-        let proofPath = "storyboard/sketch-proofs/\(receiptID).v1.json"
+        let proofPath = try StoryboardSketchProofV1.path(id: receiptID)
         let bytes = try PlanningWriterIO.json(proof)
         let asset = StoryboardTimingV1.SketchAsset(image: originalAsset.image,
             proof: PlanningWriterIO.reference(proofPath, id: "sketch-proof.\(receiptID)", role: "core.storyboard-sketch-proof", bytes: bytes))

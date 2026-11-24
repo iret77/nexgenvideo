@@ -17,6 +17,14 @@ public struct SourceMediaTimebaseV1: Codable, Sendable, Equatable {
 
 public struct StoryboardSketchProofV1: Codable, Sendable, Equatable {
     public static let schemaVersion = "storyboard-sketch-proof/v1"
+    public static let directory = "storyboard/sketch-proofs"
+
+    public static func path(id: String) throws -> String {
+        try PlanningValidation.identifier(id, "sketch.proofID")
+        return directory + "/" + id + ".v1.json"
+    }
+
+    public static func isStoredPath(_ path: String) -> Bool { path.hasPrefix(directory + "/") }
 
     public enum Source: Codable, Sendable, Equatable {
         case uploaded(original: CanonicalArtifactReferenceV1, selectionReceiptID: String)
@@ -313,7 +321,7 @@ public enum StoryboardBundleValidator {
                     try PlanningValidation.reference(asset.image)
                     try PlanningValidation.reference(asset.proof)
                     try PlanningValidation.require(asset.image.path.hasPrefix("storyboard/sketches/")
-                        && asset.proof.path.hasPrefix("storyboard/sketch-proofs/"), "storyboard.moment.assetPaths")
+                        && StoryboardSketchProofV1.isStoredPath(asset.proof.path), "storyboard.moment.assetPaths")
                 }
             }
         }
