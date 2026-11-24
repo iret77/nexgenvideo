@@ -174,7 +174,8 @@ class SwiftTestFailurePropagationTests(unittest.TestCase):
                         expected.extend(["--swiftc-flag=-enable-testing", "--serialize-app-tests",
                                          "--evidence", runtime + "/release-test-evidence"])
                     else:
-                        expected.extend(["--evidence", runtime + "/render-review-test-diagnostic/hosted-suite"])
+                        expected.extend(["--serialize-app-tests",
+                                         "--evidence", runtime + "/render-review-test-diagnostic/hosted-suite"])
                     self.assertEqual((root / "args").read_text().splitlines(), expected)
                     self.assertEqual(
                         (root / "backtrace").read_text(),
