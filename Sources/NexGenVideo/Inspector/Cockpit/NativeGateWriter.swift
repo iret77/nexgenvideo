@@ -17,6 +17,7 @@ struct NativeGateApprovalReadiness: Sendable, Equatable {
 struct NativeGateControlReadiness: Sendable, Equatable {
     let mutations: NativeGateApprovalReadiness
     let approval: NativeGateApprovalReadiness
+    var activeOperation: String? = nil
 }
 
 enum NativeGateApprovalStage: Sendable {
@@ -126,10 +127,6 @@ enum NativeGateWriter {
                 throw WriteError.notInitialized
             }
             root = resolvedRoot
-            try requireIdle(
-                dataRoot: root,
-                executionCoordinator: executionCoordinator
-            )
         } catch {
             let blocked = NativeGateApprovalReadiness.blocked(
                 error.localizedDescription
@@ -139,6 +136,7 @@ enum NativeGateWriter {
                 approval: blocked
             )
         }
+        if let busy = busyControls(dataRoot: root, executionCoordinator: executionCoordinator) { return busy }
         let resolved: NativeGateResolvedRegistry
         do {
             resolved = try resolvedRegistryContext(
@@ -209,29 +207,30 @@ enum NativeGateWriter {
                 approval: approval
             )
         }.value
-        do {
-            try requireIdle(
-                dataRoot: root,
-                executionCoordinator: executionCoordinator
-            )
-            if readiness.approval.isReady, let phase {
-                do {
-                    try await requireLiveAssembly(projectDir: projectDir, phase: phase, workflow: resolved.workflow, editor: editor, readiness: true)
-                } catch {
-                    return NativeGateControlReadiness(mutations: readiness.mutations,
-                        approval: .blocked(error.localizedDescription, userMessage: error.localizedDescription))
-                }
+        if let busy = busyControls(dataRoot: root, executionCoordinator: executionCoordinator) { return busy }
+        if readiness.approval.isReady, let phase {
+            do {
+                try await requireLiveAssembly(projectDir: projectDir, phase: phase, workflow: resolved.workflow, editor: editor, readiness: true)
+            } catch {
+                return NativeGateControlReadiness(mutations: readiness.mutations,
+                    approval: .blocked(error.localizedDescription, userMessage: error.localizedDescription))
             }
-            try requireIdle(dataRoot: root, executionCoordinator: executionCoordinator)
-            return readiness
+        }
+        if let busy = busyControls(dataRoot: root, executionCoordinator: executionCoordinator) { return busy }
+        return readiness
+    }
+
+    private static func busyControls(
+        dataRoot: URL,
+        executionCoordinator: PipelinePhaseRunCoordinator
+    ) -> NativeGateControlReadiness? {
+        do {
+            try requireIdle(dataRoot: dataRoot, executionCoordinator: executionCoordinator)
+            return nil
         } catch {
-            let blocked = NativeGateApprovalReadiness.blocked(
-                error.localizedDescription
-            )
-            return NativeGateControlReadiness(
-                mutations: blocked,
-                approval: blocked
-            )
+            let blocked = NativeGateApprovalReadiness.blocked(error.localizedDescription)
+            return NativeGateControlReadiness(mutations: blocked, approval: blocked,
+                activeOperation: executionCoordinator.runningPhase(projectRoot: dataRoot))
         }
     }
 

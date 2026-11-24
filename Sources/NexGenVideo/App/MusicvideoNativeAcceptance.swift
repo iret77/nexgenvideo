@@ -227,10 +227,13 @@ enum MusicvideoNativeAcceptance {
                 host.layoutSubtreeIfNeeded()
                 guard editor.productionSelectedPhase == next,
                       let message = WorkspaceUIAcceptance.probeText(identifier: reasonID, in: window),
-                      !message.isEmpty, message != "Checking phase readiness…",
-                      message != "Phase controls are unavailable. Resolve the project or workflow error before continuing." else {
+                      !message.isEmpty else {
                     return false
                 }
+                guard !message.hasPrefix(PhaseControlReadiness.failurePrefix) else {
+                    throw FullflowAcceptanceFixture.Failure("\(phase): the healthy \(PhaseDisplay.label(next)) phase reported a phase-control failure: \(message)")
+                }
+                guard message != PhaseControlReadiness.checking.dockMessage, !message.hasPrefix("Wait for ") else { return false }
                 return WorkspaceUIAcceptance.probeState(identifier: continueID, in: window) == true
                     || WorkspaceUIAcceptance.probeState(identifier: nextApprovalID, in: window) == true
             }
