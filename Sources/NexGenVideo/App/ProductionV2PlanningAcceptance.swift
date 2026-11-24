@@ -244,6 +244,8 @@ enum ProductionV2PlanningAcceptance {
                     window.isKeyWindow && window.attachedSheet == nil && !busy(context.editor)
                         && driver.text("storyboard.v2.workspace", in: window) == fingerprint && driver.state(id, in: window) == true
                 }
+                try await driver.revealStoryboardMoment(id, shotID: shot.id, orderedShots: current.timing.shots.map(\.id),
+                                                        fingerprint: fingerprint)
                 try await driver.waitForPresentation(of: window, control: id, ready: ready)
                 try await driver.menu(id, title: "Capture source video frame…", in: window, preDown: ready)
                 let sheet = try await driver.sheet("storyboard.native-sketch.choose", waitForControl: true)

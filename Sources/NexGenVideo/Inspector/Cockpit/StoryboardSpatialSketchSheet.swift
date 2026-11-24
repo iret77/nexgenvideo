@@ -14,16 +14,22 @@ struct StoryboardSpatialSketchSheet: View {
     @State private var sceneID: UUID?
     @State private var revision: SpatialSceneRevision?
     @State private var cameraID: String?
-    @State private var loading = false
+    @State private var loading = true
+    @State private var loadedGeneration: UUID?
     @State private var failure: String?
     @State private var rendering: Task<Void, Never>?
     @State private var inspecting = false
 
     private var selected: SpatialSceneHead? { scenes.first { $0.id == sceneID } }
+    private var listReady: Bool {
+        !loading && loadedGeneration != nil && loadedGeneration == editor.openWorkingCopyGeneration && editor.workingRoot == home
+    }
+    private var canChooseScene: Bool { listReady && rendering == nil && !scenes.isEmpty }
+    private var canChooseCamera: Bool { canChooseScene && selected?.matches(revision) == true && revision?.snapshot.cameras.isEmpty == false }
     private var canRender: Bool {
         guard let root = DataRootResolver.dataRoot(of: home) else { return false }
         _ = editor.pipelinePhaseExecution.snapshot
-        return !loading && rendering == nil && selected != nil
+        return canChooseCamera
             && revision?.snapshot.cameras.contains(where: { $0.id == cameraID }) == true
             && editor.workingRoot == home && editor.projectState?.nextPhaseName == "storyboard"
             && !editor.agentService.isStreaming && !editor.agentService.isComposerBlocked
@@ -43,18 +49,20 @@ struct StoryboardSpatialSketchSheet: View {
                     Picker("Location", selection: $sceneID) {
                         Text("Choose location").tag(UUID?.none)
                         ForEach(scenes) { Text($0.name).tag(Optional($0.id)) }
-                    }.disabled(rendering != nil || loading)
-                        .reviewAcceptanceProbe("storyboard.spatial.scene", state: rendering == nil && !loading, text: sceneID?.uuidString ?? "")
+                    }.disabled(!canChooseScene)
+                        .reviewAcceptanceProbe("storyboard.spatial.locations", state: listReady, text: scenes.map(\.selectionIdentity).joined(separator: "\n"))
+                        .reviewAcceptanceProbe("storyboard.spatial.scene", state: canChooseScene, text: sceneID?.uuidString ?? "")
                     Picker("Camera", selection: $cameraID) {
                         Text("Choose camera").tag(String?.none)
                         ForEach(revision?.snapshot.cameras ?? []) { Text($0.name).tag(Optional($0.id)) }
-                    }.disabled(rendering != nil || loading || revision == nil)
-                        .reviewAcceptanceProbe("storyboard.spatial.camera", state: rendering == nil && !loading && revision != nil, text: cameraID ?? "")
-                    if scenes.isEmpty && !loading {
+                    }.disabled(!canChooseCamera)
+                        .reviewAcceptanceProbe("storyboard.spatial.cameras", text: revision?.snapshot.cameras.map(\.id).joined(separator: "\n"))
+                        .reviewAcceptanceProbe("storyboard.spatial.camera", state: canChooseCamera, text: cameraID ?? "")
+                    if listReady && scenes.isEmpty {
                         Text("Create a location and camera in Production Design first.").foregroundStyle(AppTheme.Text.secondaryColor)
                         Button("Open Production Design") { editor.revealCockpit(.productionDesign); dismiss() }
                             .buttonStyle(InlineActionButtonStyle())
-                    } else {
+                    } else if listReady && !scenes.isEmpty {
                         Button("Inspect location and cameras…") { inspecting = true }.buttonStyle(InlineActionButtonStyle())
                             .disabled(rendering != nil)
                     }
@@ -81,6 +89,7 @@ struct StoryboardSpatialSketchSheet: View {
         .task(id: sceneID) { await loadScene() }
         .onDisappear { rendering?.cancel() }
         .onChange(of: editor.workingRoot) { _, value in if value != home { rendering?.cancel(); dismiss() } }
+        .onChange(of: editor.openWorkingCopyGeneration) { _, _ in rendering?.cancel(); dismiss() }
         .interactiveDismissDisabled(rendering != nil)
         .sheet(isPresented: $inspecting) {
             VStack {
@@ -92,27 +101,36 @@ struct StoryboardSpatialSketchSheet: View {
     }
 
     private func loadLocations() async {
-        guard let root = DataRootResolver.dataRoot(of: home), editor.workingRoot == home else { return }
         loading = true
-        defer { loading = false }
+        loadedGeneration = nil
+        scenes = []; sceneID = nil; failure = nil
+        guard let generation = editor.openWorkingCopyGeneration, editor.workingRoot == home,
+              let root = DataRootResolver.dataRoot(of: home) else {
+            loading = false; failure = "Reopen the project to read its saved locations."
+            return
+        }
+        defer { if !Task.isCancelled { loading = false } }
         do {
             let value = try await Task.detached(priority: .userInitiated) {
                 try PipelineSpatialSceneAuthority.requireCurrent(dataRoot: root)
                 return try SpatialSceneStore.index(in: root).scenes
             }.value
-            guard !Task.isCancelled, editor.workingRoot == home else { return }
-            scenes = value
-        } catch { failure = error.localizedDescription }
+            guard !Task.isCancelled, editor.workingRoot == home, editor.openWorkingCopyGeneration == generation else { return }
+            scenes = value; loadedGeneration = generation
+        } catch {
+            if !Task.isCancelled, editor.workingRoot == home, editor.openWorkingCopyGeneration == generation { failure = error.localizedDescription }
+        }
     }
 
     private func loadScene() async {
         revision = nil; cameraID = nil
-        guard let selected, let root = DataRootResolver.dataRoot(of: home) else { return }
+        guard listReady, let generation = loadedGeneration, let selected, let root = DataRootResolver.dataRoot(of: home) else { return }
+        failure = nil
         do {
             let value = try await Task.detached(priority: .userInitiated) { try SpatialSceneStore.load(selected, in: root) }.value
-            guard !Task.isCancelled, editor.workingRoot == home, sceneID == selected.id else { return }
+            guard !Task.isCancelled, listReady, loadedGeneration == generation, self.selected == selected else { return }
             revision = value; failure = nil
-        } catch { if !Task.isCancelled { failure = error.localizedDescription } }
+        } catch { if !Task.isCancelled, listReady, loadedGeneration == generation, self.selected == selected { failure = error.localizedDescription } }
     }
 
     private func render() {

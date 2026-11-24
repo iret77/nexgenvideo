@@ -102,7 +102,9 @@ final class ProductionVisualSourcesDriver {
     }
 
     func text(_ id: String, in target: NSWindow) -> String? { WorkspaceUIAcceptance.probeText(identifier: id, in: target) }
-    func state(_ id: String, in target: NSWindow) -> Bool? { WorkspaceUIAcceptance.probeState(identifier: id, in: target) }
+    func state(_ id: String, in target: NSWindow) -> Bool? {
+        (probe(id, in: target) as? AppRelaunchClickProbeView)?.acceptanceState
+    }
 
     func sheet(_ id: String, parent: NSWindow? = nil, waitForControl: Bool = false) async throws -> NSWindow {
         let parent = parent ?? window
@@ -143,6 +145,24 @@ final class ProductionVisualSourcesDriver {
 
     static func ownsWheelHit(_ hit: NSView, scroll: NSScrollView) -> Bool {
         (hit as? NSScrollView ?? hit.enclosingScrollView) === scroll
+    }
+
+    private func ownsWheel(at point: NSPoint, clip: NSClipView, scroll: NSScrollView, root: NSView, window: NSWindow) -> Bool {
+        guard window.isKeyWindow, clip.bounds.contains(point), clip.visibleRect.contains(point),
+              let hit = root.hitTest(clip.convert(point, to: root.superview)) else { return false }
+        return Self.ownsWheelHit(hit, scroll: scroll)
+    }
+
+    private func exposedWheelPoint(in clip: NSClipView, scroll: NSScrollView, root: NSView, window: NSWindow) -> NSPoint? {
+        let visible = clip.visibleRect
+        let fractions: [CGFloat] = [0.5, 0.25, 0.75, 0.1, 0.9]
+        for y in fractions {
+            for x in fractions {
+                let point = NSPoint(x: visible.minX + visible.width * x, y: visible.minY + visible.height * y)
+                if ownsWheel(at: point, clip: clip, scroll: scroll, root: root, window: window) { return point }
+            }
+        }
+        return nil
     }
 
     static func revealWheelDelta(distance: CGFloat, flipped: Bool, prior: WheelResponse?) -> Int32 {
@@ -197,16 +217,7 @@ final class ProductionVisualSourcesDriver {
             let prior = previousClip === clip && previousDocument === document ? response : nil
             let delta = Self.revealWheelDelta(distance: distance, flipped: clip.isFlipped, prior: prior)
             let visibleArea = clip.visibleRect
-            func ownsWheel(at point: NSPoint) -> Bool {
-                guard target.isKeyWindow, clip.bounds.contains(point), visibleArea.contains(point),
-                      let hit = root.hitTest(clip.convert(point, to: root.superview)) else { return false }
-                return Self.ownsWheelHit(hit, scroll: scroll)
-            }
-            let fractions: [CGFloat] = [0.5, 0.25, 0.75, 0.1, 0.9]
-            let points = fractions.flatMap { y in
-                fractions.map { x in NSPoint(x: visibleArea.minX + visibleArea.width * x, y: visibleArea.minY + visibleArea.height * y) }
-            }
-            guard let wheelPoint = points.first(where: ownsWheel) else {
+            guard let wheelPoint = exposedWheelPoint(in: clip, scroll: scroll, root: root, window: target) else {
                 try record("scroll viewport has no exposed input point", fields: ["id": id, "viewport": rect(visibleArea),
                     "window": target.windowNumber, "scroll": String(describing: ObjectIdentifier(scroll))])
                 throw GateBlocked("The scroll viewport has no exposed wheel target: " + id)
@@ -234,7 +245,7 @@ final class ProductionVisualSourcesDriver {
                       !self.fullyVisible(view, root: root), clip.bounds == originalBounds,
                       view.convert(view.bounds, to: clip) == frame,
                       clip.visibleRect == visibleArea, target.convertPoint(toScreen: clip.convert(wheelPoint, to: nil)) == point,
-                      ownsWheel(at: wheelPoint) else { return false }
+                      ownsWheel(at: wheelPoint, clip: clip, scroll: scroll, root: root, window: target) else { return false }
                 completion.armed = true
                 return true
             }
@@ -393,9 +404,9 @@ final class ProductionVisualSourcesDriver {
         }
         try visible([id], in: target)
         guard !enabled || state(id, in: target) == true,
-              let frame = WorkspaceUIAcceptance.probeFrame(identifier: id, in: target),
               let root = target.contentView else { throw GateBlocked("Control is disabled: " + id) }
         guard let view = probe(id, in: target) else { throw GateBlocked("The native pointer probe disappeared: " + id) }
+        let frame = view.convert(view.bounds, to: root)
         let point = view.convert(NSPoint(x: view.bounds.minX + view.bounds.width * fraction.x,
                                         y: view.bounds.minY + view.bounds.height * fraction.y), to: root)
         let hit = root.hitTest(root.convert(point, to: root.superview))
@@ -938,6 +949,139 @@ final class ProductionVisualSourcesDriver {
         try persist()
     }
 
+    func revealStoryboardMoment(_ control: String, shotID: String, orderedShots: [String], fingerprint: String) async throws {
+        let contentID = "storyboard.board.content"
+        guard let targetIndex = orderedShots.firstIndex(of: shotID) else { throw GateBlocked("The target shot is absent from the saved Board.") }
+        let token = try NativeAcceptancePointer.claim()
+        defer { NativeAcceptancePointer.release(token) }
+        func current() -> Bool {
+            window.isKeyWindow && window.attachedSheet == nil && text("storyboard.v2.workspace", in: window) == fingerprint
+                && (probe(contentID, in: window) as? AppRelaunchClickProbeView)?.acceptanceText == fingerprint
+        }
+        let deadline = ProcessInfo.processInfo.systemUptime + 60
+        var last: [String: Any] = ["shotID": shotID, "control": control, "expectedFingerprint": fingerprint]
+        do {
+            try await waitForPresentation(of: window, control: contentID, ready: current)
+            while ProcessInfo.processInfo.systemUptime < deadline {
+                guard current(), let marker = probe(contentID, in: window), let root = window.contentView,
+                      let scroll = marker.enclosingScrollView, let document = scroll.documentView,
+                      let screen = NSScreen.screens.first else { throw GateBlocked("The saved Board scroll view changed.") }
+                if let target = probe(control, in: window), target.enclosingScrollView === scroll { return }
+                let clip = scroll.contentView
+                let viewport = clip.bounds
+                func visibleShotsNow() -> [Int] {
+                    let rows = self.views(document).compactMap { $0 as? AppRelaunchClickProbeView }.filter {
+                        $0.enclosingScrollView === scroll && !$0.isHiddenOrHasHiddenAncestor
+                            && $0.bounds.width > 0 && $0.bounds.height > 0 && $0.convert($0.bounds, to: clip).intersects(clip.visibleRect)
+                    }
+                    let ids = Set(rows.compactMap { $0.identifier?.rawValue })
+                    return orderedShots.indices.filter { ids.contains("storyboard.plan." + orderedShots[$0]) }
+                }
+                let visibleShots = visibleShotsNow()
+                last["visibleShots"] = visibleShots.map { orderedShots[$0] }
+                last["viewport"] = rect(viewport)
+                if visibleShots.contains(targetIndex) {
+                    try await wait("sketch menu in visible shot " + shotID, seconds: 3) {
+                        current() && (self.probe(control, in: self.window) != nil || !visibleShotsNow().contains(targetIndex))
+                    }
+                    continue
+                }
+                guard let first = visibleShots.first, let final = visibleShots.last,
+                      targetIndex < first || targetIndex > final,
+                      let wheelPoint = exposedWheelPoint(in: clip, scroll: scroll, root: root, window: window) else {
+                    throw GateBlocked("The saved shot cannot be located relative to the visible Board.")
+                }
+                let forward = targetIndex > final
+                let amount = Int32(min(72, max(1, viewport.height / 6)))
+                let delta = forward ? -amount : amount
+                let point = window.convertPoint(toScreen: clip.convert(wheelPoint, to: nil))
+                let quartz = CGPoint(x: point.x, y: screen.frame.maxY - point.y)
+                let documentFrame = document.frame
+                @MainActor final class Delivery { var armed = false; var ended = false }
+                let delivery = Delivery()
+                let observer = NotificationCenter.default.addObserver(forName: NSScrollView.didEndLiveScrollNotification,
+                    object: scroll, queue: .main) { _ in MainActor.assumeIsolated { if delivery.armed { delivery.ended = true } } }
+                defer { NotificationCenter.default.removeObserver(observer) }
+                let sent = try await postWheel(delta: delta, at: quartz, in: window, transaction: token) {
+                    guard current(), self.window.contentView === root, self.probe(contentID, in: self.window) === marker,
+                          marker.enclosingScrollView === scroll, scroll.contentView === clip, scroll.documentView === document else {
+                        throw GateBlocked("The Board changed before wheel input.")
+                    }
+                    guard self.probe(control, in: self.window) == nil, visibleShotsNow() == visibleShots,
+                          clip.bounds == viewport, document.frame == documentFrame,
+                          self.window.convertPoint(toScreen: clip.convert(wheelPoint, to: nil)) == point,
+                          self.ownsWheel(at: wheelPoint, clip: clip, scroll: scroll, root: root, window: self.window) else { return false }
+                    delivery.armed = true
+                    return true
+                }
+                if !sent {
+                    try await waitForPresentation(of: window, control: contentID, ready: current)
+                    continue
+                }
+                var geometry: [NSRect] = []
+                var since = 0.0
+                try await wait("native Board scroll towards " + shotID, seconds: 3) {
+                    guard current(), self.probe(contentID, in: self.window) === marker, scroll.contentView === clip,
+                          scroll.documentView === document, delivery.ended else { return false }
+                    let movement = clip.bounds.minY - viewport.minY
+                    guard (forward == clip.isFlipped ? movement : -movement) > 0 else { return false }
+                    let observed = [clip.bounds, clip.frame, document.frame]
+                    let now = ProcessInfo.processInfo.systemUptime
+                    if geometry != observed { geometry = observed; since = now; return false }
+                    return now - since >= 0.25
+                }
+                try record("native Board scroll towards saved shot", fields: ["shotID": shotID, "control": control,
+                    "fingerprint": fingerprint, "delta": delta, "before": rect(viewport), "after": rect(clip.bounds)])
+            }
+            throw GateBlocked("The saved Storyboard moment did not appear after native scrolling.")
+        } catch {
+            last["displayedFingerprint"] = text("storyboard.v2.workspace", in: window) ?? ""
+            last["contentFingerprint"] = text(contentID, in: window) ?? ""
+            last["windowKey"] = window.isKeyWindow
+            last["sheetPresent"] = window.attachedSheet != nil
+            last["controlFound"] = probe(control, in: window) != nil
+            last["controlEnabled"] = state(control, in: window) == true
+            try record("saved Storyboard moment unavailable", fields: last)
+            throw error
+        }
+    }
+
+    func waitForSpatialLocations(_ scene: SpatialSceneHead, prefix: String, in sheet: NSWindow) async throws {
+        let locations = prefix + "locations"
+        try await wait("read saved locations for " + prefix) {
+            self.state(locations, in: sheet) == true || self.text(prefix + "failure", in: sheet) != nil
+        }
+        if let failure = text(prefix + "failure", in: sheet) { throw GateBlocked(failure) }
+        guard text(locations, in: sheet)?.components(separatedBy: "\n").contains(scene.selectionIdentity) == true else {
+            throw GateBlocked("The saved location revision is missing from the picker: " + scene.name)
+        }
+    }
+
+    func chooseSpatialCamera(scene: SpatialSceneHead, cameraID: String, cameraTitle: String,
+                             prefix: String, locationControl: String, in sheet: NSWindow) async throws {
+        let location = prefix + locationControl
+        func choose(_ control: String, title: String, selected: String, options: String, identity: String,
+                    locationSelected: Bool) async throws {
+            func ready() -> Bool {
+                sheet.sheetParent === window && window.attachedSheet === sheet && sheet.isKeyWindow
+                    && state(control, in: sheet) == true
+                    && text(prefix + options, in: sheet)?.components(separatedBy: "\n").contains(identity) == true
+                    && (!locationSelected || text(location, in: sheet) == scene.id.uuidString)
+            }
+            try await wait("saved choices available for " + control) {
+                ready() || self.text(prefix + "failure", in: sheet) != nil
+            }
+            if !ready(), let failure = text(prefix + "failure", in: sheet) { throw GateBlocked(failure) }
+            try await waitForPresentation(of: sheet, control: control, ready: ready)
+            try await menu(control, title: title, in: sheet, preDown: ready)
+            try await wait("picker binding " + control) { self.text(control, in: sheet) == selected }
+        }
+        try await choose(location, title: scene.name, selected: scene.id.uuidString, options: "locations",
+                         identity: scene.selectionIdentity, locationSelected: false)
+        try await choose(prefix + "camera", title: cameraTitle, selected: cameraID, options: "cameras",
+                         identity: cameraID, locationSelected: true)
+    }
+
     func picker(_ id: String, title: String, expected: String, in target: NSWindow) async throws {
         try await menu(id, title: title, in: target)
         try await wait("picker binding " + id) { self.text(id, in: target) == expected }
@@ -1357,8 +1501,24 @@ final class ProductionVisualSourcesDriver {
 
     private func probe(_ id: String, in target: NSWindow) -> NSView? {
         guard let root = target.contentView else { return nil }
+        if id == "storyboard.board.content" { return boardProbe(id, root: root, window: target) }
+        if id.hasPrefix("storyboard.sketch.sources.") {
+            guard let scroll = boardProbe("storyboard.board.content", root: root, window: target)?.enclosingScrollView,
+                  let document = scroll.documentView else { return nil }
+            return boardProbe(id, root: document, window: target, scroll: scroll)
+        }
         return WorkspaceUIAcceptance.findProbe(in: root, identifier: id)
     }
+
+    private func boardProbe(_ id: String, root: NSView, window: NSWindow, scroll: NSScrollView? = nil) -> NSView? {
+        let matches = views(root).filter { view in
+            view is AppRelaunchClickProbeView && view.identifier?.rawValue == id && view.window === window
+                && !view.isHiddenOrHasHiddenAncestor && view.bounds.width > 0 && view.bounds.height > 0
+                && (scroll == nil || view.enclosingScrollView === scroll)
+        }
+        return matches.count == 1 ? matches.first : nil
+    }
+
     private func views(_ root: NSView) -> [NSView] { [root] + root.subviews.flatMap(views) }
     private func rect(_ value: NSRect) -> [Double] { [value.minX, value.minY, value.width, value.height].map(Double.init) }
     private func fullyVisible(_ view: NSView, root: NSView) -> Bool {

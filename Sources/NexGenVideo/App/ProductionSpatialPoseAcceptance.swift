@@ -30,11 +30,9 @@ enum ProductionSpatialPoseAcceptance {
                 try await driver.click(prefix + "open." + shotID, in: window)
                 sheet = try await driver.sheet(prefix + "sheet")
                 if before.shots.first(where: { $0.shotID == shotID })?.camera.spatialState == nil {
-                    try await driver.wait("verified native locations loaded") { driver.state(prefix + "location", in: sheet) == true }
+                    try await driver.waitForSpatialLocations(scene, prefix: prefix, in: sheet)
                     guard driver.state(prefix + "confirm", in: sheet) == false else { throw failed("An uninitialized state is confirmable.") }
-                    try await driver.picker(prefix + "location", title: scene.name, expected: scene.id.uuidString, in: sheet)
-                    try await driver.wait("actual scene cameras loaded") { driver.state(prefix + "camera", in: sheet) == true }
-                    try await driver.picker(prefix + "camera", title: camera.name, expected: cameraID, in: sheet)
+                    try await driver.chooseSpatialCamera(scene: scene, cameraID: camera.id, cameraTitle: camera.name, prefix: prefix, locationControl: "location", in: sheet)
                     try await driver.click(prefix + "initialize", in: sheet)
                 }
                 try await driver.wait("actual full shot pose timeline loaded") { driver.state(prefix + "object", in: sheet) == true }

@@ -13,14 +13,20 @@ struct SpatialShotClaySheet: View {
     @State private var video: CanonicalArtifactReferenceV1?
     @State private var proof: CanonicalArtifactReferenceV1?
     @State private var duration: String?
-    @State private var loading = false
+    @State private var loading = true
+    @State private var readRequest = UUID()
+    @State private var loadedGeneration: UUID?
     @State private var operation: Task<Void, Never>?
     @State private var readLifetime = BpyOperationCancellation()
     @State private var failure: String?
     @State private var notice: String?
 
+    private var readCompleted: Bool {
+        !loading && loadedGeneration != nil && loadedGeneration == editor.openWorkingCopyGeneration && editor.workingRoot == home
+    }
+
     private var active: Bool {
-        guard !loading, operation == nil, editor.workingRoot == home, editor.projectState?.nextPhaseName == "shot_planning",
+        guard readCompleted, operation == nil, editor.workingRoot == home, editor.projectState?.nextPhaseName == "shot_planning",
               !editor.agentService.isStreaming, !editor.agentService.isComposerBlocked,
               let root = DataRootResolver.dataRoot(of: home) else { return false }
         _ = editor.pipelinePhaseExecution.snapshot
@@ -43,7 +49,7 @@ struct SpatialShotClaySheet: View {
                             .reviewAcceptanceProbe("shot-planning.clay.video", text: video.sha256)
                             .reviewAcceptanceProbe("shot-planning.clay.proof", text: proof?.sha256)
                     }
-                    if state == nil && !loading { Text("Confirm the shot's spatial state before rendering.").foregroundStyle(AppTheme.Status.warningColor) }
+                    if state == nil && readCompleted { Text("Confirm the shot's spatial state before rendering.").foregroundStyle(AppTheme.Status.warningColor) }
                     if operation != nil {
                         ProgressView("Rendering planned shot…").reviewAcceptanceProbe("shot-planning.clay.rendering", state: true)
                     }
@@ -71,16 +77,23 @@ struct SpatialShotClaySheet: View {
         }
         .padding(AppTheme.Spacing.lg).interfaceFont(size: AppTheme.Typography.ui)
         .frame(width: AppTheme.Layout.productionDecisionReviewWidth, height: AppTheme.Layout.productionDecisionReviewHeight)
-        .reviewAcceptanceProbe("shot-planning.clay.sheet", state: !loading && operation == nil, text: shotID)
+        .reviewAcceptanceProbe("shot-planning.clay.sheet", state: readCompleted && operation == nil, text: shotID)
         .task { await load() }.onDisappear { operation?.cancel(); readLifetime.cancel() }
+        .onChange(of: editor.openWorkingCopyGeneration) { _, _ in operation?.cancel(); dismiss() }
         .onChange(of: editor.workingRoot) { _, value in if value != home { operation?.cancel(); dismiss() } }
         .interactiveDismissDisabled(operation != nil)
     }
 
     private func load() async {
-        guard let root = DataRootResolver.dataRoot(of: home) else { return }
-        loading = true; failure = nil
-        defer { loading = false }
+        let request = UUID()
+        readRequest = request; loading = true; loadedGeneration = nil; failure = nil
+        state = nil; video = nil; proof = nil; duration = nil
+        defer { if readRequest == request { loading = false } }
+        guard let root = DataRootResolver.dataRoot(of: home), editor.workingRoot == home,
+              let generation = editor.openWorkingCopyGeneration else {
+            failure = "Reopen the project to read the shot state."
+            return
+        }
         let cancellation = BpyOperationCancellation()
         cancellation.follow(readLifetime)
         do {
@@ -101,9 +114,13 @@ struct SpatialShotClaySheet: View {
                 }
                 return (shot.camera.spatialState, video, ProductionTimeEntry.seconds(timing.durationTicks, timebase: board.timing.timebase), shot.camera.spatialDerivation)
             }
-            guard !Task.isCancelled, editor.workingRoot == home else { return }
-            state = value.0; video = value.1; duration = value.2; proof = value.3
-        } catch { if !Task.isCancelled { state = nil; video = nil; proof = nil; failure = error.localizedDescription } }
+            guard !Task.isCancelled, readRequest == request, editor.workingRoot == home, editor.openWorkingCopyGeneration == generation else { return }
+            state = value.0; video = value.1; duration = value.2; proof = value.3; loadedGeneration = generation
+        } catch {
+            if !Task.isCancelled, readRequest == request, editor.workingRoot == home, editor.openWorkingCopyGeneration == generation {
+                failure = error.localizedDescription
+            }
+        }
     }
 
     private func render() {

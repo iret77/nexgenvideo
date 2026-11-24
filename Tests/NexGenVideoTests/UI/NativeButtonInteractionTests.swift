@@ -1515,7 +1515,7 @@ struct NativePointerInteractionTests {
     }
 
     @Test func viewportWidthPreservesFieldAndNativeWheelAcrossScrollerStyles() async throws {
-        verifyWheelTargetingInSceneViewport()
+        try await verifyWheelTargetingInSceneViewport()
         for style in [NSScroller.Style.legacy, .overlay] {
             let fixture = try await Fixture("viewport-" + String(style.rawValue))
             defer { fixture.close() }
@@ -2737,7 +2737,8 @@ private extension NativePointerInteractionTests {
 }
 
 extension NativePointerInteractionTests {
-    private func verifyWheelTargetingInSceneViewport() {
+    private func verifyWheelTargetingInSceneViewport() async throws {
+        try await verifyLazyStoryboardMenu()
         let outer = NSScrollView(), inner = NSScrollView()
         let outerDocument = NSView(), innerDocument = NSView()
         outer.documentView = outerDocument
@@ -2786,5 +2787,57 @@ extension NativePointerInteractionTests {
             #expect(measured.isEqual(atMovement))
         }
         return field
+    }
+}
+
+extension NativePointerInteractionTests {
+    @MainActor private struct LazyBoard: View {
+        let shots: [String]
+        let target: String
+        let capture: Capture
+
+        private func marker(_ id: String, text: String? = nil) -> some View {
+            AppRelaunchClickProbe(identifier: id, acceptanceState: true, acceptanceText: text).allowsHitTesting(false)
+        }
+
+        var body: some View {
+            VStack {
+                ScrollView {
+                    Text("Other panel").background { marker("storyboard.sketch.sources." + target) }
+                }.frame(height: 52)
+                ScrollView {
+                    LazyVStack {
+                        ForEach(shots, id: \.self) { shot in
+                            VStack {
+                                Text(shot)
+                                Menu("Other sketch sources") {
+                                    Button("Capture frame") { capture.clicked(shot) }
+                                }.background { marker("storyboard.sketch.sources." + shot) }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: shot == shots.first ? 780 : 260)
+                            .background { marker("storyboard.plan." + shot) }
+                        }
+                    }.background { marker("storyboard.board.content", text: "saved-board") }
+                }
+            }.background { marker("storyboard.v2.workspace", text: "saved-board") }
+        }
+    }
+
+    private func verifyLazyStoryboardMenu() async throws {
+        let fixture = try await Fixture("lazy-board")
+        defer { fixture.close() }
+        let shots = (0..<14).map { "shot-" + String($0) }
+        let target = shots[8]
+        let control = "storyboard.sketch.sources." + target
+        fixture.window.contentView = NSHostingView(rootView: LazyBoard(shots: shots, target: target, capture: fixture.capture))
+        let driver = fixture.driver, window = fixture.window
+        try await driver.waitForPresentation(of: window, control: "storyboard.board.content")
+        #expect(driver.state(control, in: window) == nil)
+        try await driver.revealStoryboardMoment(control, shotID: target, orderedShots: shots, fingerprint: "saved-board")
+        try await driver.menu(control, title: "Capture frame", in: window)
+        try await driver.wait("saved shot menu callback") { fixture.capture.count(target) == 1 }
+        #expect(driver.interactions.contains { $0["label"] as? String == "native Board scroll towards saved shot" })
+        #expect(shots.filter { fixture.capture.count($0) > 0 } == [target])
     }
 }

@@ -19,7 +19,11 @@ struct SpatialShotStateSheet: View {
     @State private var frame = 0
     @State private var objectID: String?
     @State private var poseEdit = SpatialShotPoseEdit()
-    @State private var loading = false
+    @State private var listAttempt = 0
+    @State private var listLoading = true
+    @State private var detailLoading = false
+    @State private var loadedGeneration: UUID?
+    @State private var detailRequest = UUID()
     @State private var saving = false
     @State private var failure: String?
     @State private var resetting = false
@@ -27,11 +31,16 @@ struct SpatialShotStateSheet: View {
     @State private var reloadToken = 0
     @State private var reloadingState = false
 
+    private var loading: Bool { listLoading || detailLoading }
+    private var selected: SpatialSceneHead? { scenes.first { $0.id == sceneID } }
+    private var listReady: Bool {
+        !listLoading && loadedGeneration != nil && loadedGeneration == editor.openWorkingCopyGeneration && editor.workingRoot == home
+    }
     private var camera: BpySpatialCamera? { context?.scene.snapshot.cameras.first { $0.id == cameraID } }
     private var pose: SpatialClayStateFrame? { try? timeline?.resolved(at: frame) }
     private var pendingTransform: Bool { poseEdit.hasChanges }
     private var active: Bool {
-        guard !loading, !saving, editor.workingRoot == home, editor.projectState?.nextPhaseName == "shot_planning",
+        guard listReady, !detailLoading, !saving, editor.workingRoot == home, editor.projectState?.nextPhaseName == "shot_planning",
               !editor.agentService.isStreaming, !editor.agentService.isComposerBlocked,
               let root = DataRootResolver.dataRoot(of: home) else { return false }
         _ = editor.pipelinePhaseExecution.snapshot
@@ -39,8 +48,8 @@ struct SpatialShotStateSheet: View {
     }
 
     private var canChooseLocation: Bool { active && timeline == nil && !scenes.isEmpty }
-    private var canChooseCamera: Bool { active && timeline == nil && context != nil }
-    private var canConfirm: Bool { active && timeline != nil && context != nil && cameraID != nil && !pendingTransform }
+    private var canChooseCamera: Bool { active && timeline == nil && selected?.matches(context?.scene) == true && context?.scene.snapshot.cameras.isEmpty == false }
+    private var canConfirm: Bool { active && timeline != nil && selected?.matches(context?.scene) == true && camera != nil && !pendingTransform }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
@@ -53,11 +62,13 @@ struct SpatialShotStateSheet: View {
                         Text("Choose location").tag(UUID?.none)
                         ForEach(scenes) { Text($0.name).tag(Optional($0.id)) }
                     }.disabled(!canChooseLocation)
+                        .reviewAcceptanceProbe("shot-planning.spatial.locations", state: listReady, text: scenes.map(\.selectionIdentity).joined(separator: "\n"))
                         .reviewAcceptanceProbe("shot-planning.spatial.location", state: canChooseLocation, text: sceneID?.uuidString ?? "")
                     Picker("Camera", selection: $cameraID) {
                         Text("Choose camera").tag(String?.none)
                         ForEach(context?.scene.snapshot.cameras ?? []) { Text($0.name).tag(Optional($0.id)) }
                     }.disabled(!canChooseCamera)
+                        .reviewAcceptanceProbe("shot-planning.spatial.cameras", text: context?.scene.snapshot.cameras.map(\.id).joined(separator: "\n"))
                         .reviewAcceptanceProbe("shot-planning.spatial.camera", state: canChooseCamera, text: cameraID ?? "")
                     if let context, let camera {
                         SpatialShotPosePreview(snapshot: context.scene.snapshot,
@@ -119,14 +130,19 @@ struct SpatialShotStateSheet: View {
                                 .reviewAcceptanceProbe("shot-planning.spatial.initialize", state: active)
                         }
                     }
-                    if scenes.isEmpty && !loading {
+                    if listReady && scenes.isEmpty {
                         Text("Create a location and camera in Production Design first.").foregroundStyle(AppTheme.Text.secondaryColor)
                     }
                     if let failure {
                         Text(failure).foregroundStyle(AppTheme.Status.errorColor).textSelection(.enabled)
                             .reviewAcceptanceProbe("shot-planning.spatial.failure", text: failure)
-                        Button("Reload saved shot state…") { reloadingState = true }
-                            .buttonStyle(InlineActionButtonStyle()).disabled(!active)
+                        if loadedGeneration == nil {
+                            Button("Read locations again") { listAttempt += 1 }
+                                .buttonStyle(InlineActionButtonStyle()).disabled(listLoading || saving)
+                        } else {
+                            Button("Reload saved shot state…") { reloadingState = true }
+                                .buttonStyle(InlineActionButtonStyle()).disabled(!active)
+                        }
                     }
                 }
             }
@@ -142,10 +158,11 @@ struct SpatialShotStateSheet: View {
         .padding(AppTheme.Spacing.lg).interfaceFont(size: AppTheme.Typography.ui)
         .frame(width: AppTheme.Layout.productionDecisionReviewWidth, height: AppTheme.Layout.productionDecisionReviewHeight)
         .reviewAcceptanceProbe("shot-planning.spatial.sheet", text: shotID)
-        .task { await loadLocations() }
+        .task(id: listAttempt) { await loadLocations() }
         .task(id: "\(sceneID?.uuidString ?? "none"):\(reloadToken)") { await loadScene() }
         .onChange(of: frame) { _, _ in updateInspector() }
         .onChange(of: objectID) { _, _ in updateInspector() }
+        .onChange(of: editor.openWorkingCopyGeneration) { _, _ in dismiss() }
         .onChange(of: editor.workingRoot) { _, value in if value != home { dismiss() } }
         .interactiveDismissDisabled(saving)
         .confirmationDialog("Discard these shot-state edits?", isPresented: $resetting, titleVisibility: .visible) {
@@ -211,9 +228,14 @@ struct SpatialShotStateSheet: View {
     }
 
     private func loadLocations() async {
-        guard let root = DataRootResolver.dataRoot(of: home), editor.workingRoot == home else { return }
-        loading = true
-        defer { loading = false }
+        listLoading = true; loadedGeneration = nil
+        scenes = []; sceneID = nil
+        defer { if !Task.isCancelled { listLoading = false } }
+        guard let root = DataRootResolver.dataRoot(of: home), editor.workingRoot == home,
+              let generation = editor.openWorkingCopyGeneration else {
+            failure = "Reopen the project to read its saved locations."
+            return
+        }
         do {
             let shotID = shotID
             let value = try await Task.detached(priority: .userInitiated) {
@@ -225,17 +247,20 @@ struct SpatialShotStateSheet: View {
                 let selected = scenes.first { SpatialSceneStore.revisionPath(scene: $0.id, revision: $0.revision) + "/scene.blend" == path }
                 return (scenes, selected?.id)
             }.value
-            guard !Task.isCancelled, editor.workingRoot == home else { return }
-            scenes = value.0; sceneID = value.1
-        } catch { failure = error.localizedDescription }
+            guard !Task.isCancelled, editor.workingRoot == home, editor.openWorkingCopyGeneration == generation else { return }
+            scenes = value.0; loadedGeneration = generation; sceneID = value.1; failure = nil
+        } catch {
+            if !Task.isCancelled, editor.workingRoot == home, editor.openWorkingCopyGeneration == generation { failure = error.localizedDescription }
+        }
     }
 
     private func loadScene() async {
         context = nil; timeline = nil; cameraID = nil; objectID = nil; frame = 0
-        loading = false
-        guard let scene = scenes.first(where: { $0.id == sceneID }), let root = DataRootResolver.dataRoot(of: home) else { return }
-        loading = true
-        defer { if sceneID == scene.id { loading = false } }
+        let request = UUID()
+        detailRequest = request; detailLoading = false
+        guard listReady, let scene = selected, let root = DataRootResolver.dataRoot(of: home) else { return }
+        detailLoading = true; failure = nil
+        defer { if detailRequest == request { detailLoading = false } }
         do {
             let shotID = shotID
             let value = try await Task.detached(priority: .userInitiated) {
@@ -253,18 +278,18 @@ struct SpatialShotStateSheet: View {
                 }
                 return (context, timeline, stateFailure)
             }.value
-            guard !Task.isCancelled, sceneID == scene.id, editor.workingRoot == home else { return }
+            guard !Task.isCancelled, listReady, detailRequest == request, selected == scene else { return }
             context = value.0; failure = value.2
             if let timeline = value.1 {
                 cameraID = value.0.shot.camera.spatialCameraID
                 self.timeline = timeline
                 objectID = cameraID; updateInspector()
             }
-        } catch { if !Task.isCancelled { failure = error.localizedDescription } }
+        } catch { if !Task.isCancelled, listReady, detailRequest == request, selected == scene { failure = error.localizedDescription } }
     }
 
     private func save() {
-        guard active, !pendingTransform, let context, let timeline, let cameraID else { return }
+        guard canConfirm, let context, let timeline, let cameraID else { return }
         saving = true; failure = nil
         Task {
             defer { saving = false }

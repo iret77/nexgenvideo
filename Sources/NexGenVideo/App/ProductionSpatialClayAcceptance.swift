@@ -159,11 +159,9 @@ enum ProductionSpatialClayAcceptance {
             for cancel in [true, false] {
                 try await driver.menu("storyboard.sketch.sources." + momentID, title: "Create from location…", in: window)
                 let sheet = try await driver.sheet("storyboard.spatial.sheet")
-                try await driver.wait("native spatial sketch locations loaded") { driver.state("storyboard.spatial.scene", in: sheet) == true }
+                try await driver.waitForSpatialLocations(scene, prefix: "storyboard.spatial.", in: sheet)
                 guard driver.state("storyboard.spatial.assign", in: sheet) == false else { throw failed("A location sketch without a camera is assignable.") }
-                try await driver.picker("storyboard.spatial.scene", title: scene.name, expected: scene.id.uuidString, in: sheet)
-                try await driver.wait("native sketch cameras loaded") { driver.state("storyboard.spatial.camera", in: sheet) == true }
-                try await driver.picker("storyboard.spatial.camera", title: camera.name, expected: camera.id, in: sheet)
+                try await driver.chooseSpatialCamera(scene: scene, cameraID: camera.id, cameraTitle: camera.name, prefix: "storyboard.spatial.", locationControl: "scene", in: sheet)
                 try driver.visible(["storyboard.spatial.cancel", "storyboard.spatial.assign"], in: sheet)
                 try driver.capture(cancel ? "camera-selected-cancel" : "camera-selected-assign", target: sheet)
                 try await driver.click(cancel ? "storyboard.spatial.cancel" : "storyboard.spatial.assign", in: sheet)
