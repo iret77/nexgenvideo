@@ -320,6 +320,7 @@ struct StoryboardPlanningView: View {
                     .reviewAcceptanceProbe("storyboard.plan.\(shot.id)", text: shot.primaryStepID)
                 }
             }.padding(AppTheme.Spacing.lg)
+                .reviewAcceptanceProbe("storyboard.board.content", text: snapshot.fingerprint)
         }
     }
 

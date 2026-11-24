@@ -17,7 +17,8 @@ struct BibleSpatialViewSheet: View {
     @State private var cameraID: String?
     @State private var viewID = ""
     @State private var purpose = ""
-    @State private var loading = false
+    @State private var loading = true
+    @State private var listRequest = UUID()
     @State private var operation: Task<Void, Never>?
     @State private var readLifetime = BpyOperationCancellation()
     @State private var saving = false
@@ -39,8 +40,11 @@ struct BibleSpatialViewSheet: View {
         _ = editor.pipelinePhaseExecution.snapshot
         return editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil && !loading && operation == nil && !saving
     }
+    private var selected: SpatialSceneHead? { scenes.first { $0.id == sceneID } }
+    private var canChooseScene: Bool { active && location != nil && !scenes.isEmpty }
+    private var canChooseCamera: Bool { canChooseScene && selected?.matches(scene) == true && scene?.snapshot.cameras.isEmpty == false }
     private var ready: Bool {
-        active && location != nil && scene != nil && cameraID != nil && !bibleSHA256.isEmpty
+        canChooseCamera && scene?.snapshot.cameras.contains(where: { $0.id == cameraID }) == true && !bibleSHA256.isEmpty
             && viewID.range(of: "^[a-z][a-z0-9_-]{0,63}$", options: .regularExpression) != nil
             && !purpose.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -75,13 +79,15 @@ struct BibleSpatialViewSheet: View {
                         Picker("Location geometry", selection: $sceneID) {
                             Text("Choose location").tag(UUID?.none)
                             ForEach(scenes) { Text($0.name).tag(Optional($0.id)) }
-                        }.disabled(!active)
-                            .reviewAcceptanceProbe("bible.spatial.scene", text: sceneID?.uuidString ?? "")
+                        }.disabled(!canChooseScene)
+                            .reviewAcceptanceProbe("bible.spatial.locations", state: !loading && location != nil, text: scenes.map(\.selectionIdentity).joined(separator: "\n"))
+                            .reviewAcceptanceProbe("bible.spatial.scene", state: canChooseScene, text: sceneID?.uuidString ?? "")
                         Picker("Camera", selection: $cameraID) {
                             Text("Choose camera").tag(String?.none)
                             ForEach(scene?.snapshot.cameras ?? []) { Text($0.name).tag(Optional($0.id)) }
-                        }.disabled(!active || scene == nil)
-                            .reviewAcceptanceProbe("bible.spatial.camera", text: cameraID ?? "")
+                        }.disabled(!canChooseCamera)
+                            .reviewAcceptanceProbe("bible.spatial.cameras", text: scene?.snapshot.cameras.map(\.id).joined(separator: "\n"))
+                            .reviewAcceptanceProbe("bible.spatial.camera", state: canChooseCamera, text: cameraID ?? "")
                         if let location, !location.sheets.isEmpty {
                             Menu("Use an existing reference view") {
                                 ForEach(location.sheets.keys.sorted(), id: \.self) { key in
@@ -153,14 +159,16 @@ struct BibleSpatialViewSheet: View {
     }
 
     private func load() async {
+        let request = UUID()
+        listRequest = request; loading = true
+        location = nil; bibleSHA256 = ""; scenes = []; sceneID = nil; scene = nil; cameraID = nil
+        defer { if listRequest == request { loading = false } }
         guard currentSession else { return }
         guard let root = DataRootResolver.dataRoot(of: home) else {
             failure = "This project session is unavailable. Close this view and reopen the project."
             return
         }
-        loading = true
         failure = nil; notice = nil
-        defer { loading = false }
         let cancellation = BpyOperationCancellation()
         cancellation.follow(readLifetime)
         do {
@@ -170,26 +178,28 @@ struct BibleSpatialViewSheet: View {
                 return (bible.locations.first { $0.id == locationID }, try FileDigest.sha256(of: ProjectLocalFile.resolve(PipelineLayout.bibleFile, dataRoot: root)),
                     try SpatialSceneStore.index(in: root).scenes)
             }
-            guard !Task.isCancelled, currentSession else { return }
+            guard !Task.isCancelled, currentSession, listRequest == request else { return }
             guard let currentLocation = value.0 else {
                 throw ToolError("This location is no longer in References. Close this view and select a current location.")
             }
             location = currentLocation; bibleSHA256 = value.1; scenes = value.2
-        } catch { if !Task.isCancelled, currentSession { failure = error.localizedDescription } }
+        } catch { if !Task.isCancelled, currentSession, listRequest == request { failure = error.localizedDescription } }
     }
 
     private func loadScene() async {
+        let request = listRequest
         scene = nil; cameraID = nil
-        guard currentSession, let selected = scenes.first(where: { $0.id == sceneID }), let root = DataRootResolver.dataRoot(of: home) else { return }
+        guard currentSession, let selected, let root = DataRootResolver.dataRoot(of: home) else { return }
+        failure = nil
         let cancellation = BpyOperationCancellation()
         cancellation.follow(readLifetime)
         do {
             let value = try await PipelineSpatialDerivationWriter.background(cancellation: cancellation, dataRoot: root) {
                 try SpatialSceneStore.load(selected, in: root)
             }
-            guard !Task.isCancelled, currentSession, sceneID == selected.id else { return }
+            guard !Task.isCancelled, currentSession, listRequest == request, self.selected == selected else { return }
             scene = value; failure = nil
-        } catch { if !Task.isCancelled, currentSession { failure = error.localizedDescription } }
+        } catch { if !Task.isCancelled, currentSession, listRequest == request, self.selected == selected { failure = error.localizedDescription } }
     }
 
     private func render() {

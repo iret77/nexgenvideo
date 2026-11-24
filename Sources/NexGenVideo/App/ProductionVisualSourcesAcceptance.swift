@@ -174,7 +174,7 @@ enum ProductionVisualSourcesAcceptance {
                 func open() async throws -> NSWindow {
                     try await driver.click(prefix + "open." + locationID, in: window)
                     let sheet = try await driver.sheet(prefix + "sheet")
-                    try await driver.wait("Bible fields loaded") { driver.state(prefix + "scene", in: sheet) == true }
+                    try await driver.waitForSpatialLocations(scene, prefix: prefix, in: sheet)
                     try driver.visible([prefix + "cancel", prefix + "assign"], in: sheet)
                     guard driver.state(prefix + "assign", in: sheet) == false else { throw failed("The unrendered Bible sheet allows assignment.") }
                     return sheet
@@ -184,9 +184,7 @@ enum ProductionVisualSourcesAcceptance {
                     try await driver.wait("cancel Bible sheet") { window.attachedSheet == nil && window.isKeyWindow }
                 }
                 func prepare(_ sheet: NSWindow, view: String, cancelWhileHashing: Bool = false) async throws -> String? {
-                    try await driver.picker(prefix + "scene", title: scene.name, expected: scene.id.uuidString, in: sheet)
-                    try await driver.wait("saved camera loaded") { driver.state(prefix + "camera", in: sheet) == true }
-                    try await driver.picker(prefix + "camera", title: camera.name, expected: camera.id, in: sheet)
+                    try await driver.chooseSpatialCamera(scene: scene, cameraID: camera.id, cameraTitle: camera.name, prefix: prefix, locationControl: "scene", in: sheet)
                     try await driver.fill(prefix + "view-id", value: view, in: sheet)
                     if driver.text(prefix + "purpose", in: sheet) != "" { try await driver.fill(prefix + "purpose", value: "", in: sheet) }
                     guard driver.state(prefix + "render", in: sheet) == false else { throw failed("A Bible view without a purpose can render.") }

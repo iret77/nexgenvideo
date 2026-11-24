@@ -25,6 +25,12 @@ struct SpatialSceneHead: Codable, Sendable, Equatable, Identifiable {
     var name: String
     var revision: UUID
     var manifestSHA256: String
+
+    var selectionIdentity: String { [id.uuidString, revision.uuidString, manifestSHA256].joined(separator: ":") }
+
+    func matches(_ loaded: SpatialSceneRevision?) -> Bool {
+        loaded?.manifest.sceneID == id && loaded?.manifest.revision == revision
+    }
 }
 
 struct SpatialSceneResource: Codable, Sendable, Equatable {
