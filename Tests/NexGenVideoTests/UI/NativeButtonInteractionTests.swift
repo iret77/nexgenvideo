@@ -1515,17 +1515,7 @@ struct NativePointerInteractionTests {
     }
 
     @Test func viewportWidthPreservesFieldAndNativeWheelAcrossScrollerStyles() async throws {
-        verifyWheelConvergenceInSceneViewport()
-        let outer = NSScrollView(), inner = NSScrollView()
-        let outerDocument = NSView(), innerDocument = NSView()
-        outer.documentView = outerDocument
-        outerDocument.addSubview(inner)
-        inner.documentView = innerDocument
-        #expect(ProductionVisualSourcesDriver.ownsWheelHit(outerDocument, scroll: outer))
-        #expect(ProductionVisualSourcesDriver.ownsWheelHit(inner, scroll: inner))
-        #expect(ProductionVisualSourcesDriver.ownsWheelHit(innerDocument, scroll: inner))
-        #expect(!ProductionVisualSourcesDriver.ownsWheelHit(innerDocument, scroll: outer))
-        #expect(!ProductionVisualSourcesDriver.ownsWheelHit(inner, scroll: outer))
+        verifyWheelTargetingInSceneViewport()
         for style in [NSScroller.Style.legacy, .overlay] {
             let fixture = try await Fixture("viewport-" + String(style.rawValue))
             defer { fixture.close() }
@@ -1837,23 +1827,7 @@ struct NativePointerInteractionTests {
         let real = try await Fixture("canonical-real-field")
         defer { real.close() }
         try await real.ready()
-        let field = try real.input("field")
-        let events = real.driver.interactions
-        let presentationIndex = try #require(events.lastIndex {
-            $0["label"] as? String == "text field presentation"
-                && ($0["evidence"] as? [String: Any])?["id"] as? String == "pointer.field"
-        })
-        let pointerIndex = try #require(events.lastIndex { $0["kind"] as? String == "pointer" && $0["id"] as? String == "pointer.field" })
-        #expect(presentationIndex < pointerIndex)
-        let sampled = try #require((events[presentationIndex]["evidence"] as? [String: Any])?["target"] as? [String: Any])
-        let original = try #require((field["preDownGuard"] as? [String: Any])?["originalTarget"] as? [String: Any])
-        let clips = try #require(sampled["clippingAncestors"] as? [[String: Any]])
-        #expect(!clips.isEmpty)
-        for key in ["probeObject", "fieldOwner", "accessibilityObject", "accessibilityFrame", "probeFrame", "clippingAncestors"] {
-            let measured = try #require(sampled[key] as? NSObject)
-            let atMovement = try #require(original[key] as? NSObject)
-            #expect(measured.isEqual(atMovement))
-        }
+        let field = try verifySettledFieldInput(real)
         #expect(field["status"] as? String == "delivered")
         #expect(field["accessibilityRole"] as? String == kAXTextFieldRole)
         #expect(real.window.firstResponder is NSTextView)
@@ -2763,7 +2737,17 @@ private extension NativePointerInteractionTests {
 }
 
 extension NativePointerInteractionTests {
-    private func verifyWheelConvergenceInSceneViewport() {
+    private func verifyWheelTargetingInSceneViewport() {
+        let outer = NSScrollView(), inner = NSScrollView()
+        let outerDocument = NSView(), innerDocument = NSView()
+        outer.documentView = outerDocument
+        outerDocument.addSubview(inner)
+        inner.documentView = innerDocument
+        #expect(ProductionVisualSourcesDriver.ownsWheelHit(outerDocument, scroll: outer))
+        #expect(ProductionVisualSourcesDriver.ownsWheelHit(inner, scroll: inner))
+        #expect(ProductionVisualSourcesDriver.ownsWheelHit(innerDocument, scroll: inner))
+        #expect(!ProductionVisualSourcesDriver.ownsWheelHit(innerDocument, scroll: outer))
+        #expect(!ProductionVisualSourcesDriver.ownsWheelHit(inner, scroll: outer))
         let target = CGRect(x: 10, y: 662, width: 128, height: 48)
         for flipped in [true, false] {
             for initialOrigin in [CGFloat(0.5), 431.5, 472.5, 890.5] {
@@ -2781,5 +2765,26 @@ extension NativePointerInteractionTests {
                 #expect(viewport.contains(target))
             }
         }
+    }
+
+    private func verifySettledFieldInput(_ real: Fixture) throws -> [String: Any] {
+        let field = try real.input("field")
+        let events = real.driver.interactions
+        let presentationIndex = try #require(events.lastIndex {
+            $0["label"] as? String == "text field presentation"
+                && ($0["evidence"] as? [String: Any])?["id"] as? String == "pointer.field"
+        })
+        let pointerIndex = try #require(events.lastIndex { $0["kind"] as? String == "pointer" && $0["id"] as? String == "pointer.field" })
+        #expect(presentationIndex < pointerIndex)
+        let sampled = try #require((events[presentationIndex]["evidence"] as? [String: Any])?["target"] as? [String: Any])
+        let original = try #require((field["preDownGuard"] as? [String: Any])?["originalTarget"] as? [String: Any])
+        let clips = try #require(sampled["clippingAncestors"] as? [[String: Any]])
+        #expect(!clips.isEmpty)
+        for key in ["probeObject", "fieldOwner", "accessibilityObject", "accessibilityFrame", "probeFrame", "clippingAncestors"] {
+            let measured = try #require(sampled[key] as? NSObject)
+            let atMovement = try #require(original[key] as? NSObject)
+            #expect(measured.isEqual(atMovement))
+        }
+        return field
     }
 }
