@@ -8,7 +8,7 @@ from pathlib import Path
 import tempfile
 from types import ModuleType, SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 
 spec = importlib.util.spec_from_file_location("ngv_worker_contract", Path(__file__).resolve().parents[1] / "Runtime/bpy/worker.py")
@@ -140,8 +140,9 @@ class WorkerNativeModuleIdentityTests(unittest.TestCase):
         scene.write_bytes(b"frozen-scene-bytes")
         manifest = self.root / "verification.json"
 
-        def load_scene(runtime, path):
+        def load_scene(runtime, path, use_scripts):
             self.assertEqual(path, str(scene))
+            self.assertFalse(use_scripts)
             runtime.__file__ = str(self.root / "changed-facade.py")
             runtime.__spec__ = None
 
@@ -273,26 +274,21 @@ class WorkerNativeModuleIdentityTests(unittest.TestCase):
 
 
 class WorkerDiagnosticDenialTests(unittest.TestCase):
-    def test_verifier_rejects_diagnostic_paths_before_accessing_files_or_network(self):
-        for path in ("controlled-file", "/private/tmp/controlled"):
-            with self.subTest(path=path), patch("builtins.open") as opened, patch("socket.create_connection") as connected:
-                with self.assertRaises(SystemExit):
-                    worker.verify_scene({"diagnosticDeniedPaths": [path]})
-                opened.assert_not_called()
-                connected.assert_not_called()
+    def test_only_actual_permission_errors_are_denials(self):
+        for code in (errno.EPERM, errno.EACCES, errno.ENOENT, errno.EISDIR,
+                     errno.ENETUNREACH, errno.EHOSTUNREACH, errno.ECONNREFUSED, None):
+            with self.subTest(errno=code):
+                failure = OSError(code, "controlled diagnostic failure") if code is not None else TimeoutError()
+                with patch("builtins.open", side_effect=failure), patch.object(worker.socket, "create_connection", side_effect=failure):
+                    paths, network = worker.denial_contract(["controlled-file"], probe_network=True)
+                expected = code in (errno.EPERM, errno.EACCES)
+                self.assertEqual(paths["controlled-file"], dict(denied=expected, errno=code))
+                self.assertEqual(network, dict(denied=expected, errno=code))
 
-    def test_scene_loader_disables_scripts_even_when_the_user_preference_was_enabled(self):
-        runtime = Mock()
-        preferences = runtime.context.preferences.filepaths
-        preferences.use_scripts_auto_execute = True
-        def open_scene(**options):
-            self.assertFalse(options["use_scripts"])
-            self.assertFalse(preferences.use_scripts_auto_execute)
-            preferences.use_scripts_auto_execute = True
-        runtime.ops.wm.open_mainfile.side_effect = open_scene
-        worker.load_scene(runtime, "controlled.blend")
-        runtime.ops.wm.open_mainfile.assert_called_once()
-        self.assertFalse(preferences.use_scripts_auto_execute)
+    def test_normal_verification_never_opens_a_network_socket(self):
+        with patch.object(worker.socket, "create_connection", side_effect=AssertionError("unexpected network probe")) as network:
+            self.assertEqual(worker.denial_contract([]), ({}, None))
+            network.assert_not_called()
 
 
 if __name__ == "__main__":

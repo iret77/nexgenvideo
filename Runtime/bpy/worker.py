@@ -6,6 +6,7 @@ import importlib.util
 import math
 import os
 import resource
+import socket
 import stat
 import struct
 import sys
@@ -84,17 +85,17 @@ def load_runtime(site_packages):
     return bpy, bmesh, mathutils, native_module
 
 
-def load_scene(bpy, scene_path):
-    bpy.context.preferences.filepaths.use_scripts_auto_execute = False
+def load_scene(bpy, scene_path, use_scripts):
+    bpy.context.preferences.filepaths.use_scripts_auto_execute = use_scripts
     if scene_path:
         bpy.ops.wm.open_mainfile(
             filepath=str(Path(scene_path).resolve()),
             load_ui=False,
-            use_scripts=False,
+            use_scripts=use_scripts,
         )
     else:
         bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.context.preferences.filepaths.use_scripts_auto_execute = False
+    bpy.context.preferences.filepaths.use_scripts_auto_execute = use_scripts
 
 
 def probe(config):
@@ -115,7 +116,7 @@ def execute_job(config, bound_source):
     source_bytes, identity = bound_source
     require_source_identity(config["sourcePath"], identity)
     bpy, bmesh, mathutils, _ = load_runtime(config["sitePackages"])
-    load_scene(bpy, config.get("confirmedScene"))
+    load_scene(bpy, config.get("confirmedScene"), False)
     input_dir = Path(config["inputDirectory"]).resolve()
     output_dir = Path(config["outputDirectory"]).resolve()
     session_root = Path(config["sessionRoot"]).resolve()
@@ -427,6 +428,26 @@ def render_contract(bpy, limits):
     return scenes
 
 
+def denial_contract(paths, probe_network=False):
+    denied = {}
+    for path in paths:
+        try:
+            with open(path, "rb") as handle:
+                handle.read(1)
+            denied[path] = {"denied": False, "errno": None}
+        except OSError as error:
+            denied[path] = {"denied": error.errno in (errno.EPERM, errno.EACCES), "errno": error.errno}
+    if not probe_network:
+        return denied, None
+    try:
+        connection = socket.create_connection(("1.1.1.1", 443), timeout=1)
+        connection.close()
+        network = {"denied": False, "errno": None}
+    except OSError as error:
+        network = {"denied": error.errno in (errno.EPERM, errno.EACCES), "errno": error.errno}
+    return denied, network
+
+
 def text_value(value):
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="strict")
@@ -456,12 +477,10 @@ def blender_binary_evidence(bpy):
 
 
 def verify_scene(config):
-    if config.get("diagnosticDeniedPaths"):
-        fail("Unsupported verifier options")
     started = time.monotonic()
     bpy, _, _, native_module = load_runtime(config["sitePackages"])
     scene_digest = file_sha256(config["scenePath"])
-    load_scene(bpy, config["scenePath"])
+    load_scene(bpy, config["scenePath"], False)
     if file_sha256(config["scenePath"]) != scene_digest:
         fail("Scene bytes changed while loading verification")
     scenes = render_contract(bpy, config["limits"])
@@ -470,6 +489,8 @@ def verify_scene(config):
     if spatial and (len(bpy.data.scenes) != 1 or len(bpy.context.scene.view_layers) != 1):
         fail("A portable location requires one scene and one view layer")
     objects, vertices, polygons = evaluated_geometry(bpy, config["limits"], meshes)
+    paths = config.get("diagnosticDeniedPaths", [])
+    denied, network = denial_contract(paths, bool(paths))
     manifest = {
         "schema": "nexgenvideo/bpy-verification/1",
         "sceneSHA256": scene_digest,
@@ -492,6 +513,8 @@ def verify_scene(config):
         },
         "autorunTextPresent": "NGV_AutorunProbe.py" in bpy.data.texts,
         "autorunMarkerAbsent": "AUTORUN_RAN" not in bpy.data.objects,
+        "deniedPaths": denied,
+        "networkDenied": network,
         "secretEnvironmentAbsent": all(
             name not in os.environ
             for name in (
@@ -564,6 +587,17 @@ def spatial_snapshot(bpy, meshes):
     }
 
 
+def autoexec_positive_control(config):
+    bpy, _, _, _ = load_runtime(config["sitePackages"])
+    load_scene(bpy, config["scenePath"], True)
+    write_manifest(config["manifest"], {
+        "schema": "nexgenvideo/bpy-autoexec-positive/1",
+        "jobID": config["jobID"],
+        "processIdentifier": os.getpid(),
+        "autorunMarkerPresent": "AUTORUN_RAN" in bpy.data.objects,
+    })
+
+
 def bootstrap_identity(info):
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
@@ -617,6 +651,8 @@ def main():
         execute_job(config, bound_source)
     elif mode == "verify":
         verify_scene(config)
+    elif mode == "autoexec-positive":
+        autoexec_positive_control(config)
     else:
         fail("invalid worker mode")
 
