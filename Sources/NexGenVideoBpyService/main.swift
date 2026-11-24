@@ -563,6 +563,71 @@ private func directoryUsage(
     )
 }
 
+private func directoryDeletionProbe() throws -> [String: Any] {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("bpy-directory-probe-\(UUID().uuidString)")
+    let child = root.appendingPathComponent("queued")
+    let nested = child.appendingPathComponent("inside.bin")
+    let retained = root.appendingPathComponent("retained.bin")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: child, withIntermediateDirectories: true)
+    try Data(repeating: 0x5a, count: 4096).write(to: nested)
+    let payload = Data(repeating: 0xa5, count: 8192)
+    try payload.write(to: retained)
+    func status(_ url: URL) throws -> stat {
+        var value = stat()
+        guard Darwin.lstat(url.path, &value) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        return value
+    }
+    let childIdentity = vnodeIdentity(try status(child))
+    let nestedIdentity = vnodeIdentity(try status(nested))
+    let retainedStatus = try status(retained)
+    let retainedIdentity = vnodeIdentity(retainedStatus)
+    let retainedBytes = vnodeBytes(logical: retainedStatus.st_size, blocks: Int64(retainedStatus.st_blocks))
+    let baseline = try directorySnapshot([root], byteLimit: 1_048_576, fileLimit: 10)
+    let childBytes = baseline.resources[childIdentity] ?? 0
+    guard baseline.limitReason == nil, baseline.files == 3,
+          let nestedBytes = baseline.resources[nestedIdentity], nestedBytes >= 4096,
+          baseline.resources[retainedIdentity] == retainedBytes else {
+        throw CocoaError(.fileReadCorruptFile)
+    }
+    var events: [String] = []
+    let interrupted = try directorySnapshot([root], byteLimit: 1_048_576, fileLimit: 10,
+        beforeResolve: { reference in
+            guard reference.identity == childIdentity else { return }
+            guard events.isEmpty, reference.path == nil, reference.fileSystem != nil,
+                  vnodeIdentity(try status(child)) == childIdentity else { throw CocoaError(.fileReadCorruptFile) }
+            events.append("enumerated")
+            guard Darwin.unlink(nested.path) == 0, Darwin.rmdir(child.path) == 0 else {
+                throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+            events.append("unlinked")
+        }, missingDirectory: { reference in
+            if reference.identity == childIdentity { events.append("missing") }
+        })
+    guard events == ["enumerated", "unlinked", "missing"], interrupted.limitReason == nil,
+          interrupted.files == 2, interrupted.resources[retainedIdentity] == retainedBytes,
+          (interrupted.resources[childIdentity] ?? 0) == childBytes, interrupted.resources[nestedIdentity] == nil,
+          interrupted.bytes >= retainedBytes, try Data(contentsOf: retained) == payload else {
+        throw CocoaError(.fileReadCorruptFile)
+    }
+    let followup = try directoryUsage([root], byteLimit: 1_048_576, fileLimit: 10)
+    guard followup.limitReason == nil, followup.files == 1,
+          followup.resources[retainedIdentity] == retainedBytes,
+          followup.resources[childIdentity] == nil, followup.resources[nestedIdentity] == nil else {
+        throw CocoaError(.fileReadCorruptFile)
+    }
+    events.append("completed")
+    return ["schema": "nexgenvideo/bpy-directory-deletion/1", "events": events, "processIdentifier": getpid(),
+            "queuedDevice": childIdentity.device, "queuedInode": childIdentity.inode,
+            "queuedDirectoryBytes": childBytes, "interruptedDirectoryBytes": interrupted.resources[childIdentity] ?? 0,
+            "retainedDevice": retainedIdentity.device, "retainedInode": retainedIdentity.inode,
+            "baselineFiles": baseline.files, "interruptedFiles": interrupted.files, "followupFiles": followup.files,
+            "payloadBytes": payload.count, "retainedBytes": retainedBytes,
+            "interruptedRetainedBytes": interrupted.resources[retainedIdentity]!,
+            "followupRetainedBytes": followup.resources[retainedIdentity]!,
+            "payloadSHA256": sha256(payload), "retainedSHA256": try sha256(retained)]
+}
+
 private func managedRootPaths(_ roots: [URL]) throws -> [String] {
     try roots.map { root in
         let descriptor = Darwin.open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
@@ -788,6 +853,13 @@ private struct VerificationScene: Codable {
     let cyclesDevice: String?
 }
 
+private struct DenialResult: Codable {
+    let denied: Bool
+    let errno: Int?
+
+    var isPermissionDenial: Bool { denied && [Int(EPERM), Int(EACCES)].contains(errno ?? 0) }
+}
+
 private struct RuntimeLibraryVersion: Codable {
     let supported: Bool
     let version: [Int]
@@ -812,6 +884,8 @@ private struct VerificationManifest: Codable {
     let modifiers: [String: [String]]
     let autorunTextPresent: Bool
     let autorunMarkerAbsent: Bool
+    let deniedPaths: [String: DenialResult]
+    let networkDenied: DenialResult?
     let secretEnvironmentAbsent: Bool
     let blenderUserConfig: String?
     let sessionRoot: String
@@ -822,6 +896,13 @@ private struct VerificationManifest: Codable {
     let libraryVersions: [String: RuntimeLibraryVersion]
     let spatial: BpySpatialSnapshot?
     let sceneSHA256: String
+}
+
+private struct AutoexecManifest: Decodable {
+    let schema: String
+    let jobID: String
+    let processIdentifier: Int32
+    let autorunMarkerPresent: Bool
 }
 
 private struct SupervisorChildPID: Decodable {
@@ -885,6 +966,155 @@ private struct ProbeFailure: Error {
                 "probe.logTruncated": output.utf8.count < header.utf8.count + 1 + result.log.utf8.count ? 1 : 0,
             ])
     }
+}
+
+private typealias BoundaryChildReport = BpyBoundaryChildReport
+
+private let boundaryResourceModes: Set<String> = [
+    "open-unlinked-hold",
+    "readonly-unlinked-hold",
+    "mapped-unlinked-hold",
+    "external-readonly-hold",
+    "internal-linked-writable-hold",
+    "fileport-unlinked-hold",
+]
+private let boundaryProbeResourceBytes: UInt64 = 1_024 * 1_024
+private let boundaryInternalResourceBytes: UInt64 = 128 * 1_024
+
+private struct BoundarySupervisorIdentity: Decodable {
+    let supervisorProcessIdentifier: Int32
+    let supervisorParentProcessIdentifier: Int32
+    let supervisorStartAbsoluteTime: UInt64
+    let childProcessIdentifier: Int32
+}
+
+private typealias BoundaryRun = BpyBoundaryRun
+
+private func runBoundarySupervisor(
+    request: BpyBoundaryProbeRequest, storage: BpyServiceStoragePair,
+    monitor: BpyServiceMonitor
+) throws -> BoundaryRun {
+    let mode = request.mode.rawValue
+    let writeRoot = storage.workerRoot.appendingPathComponent("boundary/" + mode)
+    let configuration = storage.dataRoot.appendingPathComponent("boundary.json")
+    try FileManager.default.createDirectory(at: writeRoot, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: storage.dataRoot, withIntermediateDirectories: true)
+    try Data("{}".utf8).write(to: configuration, options: .atomic)
+    var readFiles: [String] = []
+    if request.mode == .externalReadonly {
+        let external = storage.dataRoot.appendingPathComponent("external-readonly.bin")
+        try Data(repeating: 0x4e, count: 1_024 * 1_024).write(to: external, options: .atomic)
+        readFiles.append(request.nonce.uuidString + "/external-readonly.bin")
+    }
+    guard let service = processUsage(getpid()) else { throw POSIXError(.EIO) }
+    let process = try monitor.start(spec: .init(permit: request.admission, job: nil, mode: .boundary,
+        workerLease: request.storagePair.worker.id, dataLease: request.storagePair.data.id,
+        workerRoot: request.nonce.uuidString + "/boundary/" + mode,
+        configuration: request.nonce.uuidString + "/boundary.json", configurationSHA256: try sha256(configuration),
+        readFiles: readFiles, boundary: request.mode),
+        execution: request.execution, serviceStart: service.startAbsoluteTime, maximumOutputBytes: 65_536,
+        deadline: request.admissionDeadline, cancelled: { false })
+    var detached = false
+    defer {
+        if !detached {
+            do { _ = try process.terminateAndReap(); _ = try process.detach() }
+            catch { openDiagnostics.error("boundary.cleanup-pending code=\((error as NSError).code, privacy: .public)") }
+        }
+    }
+    let supervisorPID = process.supervisor.pid
+    let supervisorStart = process.supervisor.start
+    var observedChild: SupervisorWorkerIdentity?
+    var report: BoundaryChildReport?
+    let readyDeadline = try BpyRuntimeClock.awakeSeconds() + 5
+    while try BpyRuntimeClock.awakeSeconds() < readyDeadline {
+        let sample = try process.sample()
+        if let child = sample.worker {
+            observedChild = .init(processIdentifier: child.pid, startAbsoluteTime: child.start)
+        }
+        if let data = try? Data(contentsOf: writeRoot.appendingPathComponent("child.json")) {
+            report = try JSONDecoder().decode(BoundaryChildReport.self, from: data)
+        }
+        if observedChild != nil, report != nil { break }
+        if sample.status == .gone { break }
+        Thread.sleep(forTimeInterval: 0.01)
+    }
+    guard let report, let child = observedChild,
+          report.schema == "nexgenvideo/bpy-boundary-child/2", report.mode == mode,
+          report.processIdentifier == child.processIdentifier,
+          report.parentProcessIdentifier == supervisorPID else { throw POSIXError(.EPERM) }
+    if mode == "denials" {
+        try Data("observed".utf8).write(to: writeRoot.appendingPathComponent("service-observed"), options: .atomic)
+    }
+    var observedRetainedBytes: UInt64 = 0
+    var limitReason: String?
+    var internalLinkedWritableDeduplicated = false
+    var retentionDenied = false
+    if boundaryResourceModes.contains(mode) {
+        let sample = try process.sample()
+        guard let worker = sample.worker, worker.pid == child.processIdentifier,
+              worker.start == child.startAbsoluteTime else { throw CocoaError(.executableLoad) }
+        let retainedResources = try ownedRetainedVnodes(sample.vnodes, roots: [writeRoot])
+        observedRetainedBytes = retainedResources.values.reduce(0, +)
+        let named = try directoryUsage(
+            [writeRoot],
+            byteLimit: 512 * 1_024,
+            fileLimit: 64
+        )
+        let quota = try resourceUsage(
+            roots: [writeRoot],
+            observedVnodes: sample.vnodes,
+            byteLimit: 512 * 1_024,
+            fileLimit: 64
+        )
+        limitReason = quota.limitReason
+        let validResourceResult: Bool
+        if mode == "external-readonly-hold" {
+            validResourceResult = report.resourceBytes == boundaryProbeResourceBytes
+                && observedRetainedBytes < boundaryProbeResourceBytes
+                && limitReason == nil
+        } else if mode == "internal-linked-writable-hold" {
+            let overlap = retainedResources.keys.filter { named.resources[$0] != nil }
+            internalLinkedWritableDeduplicated = report.resourceBytes
+                == boundaryInternalResourceBytes
+                && retainedResources.count == 1
+                && overlap.count == 1
+                && observedRetainedBytes >= boundaryInternalResourceBytes
+                && quota.files == named.files
+                && limitReason == nil
+            validResourceResult = internalLinkedWritableDeduplicated
+        } else if mode == "fileport-unlinked-hold" {
+            retentionDenied = [EPERM, EACCES].contains(report.retentionDeniedErrno)
+            validResourceResult = report.resourceBytes == boundaryProbeResourceBytes
+                && (retentionDenied || (observedRetainedBytes >= boundaryProbeResourceBytes && limitReason == "disk"))
+        } else {
+            validResourceResult = report.resourceBytes == boundaryProbeResourceBytes
+                && observedRetainedBytes >= boundaryProbeResourceBytes
+                && limitReason == "disk"
+        }
+        guard validResourceResult else { throw CocoaError(.fileReadTooLarge) }
+        try process.signal(SIGTERM)
+        _ = try process.waitUntilExit(timeout: 3)
+    } else {
+        guard try process.waitUntilExit(timeout: 5) == 0 else { throw CocoaError(.executableLoad) }
+    }
+    let final = try process.detach()
+    detached = true
+    let childGone = final.ended.contains { $0.pid == child.processIdentifier && $0.start == child.startAbsoluteTime }
+    let supervisorGone = final.ended.contains { $0.pid == supervisorPID && $0.start == supervisorStart }
+    guard childGone, supervisorGone else { throw CocoaError(.executableLoad) }
+    return .init(
+        supervisorProcessIdentifier: supervisorPID,
+        supervisorParentProcessIdentifier: process.supervisor.parent,
+        supervisorStartAbsoluteTime: supervisorStart,
+        child: child,
+        report: report,
+        supervisorGone: supervisorGone,
+        childGone: childGone,
+        observedRetainedBytes: observedRetainedBytes,
+        limitReason: limitReason,
+        internalLinkedWritableDeduplicated: internalLinkedWritableDeduplicated,
+        retentionDenied: retentionDenied
+    )
 }
 
 private final class ServiceSession: @unchecked Sendable {
@@ -963,6 +1193,7 @@ private final class ServiceSession: @unchecked Sendable {
                 }
                 try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
                 try FileManager.default.createDirectory(at: workerRoot, withIntermediateDirectories: true)
+                guard !request.diagnosticOpenFailure else { throw CocoaError(.executableLoad) }
                 let started = ProcessInfo.processInfo.systemUptime
                 let manifest = try probeRuntime()
                 coldStartSeconds = ProcessInfo.processInfo.systemUptime - started
@@ -1162,10 +1393,6 @@ private final class ServiceSession: @unchecked Sendable {
             guard request.admission != nil, request.admissionDeadline?.isFinite == true,
                   isSHA256(request.fingerprint) else {
                 return (nil, .init(ok: false, message: "invalid job fingerprint"))
-            }
-            guard request.diagnosticDeniedPaths.isEmpty, !request.diagnosticAutoexecPositiveControl,
-                  !request.diagnosticSupervisorIdentityWriteFailure, !request.diagnosticSupervisorIdentityCaptureFailure else {
-                return (nil, .init(ok: false, message: "Unsupported job options"))
             }
             if let existing = jobs[request.jobID] {
                 guard existing.fingerprint == request.fingerprint else {
@@ -1490,7 +1717,9 @@ private final class ServiceSession: @unchecked Sendable {
                 mode: "job",
                 configuration: jobConfig,
                 processRoot: writableRoot,
-                job: job
+                job: job,
+                injectSupervisorIdentityWriteFailure: job.diagnosticSupervisorIdentityWriteFailure,
+                injectSupervisorIdentityCaptureFailure: job.diagnosticSupervisorIdentityCaptureFailure
             )
             try requireSuccessful(worker, job: job)
             lock.access { job.stdout = boundedLogText(worker.log, bytes: request.limits.stdoutBytes) }
@@ -1570,6 +1799,9 @@ private final class ServiceSession: @unchecked Sendable {
                     "polygons": Double(verification.manifest.polygons),
                     "system_pressure_policy_version": 1,
                 ]
+                if verification.autoexecPositive {
+                    job.metrics["autoexec_positive_control"] = 1
+                }
                 job.progress.append(.init(sequence: 3, stage: "complete", fraction: 1))
                 job.source = nil
                 job.state = .awaitingConfirmation
@@ -1676,7 +1908,7 @@ private final class ServiceSession: @unchecked Sendable {
 
     private func verify(
         job: JobRecord, manifestMaximum: UInt64
-    ) throws -> (manifest: VerificationManifest, process: ManagedProcessResult) {
+    ) throws -> (manifest: VerificationManifest, process: ManagedProcessResult, autoexecPositive: Bool) {
         let verificationRoot = verificationDirectory(job.id)
         try? FileManager.default.removeItem(at: verificationRoot)
         try FileManager.default.createDirectory(at: verificationRoot, withIntermediateDirectories: true)
@@ -1755,10 +1987,50 @@ private final class ServiceSession: @unchecked Sendable {
               URL(fileURLWithPath: manifest.bpyModule).resolvingSymlinksInPath()
                 == bpyEntryPointURL.resolvingSymlinksInPath(),
               manifest.autorunMarkerAbsent, manifest.secretEnvironmentAbsent,
+              manifest.deniedPaths.count == job.diagnosticDeniedPaths.count,
+              job.diagnosticDeniedPaths.allSatisfy({ manifest.deniedPaths[$0]?.isPermissionDenial == true }),
+              job.diagnosticDeniedPaths.isEmpty || manifest.networkDenied?.isPermissionDenial == true,
               manifest.sceneSHA256 == (try sha256(outputDirectory(job.id).appendingPathComponent("scene.blend"))) else {
             throw CocoaError(.fileReadCorruptFile)
         }
-        return (manifest, result)
+        var positive = false
+        if job.diagnosticAutoexecPositiveControl {
+            positive = try runAutoexecPositiveControl(job: job)
+        }
+        return (manifest, result, positive)
+    }
+
+    private func runAutoexecPositiveControl(job: JobRecord) throws -> Bool {
+        let controlRoot = autoexecDirectory(job.id)
+        try FileManager.default.createDirectory(at: controlRoot, withIntermediateDirectories: true)
+        let scene = controlRoot.appendingPathComponent("positive-control.blend")
+        try FileManager.default.copyItem(at: outputDirectory(job.id).appendingPathComponent("scene.blend"), to: scene)
+        let manifestURL = controlRoot.appendingPathComponent("manifest.json")
+        let config = try writeConfiguration(
+            baseConfiguration(processRoot: controlRoot, cpuSeconds: job.timeoutSeconds)
+                .merging([
+                    "jobID": job.id.uuidString,
+                    "scenePath": scene.path,
+                    "manifest": manifestURL.path,
+                ]) { _, new in new },
+            at: jobDirectory(job.id).appendingPathComponent("autoexec.json")
+        )
+        let result = try runManagedProcess(
+            mode: "autoexec-positive",
+            configuration: config,
+            processRoot: controlRoot,
+            job: job
+        )
+        try requireSuccessful(result, job: job)
+        let manifest = try BpyRuntimeManifest.decode(AutoexecManifest.self, name: manifestURL.lastPathComponent,
+            in: controlRoot, maximum: request.limits.outputBytes, budget: manifestBudget)
+        guard manifest.schema == "nexgenvideo/bpy-autoexec-positive/1",
+              manifest.jobID == job.id.uuidString,
+              manifest.processIdentifier == result.workerProcessIdentifier,
+              manifest.autorunMarkerPresent else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return true
     }
 
     private func recordRuntimePreflight(_ preflight: BpyRuntimePreflight, serviceStart: UInt64) {
@@ -1824,7 +2096,9 @@ private final class ServiceSession: @unchecked Sendable {
         mode: String,
         configuration: URL,
         processRoot: URL,
-        job: JobRecord?
+        job: JobRecord?,
+        injectSupervisorIdentityWriteFailure: Bool = false,
+        injectSupervisorIdentityCaptureFailure: Bool = false
     ) throws -> ManagedProcessResult {
         try lock.access {
             if let job, !job.processAuthorizations.canRecord { throw POSIXError(.EOVERFLOW) }
@@ -1860,12 +2134,15 @@ private final class ServiceSession: @unchecked Sendable {
         } else if let job, launchMode == .verify {
             workerReads.append(try relative(outputDirectory(job.id).appendingPathComponent("scene.blend"), mount: pair.worker.mountPath))
         }
+        var injections: [BpyLaunchInjection] = []
+        if injectSupervisorIdentityWriteFailure { injections.append(.failAfterChildStart) }
+        if injectSupervisorIdentityCaptureFailure { injections += [.failChildIdentityCapture, .childIgnoreTerm] }
         let spec = BpyHostLaunchSpec(permit: permit, job: job?.id, mode: launchMode,
             workerLease: pair.worker.id, dataLease: pair.data.id,
             workerRoot: try relative(processRoot, mount: pair.worker.mountPath),
             configuration: try relative(configuration, mount: pair.data.mountPath),
             configurationSHA256: try sha256(configuration),
-            readFiles: reads, workerReadFiles: workerReads)
+            readFiles: reads, workerReadFiles: workerReads, injections: injections)
         let execution = UUID()
         let began = try BpyRuntimeClock.awakeSeconds()
         let process = try monitor.start(spec: spec, execution: execution,
@@ -2300,6 +2577,29 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
         super.init()
     }
 
+    func runBoundaryProbe(_ data: Data, monitor: BpyServiceMonitor, withReply reply: @escaping (Data) -> Void) {
+        do {
+            let request = try JSONDecoder().decode(BpyBoundaryProbeRequest.self, from: data)
+            let app = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            guard request.schema == "nexgenvideo/bpy-boundary-probe-request/2",
+                  request.limits.isValid,
+                  FileManager.default.fileExists(atPath: app.appendingPathComponent("Contents/Resources/BPY_BOUNDARY_PROBE_NONPRODUCT_CI").path) else {
+                throw CocoaError(.fileReadNoPermission)
+            }
+            capacity.wait(); defer { capacity.signal() }
+            let storage = try BpyServiceStoragePair(pair: request.storagePair, limits: request.limits, transport: request.nonce, owner: request.nonce,
+                serviceStart: processUsage(getpid())?.startAbsoluteTime ?? 0)
+            defer {
+                try? FileManager.default.removeItem(at: storage.workerRoot)
+                try? FileManager.default.removeItem(at: storage.dataRoot)
+                storage.release()
+            }
+            reply(try JSONEncoder().encode(runBoundarySupervisor(request: request, storage: storage, monitor: monitor)))
+        } catch {
+            reply(failure("boundary probe failed: \(error.localizedDescription)"))
+        }
+    }
+
     func openSession(_ data: Data, owner: UUID, monitor: BpyServiceMonitor, withReply reply: @escaping (Data) -> Void) {
         var requestedID: UUID?
         var stage = OpenStage.decode
@@ -2307,7 +2607,7 @@ private final class BpyRuntimeService: NSObject, @unchecked Sendable {
             let request = try JSONDecoder().decode(BpyOpenSessionRequest.self, from: data)
             requestedID = request.sessionID
             stage = .contract
-            guard !request.diagnosticOpenFailure, request.limits.isValid, !request.documentID.isEmpty,
+            guard request.limits.isValid, !request.documentID.isEmpty,
                   request.documentID.count <= 256,
                   request.confirmedRevision.map(isSafeName) ?? true else {
                 openDiagnostics.notice("open.fail session=\(request.sessionID.uuidString, privacy: .public) owner=\(owner.uuidString, privacy: .public) stage=contract")
@@ -2634,6 +2934,22 @@ private final class BpyRuntimeConnection: NSObject, BpyRuntimeServiceProtocol, @
         self.connection = connection
     }
 
+    func runBoundaryProbe(_ request: Data, withReply reply: @escaping (Data) -> Void) {
+        guard lock.access({ !invalidated }) else {
+            reply(failure("XPC connection is unavailable"))
+            return
+        }
+        guard let connection, let decoded = try? JSONDecoder().decode(BpyBoundaryProbeRequest.self, from: request) else {
+            reply(failure("XPC connection is unavailable"))
+            return
+        }
+        let monitor = BpyServiceMonitor(connection: connection, transport: decoded.nonce)
+        let callback = ResponseCallback(reply)
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            service.runBoundaryProbe(request, monitor: monitor, withReply: callback.body)
+        }
+    }
+
     private func owns<T: Decodable>(
         _ type: T.Type,
         request: Data,
@@ -2804,6 +3120,17 @@ private final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
         connection.invalidationHandler = { [weak exported] in exported?.invalidate() }
         connection.resume()
         return true
+    }
+}
+
+if CommandLine.arguments == [CommandLine.arguments[0], "--selftest-directory-deletion"] {
+    do {
+        let evidence = try JSONSerialization.data(withJSONObject: directoryDeletionProbe(), options: [.sortedKeys])
+        FileHandle.standardOutput.write(evidence)
+        Darwin.exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("Directory deletion probe failed: \(error.localizedDescription)\n".utf8))
+        Darwin.exit(1)
     }
 }
 

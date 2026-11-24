@@ -12,8 +12,7 @@ class AppleBoundaryTests(unittest.TestCase):
     def test_supervisor_package_keeps_only_the_three_original_local_targets(self):
         original = subprocess.check_output(['git', 'show', '33669db17cd4d5e7c0524e3223137a13303a5dd7:Package.swift'],
                                            stdin=subprocess.DEVNULL, timeout=30)
-        with self.assertRaisesRegex(ValueError, 'declaration changed'):
-            release.supervisor_package_manifest(Path('Package.swift').read_bytes())
+        self.assertEqual(Path('Package.swift').read_bytes(), original)
         isolated = release.supervisor_package_manifest(original).decode()
         self.assertTrue(isolated.startswith('// swift-tools-version: 6.2\n'))
         self.assertIn('platforms: [.macOS(.v26)]', isolated)
