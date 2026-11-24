@@ -170,11 +170,16 @@ private struct ShotPlanningRow: View {
     private var requiresAdditionalSourceFootage: Bool {
         baseShot.obligations.contains { $0.kind == .sourceFootage && $0.required && $0.id != baseShot.sourceObligationID }
     }
-    private var stale: Bool {
-        guard draft.header.revision >= baseline.header.revision else { return false }
-        return draft.header.inputs != baseline.header.inputs || draft.storyboardRevision != baseline.storyboardRevision
-            || draft.shots.first(where: { $0.shotID == shot.shotID }) != baseShot
+    private var rebase: ShotPlanningRowRebase.Decision {
+        guard !importing, !applying else { return .current }
+        return ShotPlanningRowRebase.decide(shotID: shot.shotID, baseline: baseline, latest: draft,
+            hasLocalEdits: candidate != baseShot, chosenPredecessorID: candidate.predecessorShotID)
     }
+    private var conflict: ShotPlanningRowRebase.Conflict? {
+        if case .conflict(let reason) = rebase { return reason }
+        return nil
+    }
+    private var stale: Bool { conflict != nil }
     private var canEdit: Bool { editable && !importing && !applying && !stale }
     private var rangeFailure: String? {
         do {
@@ -252,8 +257,8 @@ private struct ShotPlanningRow: View {
                     Text(step.action).textSelection(.enabled)
                 }
             }
-            if stale {
-                Text("The plan changed. Reload this shot before applying your edits.").foregroundStyle(AppTheme.Status.warningColor)
+            if let conflict {
+                Text(conflict.message).foregroundStyle(AppTheme.Status.warningColor)
                 Button("Reload shot") { reload() }.buttonStyle(InlineActionButtonStyle())
                     .reviewAcceptanceProbe("shot-planning.reload.\(shot.shotID)")
             }
@@ -262,7 +267,7 @@ private struct ShotPlanningRow: View {
                 Text("Imported footage").tag(SourceMode.imported)
                 Text("AI-enhanced footage").tag(SourceMode.aiEnhanced)
             }.disabled(!canEdit)
-                .reviewAcceptanceProbe("shot-planning.source-mode.\(shot.shotID)", text: sourceMode.rawValue)
+                .reviewAcceptanceProbe("shot-planning.source-mode.\(shot.shotID)", state: canEdit, text: sourceMode.rawValue)
             if requiresAdditionalSourceFootage {
                 Text("Use Revise requirements to change the additional source-footage requirements before choosing AI generation.")
                     .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -394,8 +399,12 @@ private struct ShotPlanningRow: View {
         }
         .padding(AppTheme.Spacing.lg)
         .background(AppTheme.Background.raisedColor, in: RoundedRectangle(cornerRadius: AppTheme.Radius.md))
-        .onChange(of: draft) { _, value in
-            if value.header.revision > baseline.header.revision, !stale { baseline = value }
+        .onChange(of: rebase, initial: true) { _, decision in
+            switch decision {
+            case .reload: reload()
+            case .rebaseKeepingEdits: baseline = draft
+            case .current, .conflict: break
+            }
         }
         .onChange(of: baseShot.sourceInputRange) { _, value in
             sourceStart = Self.startText(value); sourceEnd = Self.endText(value)
@@ -452,5 +461,37 @@ private struct ShotPlanningRow: View {
         guard let range else { return "" }
         let end = range.startTicks.addingReportingOverflow(range.durationTicks)
         return end.overflow ? "" : ProductionTimeEntry.seconds(end.partialValue, timebase: range.timebase)
+    }
+}
+
+enum ShotPlanningRowRebase {
+    enum Conflict: Equatable {
+        case shotChanged, storyboardChanged, predecessorUnavailable
+
+        var message: String {
+            switch self {
+            case .shotChanged: "This shot changed while you were editing it. Reload it to continue; unapplied changes are discarded."
+            case .storyboardChanged: "The Storyboard changed. Reload this shot to continue; unapplied changes are discarded."
+            case .predecessorUnavailable: "The chosen previous shot no longer uses AI generation. Reload this shot or choose another connection."
+            }
+        }
+    }
+
+    enum Decision: Equatable { case current, reload, rebaseKeepingEdits, conflict(Conflict) }
+
+    // A row depends only on its own shot, the Storyboard revision and its chosen predecessor; the writer still requires the whole plan.
+    static func decide(shotID: String, baseline: ShotPlanningDraftV1, latest: ShotPlanningDraftV1,
+                       hasLocalEdits: Bool, chosenPredecessorID: String?) -> Decision {
+        guard latest != baseline, latest.header.revision >= baseline.header.revision else { return .current }
+        guard hasLocalEdits else { return .reload }
+        guard latest.header.projectID == baseline.header.projectID,
+              latest.storyboardRevision == baseline.storyboardRevision else { return .conflict(.storyboardChanged) }
+        guard let own = latest.shots.first(where: { $0.shotID == shotID }),
+              own == baseline.shots.first(where: { $0.shotID == shotID }) else { return .conflict(.shotChanged) }
+        if let chosenPredecessorID,
+           latest.shots.first(where: { $0.shotID == chosenPredecessorID })?.sourceMode != .generated {
+            return .conflict(.predecessorUnavailable)
+        }
+        return .rebaseKeepingEdits
     }
 }

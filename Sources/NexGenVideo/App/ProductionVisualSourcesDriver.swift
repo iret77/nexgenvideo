@@ -106,6 +106,16 @@ final class ProductionVisualSourcesDriver {
         (probe(id, in: target) as? AppRelaunchClickProbeView)?.acceptanceState
     }
 
+    func requireUnconflictedShotPlanningRow(_ shotID: String, in target: NSWindow) async throws {
+        let reload = "shot-planning.reload." + shotID
+        try await wait("Shot Planning row settled " + shotID, seconds: 30) {
+            self.state("shot-planning.source-mode." + shotID, in: target) == true || self.probe(reload, in: target) != nil
+        }
+        guard probe(reload, in: target) == nil else {
+            throw GateBlocked("Shot Planning asks to reload a shot that has no local edits: " + shotID)
+        }
+    }
+
     func sheet(_ id: String, parent: NSWindow? = nil, waitForControl: Bool = false) async throws -> NSWindow {
         let parent = parent ?? window
         try await wait("open sheet " + id) {

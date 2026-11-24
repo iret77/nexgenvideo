@@ -18,9 +18,7 @@ enum ProductionRetainedSpatialAcceptance {
             let driver = ProductionVisualSourcesDriver(window: window, output: output, name: "native-blockout-\(imported ? "import" : "plan")-\(Int(scale * 100))")
             do {
                 try await ProductionV2PlanningAcceptance.selectPhase("shot_planning", context: context, driver: driver)
-                if WorkspaceUIAcceptance.probeFrame(identifier: "shot-planning.reload." + shotID, in: window) != nil {
-                    try await driver.click("shot-planning.reload." + shotID, in: window)
-                }
+                try await driver.requireUnconflictedShotPlanningRow(shotID, in: window)
                 let before = try await draft(root)
                 guard let shot = before.shots.first(where: { $0.shotID == shotID }), shot.camera.spatialState != nil else { throw failed("The real shot has no confirmed native camera state.") }
                 let source: URL?
@@ -105,9 +103,7 @@ enum ProductionRetainedSpatialAcceptance {
                 guard result.0.kind == (imported ? .importedGeometry : .planElevation),
                       selected.camera.spatialState == shot.camera.spatialState,
                       !imported || (selected.camera.spatialDerivation == nil && result.0.original != nil) else { throw failed("The native blockout has incorrect source or state semantics.") }
-                if WorkspaceUIAcceptance.probeFrame(identifier: "shot-planning.reload." + shotID, in: window) != nil {
-                    try await driver.click("shot-planning.reload." + shotID, in: window)
-                }
+                try await driver.requireUnconflictedShotPlanningRow(shotID, in: window)
                 try await driver.click("shot-planning.blockout.open." + shotID, in: window)
                 let exportSheet = try await driver.sheet("shot.blockout.sheet")
                 try await driver.wait("actual blockout export available") { driver.text("shot.blockout.current", in: exportSheet) == result.0.output.sha256 }
