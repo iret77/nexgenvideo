@@ -27,7 +27,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // Start Sparkle updater
         _ = Updater.shared
         AppRelaunchSelfTest.checkpoint("updater-ready")
-        BpyRuntimeSelfTest.scheduleIfRequested()
         let isRelaunchSelfTest = AppRelaunchSelfTest.isRequested
         let relaunchIntent = AppRelaunchIntentStore.consumeForLaunch(
             isSelfTest: isRelaunchSelfTest || ExportActionsSelfTest.isRequested
@@ -64,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 }
             }
         }
+        BpyRuntimeSelfTest.scheduleIfRequested()
         Task.detached(priority: .utility) {
             do {
                 try ExportPublishRecoveryStore.recoverAll()
