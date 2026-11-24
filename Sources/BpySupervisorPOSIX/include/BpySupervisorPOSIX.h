@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+int ngv_bpy_probe_fork(int *fork_errno);
 uint64_t ngv_bpy_rlim_infinity(void);
 int ngv_bpy_file_handle_descriptor(void *handle, int *descriptor);
 
@@ -12,6 +13,7 @@ typedef struct ngv_bpy_child ngv_bpy_child;
 typedef struct { int source; int target; } ngv_bpy_fd_map;
 int ngv_bpy_spawn_lock(void);
 int ngv_bpy_spawn_unlock(void);
+void *ngv_bpy_allocate_memory_probe(size_t bytes);
 int ngv_bpy_self_path(char *buffer, size_t size);
 int ngv_bpy_child_spawn(const char *path, char *const argv[], char *const envp[],
     const char *directory, int input, int output, int errors, ngv_bpy_child **child);
