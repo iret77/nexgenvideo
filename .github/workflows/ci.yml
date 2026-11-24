@@ -333,6 +333,15 @@ jobs:
           CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
         run: python3 -m unittest discover -s scripts -p test_sign_app.py -v
 
+      - name: Bind original ONNX package and binary transports
+        run: python3 scripts/prepare_release_onnx.py
+
+      - name: Resolve the locked dependencies
+        timeout-minutes: 10
+        run: |
+          swift package --cache-path "$NGV_SWIFTPM_CACHE_PATH" --force-resolved-versions resolve
+          git diff --exit-code -- Package.swift Package.resolved
+
       - name: Build
         id: build
         timeout-minutes: 40
