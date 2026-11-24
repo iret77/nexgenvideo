@@ -402,7 +402,7 @@ private struct ShotPlanningRow: View {
         .onChange(of: rebase, initial: true) { _, decision in
             switch decision {
             case .reload: reload()
-            case .rebaseKeepingEdits: baseline = draft
+            case .rebaseKeepingEdits: baseline = draft; failure = nil
             case .current, .conflict: break
             }
         }
@@ -472,7 +472,7 @@ enum ShotPlanningRowRebase {
             switch self {
             case .shotChanged: "This shot changed while you were editing it. Reload it to continue; unapplied changes are discarded."
             case .storyboardChanged: "The Storyboard changed. Reload this shot to continue; unapplied changes are discarded."
-            case .predecessorUnavailable: "The chosen previous shot no longer uses AI generation. Reload this shot or choose another connection."
+            case .predecessorUnavailable: "The chosen previous shot no longer uses AI generation. Reload this shot to choose another connection; unapplied changes are discarded."
             }
         }
     }

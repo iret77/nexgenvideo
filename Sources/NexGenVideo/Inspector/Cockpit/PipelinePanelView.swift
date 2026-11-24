@@ -394,7 +394,7 @@ struct PipelinePanelView: View {
                     }
                     if mutationReadiness.isReady || mutationReadiness.failure != nil,
                        let diagnostic = mutationReadiness.failure ?? approvalReadiness.blocker,
-                       approvalPhase == phase.phase, !workIsRunning {
+                       mutationReadiness.failure != nil || approvalPhase == phase.phase, !workIsRunning {
                         Button("Diagnostics") { showsReadinessDiagnostics = true }
                             .buttonStyle(.inlineAction(.neutral))
                             .background { acceptanceProbe("dock.diagnostics", enabled: true) }
@@ -475,8 +475,8 @@ struct PipelinePanelView: View {
         case .ready: return nil
         case .checking: return "Checking whether this phase can be revised…"
         case .busy: return mutationReadiness.dockMessage
-        case .failed(let reason):
-            return "The saved workflow could not be verified: \(reason) Retry the check. If it still fails, reopen the project."
+        case .failed:
+            return "The saved workflow could not be verified. Retry the check. If it still fails, reopen the project."
         }
     }
 
@@ -1148,12 +1148,15 @@ enum PhaseControlReadiness: Equatable {
         case .ready: nil
         case .checking: "Checking phase readiness…"
         case .busy(let operation): "Wait for \(Self.operationName(operation)) to finish."
-        case .failed(let reason): Self.failurePrefix + " " + reason
+        case .failed: Self.failurePrefix + " Open Diagnostics for the reason, then retry."
         }
     }
 
-    // Phase jobs report their phase ID; native edits report a readable operation label.
+    // Phase jobs and gate writes report phase IDs; native edits report a readable operation label.
     static func operationName(_ label: String) -> String {
-        label.contains(" ") ? label : PhaseDisplay.label(label)
+        let parts = label.split(separator: " ", maxSplits: 1).map(String.init)
+        if parts.count == 1 { return PhaseDisplay.label(label) }
+        guard parts[1].allSatisfy({ $0.isLowercase || $0 == "_" }) else { return label }
+        return parts[0] + " " + PhaseDisplay.label(parts[1])
     }
 }

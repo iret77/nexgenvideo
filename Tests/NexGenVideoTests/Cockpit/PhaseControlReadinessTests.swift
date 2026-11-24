@@ -8,6 +8,7 @@ struct PhaseControlReadinessTests {
         #expect(PhaseControlReadiness.busy("Edit Shot Planning").dockMessage == "Wait for Edit Shot Planning to finish.")
         #expect(PhaseControlReadiness.busy("shot_planning").dockMessage == "Wait for \(PhaseDisplay.label("shot_planning")) to finish.")
         #expect(PhaseControlReadiness.busy("shot_planning").dockMessage?.contains("shot_planning") == false)
+        #expect(PhaseControlReadiness.busy("Approve shot_planning").dockMessage == "Wait for Approve \(PhaseDisplay.label("shot_planning")) to finish.")
         for state in [PhaseControlReadiness.checking, .busy("Edit Shot Planning"), .busy("storyboard")] {
             #expect(state.dockMessage?.hasPrefix(PhaseControlReadiness.failurePrefix) == false)
             #expect(state.failure == nil)
@@ -18,7 +19,8 @@ struct PhaseControlReadinessTests {
     @Test func failureNamesItsRealReason() {
         let reason = "The project pipeline is not initialized."
         let state = PhaseControlReadiness.failed(reason)
-        #expect(state.dockMessage == PhaseControlReadiness.failurePrefix + " " + reason)
+        #expect(state.dockMessage?.hasPrefix(PhaseControlReadiness.failurePrefix) == true)
+        #expect(state.dockMessage?.contains(reason) == false)
         #expect(state.failure == reason)
     }
 
