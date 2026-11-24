@@ -117,10 +117,13 @@ struct StoryboardSpatialSketchSheet: View {
             }.value
             guard !Task.isCancelled, editor.workingRoot == home, editor.openWorkingCopyGeneration == generation else { return }
             scenes = value; loadedGeneration = generation
+        } catch let error as GateBlocked {
+            guard !Task.isCancelled, editor.workingRoot == home, editor.openWorkingCopyGeneration == generation else { return }
+            failure = error.message
         } catch {
             guard !Task.isCancelled, editor.workingRoot == home, editor.openWorkingCopyGeneration == generation else { return }
             Log.project.error("Saved locations could not be read for the location sketch: \(Log.detail(error))")
-            failure = "Saved locations couldn’t be loaded. Reopen the project and try again."
+            failure = "Saved locations couldn't be loaded. Reopen the project and try again."
         }
     }
 
@@ -132,10 +135,13 @@ struct StoryboardSpatialSketchSheet: View {
             let value = try await Task.detached(priority: .userInitiated) { try SpatialSceneStore.load(selected, in: root) }.value
             guard !Task.isCancelled, listReady, loadedGeneration == generation, self.selected == selected else { return }
             revision = value; failure = nil
+        } catch let error as GateBlocked {
+            guard !Task.isCancelled, listReady, loadedGeneration == generation, self.selected == selected else { return }
+            failure = error.message
         } catch {
             guard !Task.isCancelled, listReady, loadedGeneration == generation, self.selected == selected else { return }
             Log.project.error("Location \(selected.id) could not be read for the location sketch: \(Log.detail(error))")
-            failure = "The selected location couldn’t be loaded. Choose another location, or reopen the project."
+            failure = "The selected location couldn't be loaded. Choose another location, or reopen the project."
         }
     }
 
@@ -154,7 +160,7 @@ struct StoryboardSpatialSketchSheet: View {
                 failure = error.message
             } catch {
                 Log.project.error("Location sketch assignment failed shot=\(shotID) moment=\(momentID): \(Log.detail(error))")
-                failure = "The location sketch couldn’t be assigned. The Storyboard was not changed."
+                failure = "The location sketch couldn't be assigned. The Storyboard was not changed."
             }
         }
     }
