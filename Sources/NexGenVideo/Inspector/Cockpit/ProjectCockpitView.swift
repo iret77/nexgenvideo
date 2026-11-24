@@ -100,7 +100,9 @@ struct ProjectCockpitView: View {
                     case .productionDesign: ProductionDesignWorkspaceView()
                     case .script: ScriptPanelView()
                     case .storyboard:
-                        if editor.usesProductionPlanningV2 { StoryboardPlanningView() } else { StoryboardPanelView() }
+                        if editor.usesProductionPlanningV2 {
+                            StoryboardPlanningView(session: editor.openWorkingCopyGeneration).id(editor.openWorkingCopyGeneration)
+                        } else { StoryboardPanelView() }
                     case .shotPlanning: ShotPlanningView()
                     case .renderReview: ProductionRenderReviewView(draft: editor.renderReviewDraft)
                     case .bible: BiblePanelView()

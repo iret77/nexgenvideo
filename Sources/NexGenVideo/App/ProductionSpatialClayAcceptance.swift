@@ -156,8 +156,21 @@ enum ProductionSpatialClayAcceptance {
             let original = try await Task.detached { try PlanningWriterIO.storyboard(dataRoot: root) }.value
             let revision = try await Task.detached { try SpatialSceneStore.load(scene, in: root) }.value
             guard let camera = revision.snapshot.cameras.first(where: { $0.id == cameraID }) else { throw failed("The native sketch camera disappeared.") }
+            let control = "storyboard.sketch.sources." + momentID
+            func boardReady() -> Bool {
+                window.isKeyWindow && window.attachedSheet == nil && driver.state(control, in: window) == true
+                    && driver.text("storyboard.v2.workspace", in: window) == original.fingerprint
+            }
             for cancel in [true, false] {
-                try await driver.menu("storyboard.sketch.sources." + momentID, title: "Create from location…", in: window)
+                try await driver.revealStoryboardMoment(control, shotID: shotID, orderedShots: original.timing.shots.map(\.id),
+                                                        fingerprint: original.fingerprint)
+                try await driver.reveal(control, in: window)
+                try await driver.waitForPresentation(of: window, control: control, ready: boardReady)
+                guard let position = driver.storyboardPosition(control),
+                      let read = Int(driver.text("storyboard.board.read", in: window) ?? "") else {
+                    throw failed("The saved sketch menu has no visible position on the loaded Board.")
+                }
+                try await driver.menu(control, title: "Create from location…", in: window, preDown: boardReady)
                 let sheet = try await driver.sheet("storyboard.spatial.sheet")
                 try await driver.waitForSpatialLocations(scene, prefix: "storyboard.spatial.", in: sheet)
                 guard driver.state("storyboard.spatial.assign", in: sheet) == false else { throw failed("A location sketch without a camera is assignable.") }
@@ -170,8 +183,18 @@ enum ProductionSpatialClayAcceptance {
                 }
                 if let error = driver.text("storyboard.spatial.failure", in: sheet) { throw failed(error) }
                 let written = try await Task.detached { try PlanningWriterIO.storyboard(dataRoot: root) }.value
-                if cancel { guard written.fingerprint == original.fingerprint else { throw failed("Canceling a native location sketch changed the Storyboard.") } }
-                else {
+                if cancel {
+                    guard written.fingerprint == original.fingerprint else { throw failed("Canceling a native location sketch changed the Storyboard.") }
+                    try await driver.waitForPresentation(of: window, control: control) {
+                        guard boardReady(), let next = Int(driver.text("storyboard.board.read", in: window) ?? ""), next > read,
+                              let after = driver.storyboardPosition(control) else { return false }
+                        let tolerance = 1 / window.backingScaleFactor
+                        return abs(after.minX - position.minX) <= tolerance && abs(after.minY - position.minY) <= tolerance
+                    }
+                    try driver.record("canceled sketch preserved the visible Board position", fields: [
+                        "momentID": momentID, "fingerprint": original.fingerprint, "before": NSStringFromRect(position),
+                        "after": driver.storyboardPosition(control).map(NSStringFromRect) ?? ""])
+                } else {
                     guard let asset = written.timing.shots.first(where: { $0.id == shotID })?.moments.first(where: { $0.id == momentID })?.asset,
                           written.fingerprint != original.fingerprint else { throw failed("The real location sketch was not assigned to its chosen moment.") }
                     try await Task.detached {
