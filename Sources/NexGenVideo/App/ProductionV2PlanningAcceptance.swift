@@ -27,6 +27,9 @@ enum ProductionV2PlanningAcceptance {
             let before = try await readDraft(context)
             try await driver.chooseFile(nil, in: window, trigger: "shot-planning.choose-source." + shot.shotID)
             guard try await readDraft(context) == before else { throw failed("Cancelling source selection changed Shot Planning.") }
+            guard driver.state("shot-planning.source-mode." + shot.shotID, in: window) == true else {
+                throw failed("Cancelling source selection locked the Shot Planning row.")
+            }
             try await driver.chooseFile(sourceVideo, in: window, trigger: "shot-planning.choose-source." + shot.shotID)
             try await driver.wait("native source attached", seconds: 30) {
                 driver.text("shot-planning.source-end." + shot.shotID, in: window) != nil

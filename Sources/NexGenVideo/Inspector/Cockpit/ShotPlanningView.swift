@@ -15,13 +15,17 @@ struct ShotPlanningView: View {
     @State private var confirmingBlockoutRecovery = false
     @State private var recoveringBlockouts = false
 
-    private var editable: Bool {
-        guard failure == nil, !editor.agentService.isStreaming, !editor.agentService.isComposerBlocked,
-              editor.projectState?.nextPhaseName == "shot_planning",
-              let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }) else { return false }
+    private var editing: ShotPlanningEditing {
+        let root = editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
         _ = editor.pipelinePhaseExecution.snapshot
-        return editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: root) == nil && !loading
+        return .init(hasPlan: draft != nil && storyboard != nil, reading: loading, failed: failure != nil,
+            projectOpen: root != nil, phasePending: editor.projectState?.nextPhaseName == "shot_planning",
+            jobRunning: editor.agentService.isStreaming
+                || root.map { editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: $0) != nil } ?? false,
+            requestOpen: editor.agentService.isComposerBlocked)
     }
+
+    private var editable: Bool { editing == .editable }
 
     private var canRecoverBlockouts: Bool {
         guard blockoutRecovery != nil, !loading, !recoveringBlockouts,
@@ -35,7 +39,7 @@ struct ShotPlanningView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-                if loading { ProgressView("Loading Shot Planning…") }
+                if editing == .loading { ProgressView("Loading Shot Planning…") }
                 if let failure {
                     Text(failure).foregroundStyle(AppTheme.Status.errorColor)
                     Button("Reload Shot Planning") { Task { await load() } }.buttonStyle(InlineActionButtonStyle())
@@ -51,11 +55,8 @@ struct ShotPlanningView: View {
                 if let draft, let storyboard {
                     Text("Choose how each planned shot will be made. References are prepared in the References workspace; the Shot List binds the final models and inputs.")
                         .foregroundStyle(AppTheme.Text.secondaryColor)
-                    if !editable {
-                        Text(editor.projectState?.nextPhaseName == "shot_planning"
-                            ? "Wait for the current job before editing."
-                            : "Reopen Shot Planning to change approved decisions.")
-                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                    if let notice = editing.notice {
+                        Text(notice).foregroundStyle(AppTheme.Text.secondaryColor)
                     }
                     ForEach(Array(draft.shots.enumerated()), id: \.element.shotID) { index, shot in
                         ShotPlanningRow(shot: shot, draft: draft, storyboard: storyboard, number: index + 1, editable: editable)
@@ -84,14 +85,16 @@ struct ShotPlanningView: View {
         let request = UUID(); generation = request
         let home = editor.workingRoot
         if loadedHome != home { draft = nil; storyboard = nil; loadedHome = home }
-        loading = true; failure = nil; blockoutRecovery = nil
+        if draft == nil { failure = nil; blockoutRecovery = nil }
+        loading = true
         defer { if generation == request { loading = false } }
         guard let home, let root = DataRootResolver.dataRoot(of: home) else { return }
         do {
             _ = try ProjectPackGate.requireLiveMutation(projectURL: home, declaredPack: editor.declaredPluginName,
                 declaredBinding: editor.declaredPluginBinding, declaredProductionContract: editor.declaredProductionContract)
             guard FileManager.default.fileExists(atPath: root.appendingPathComponent(ShotPlanningDraftV1.currentPath).path) else {
-                if draft != nil { failure = "Shot Planning is no longer available. Restore it before applying edits." }
+                failure = draft == nil ? nil : "Shot Planning is no longer available. Restore it before applying edits."
+                blockoutRecovery = nil
                 return
             }
             let value = try await Task.detached(priority: .userInitiated) {
@@ -99,7 +102,7 @@ struct ShotPlanningView: View {
                 return (try ProductionPlanningStoreV1.readShotPlanning(dataRoot: root, storyboard: board), board)
             }.value
             guard generation == request, !Task.isCancelled, editor.workingRoot == home else { return }
-            draft = value.0; storyboard = value.1
+            draft = value.0; storyboard = value.1; failure = nil; blockoutRecovery = nil
         } catch {
             guard generation == request, !Task.isCancelled, editor.workingRoot == home else { return }
             failure = error.localizedDescription
@@ -461,6 +464,31 @@ private struct ShotPlanningRow: View {
         guard let range else { return "" }
         let end = range.startTicks.addingReportingOverflow(range.durationTicks)
         return end.overflow ? "" : ProductionTimeEntry.seconds(end.partialValue, timebase: range.timebase)
+    }
+}
+
+enum ShotPlanningEditing: Equatable {
+    case editable, loading, unavailable, failed, approved, jobRunning, requestOpen
+
+    // A re-read of the displayed plan never locks it; the canonical writer rejects edits against a changed plan.
+    init(hasPlan: Bool, reading: Bool, failed: Bool, projectOpen: Bool, phasePending: Bool,
+         jobRunning: Bool, requestOpen: Bool) {
+        if failed { self = .failed }
+        else if !hasPlan { self = reading ? .loading : .unavailable }
+        else if !projectOpen { self = .unavailable }
+        else if !phasePending { self = .approved }
+        else if jobRunning { self = .jobRunning }
+        else if requestOpen { self = .requestOpen }
+        else { self = .editable }
+    }
+
+    var notice: String? {
+        switch self {
+        case .approved: "Reopen Shot Planning to change approved decisions."
+        case .jobRunning: "Wait for the current job before editing."
+        case .requestOpen: "Finish the open step in AI activity before editing."
+        case .editable, .loading, .unavailable, .failed: nil
+        }
     }
 }
 
