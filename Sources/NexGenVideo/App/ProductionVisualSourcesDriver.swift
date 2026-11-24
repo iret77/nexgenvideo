@@ -39,6 +39,7 @@ final class ProductionVisualSourcesDriver {
                              ready: () -> Bool = { true }) async throws {
         var previous: [NSRect] = []
         var previousRoot: NSView?, previousControl: NSView?
+        var previousClips: [NativeAcceptancePointer.ClipGeometry] = []
         var previousNumber = -1, samples = 0
         var stableSince = 0.0, stableFor = 0.0
         try await wait(requiredViewport == nil ? "native window presentation" : "minimum scene viewport") {
@@ -74,12 +75,14 @@ final class ProductionVisualSourcesDriver {
                 samples = 0
                 return false
             }
+            let clips = control.map { NativeAcceptancePointer.ClipGeometry.ancestors(of: $0) } ?? []
             let now = ProcessInfo.processInfo.systemUptime
-            if samples == 0 || previousNumber != number || previousRoot !== root || previousControl !== control || previous != geometry {
+            if samples == 0 || clips != previousClips || previousNumber != number || previousRoot !== root || previousControl !== control || previous != geometry {
                 previous = geometry
                 previousNumber = number
                 previousRoot = root
                 previousControl = control
+                previousClips = clips
                 stableSince = now
                 samples = 1
                 return false
@@ -93,6 +96,7 @@ final class ProductionVisualSourcesDriver {
         if let id {
             fields["control"] = id
             fields["controlFrame"] = rect(previous[3])
+            fields["clippingAncestors"] = previousClips.map(\.evidence)
         }
         try record(requiredViewport == nil ? "native window presentation stable" : "native scene viewport stable", fields: fields)
     }
@@ -135,6 +139,10 @@ final class ProductionVisualSourcesDriver {
     struct WheelResponse {
         let delta: Int32
         let displacement: CGFloat
+    }
+
+    static func ownsWheelHit(_ hit: NSView, scroll: NSScrollView) -> Bool {
+        (hit as? NSScrollView ?? hit.enclosingScrollView) === scroll
     }
 
     static func revealWheelDelta(distance: CGFloat, flipped: Bool, prior: WheelResponse?) -> Int32 {
@@ -188,23 +196,64 @@ final class ProductionVisualSourcesDriver {
             }
             let prior = previousClip === clip && previousDocument === document ? response : nil
             let delta = Self.revealWheelDelta(distance: distance, flipped: clip.isFlipped, prior: prior)
-            let center = NSPoint(x: scroll.bounds.midX, y: scroll.bounds.midY)
-            guard target.isKeyWindow, let hit = root.hitTest(scroll.convert(center, to: root.superview)),
-                  hit === scroll || hit.isDescendant(of: scroll) else { throw GateBlocked("The scroll viewport is covered: " + id) }
-            let point = target.convertPoint(toScreen: scroll.convert(center, to: nil))
+            let visibleArea = clip.visibleRect
+            func ownsWheel(at point: NSPoint) -> Bool {
+                guard target.isKeyWindow, clip.bounds.contains(point), visibleArea.contains(point),
+                      let hit = root.hitTest(clip.convert(point, to: root.superview)) else { return false }
+                return Self.ownsWheelHit(hit, scroll: scroll)
+            }
+            let fractions: [CGFloat] = [0.5, 0.25, 0.75, 0.1, 0.9]
+            let points = fractions.flatMap { y in
+                fractions.map { x in NSPoint(x: visibleArea.minX + visibleArea.width * x, y: visibleArea.minY + visibleArea.height * y) }
+            }
+            guard let wheelPoint = points.first(where: ownsWheel) else {
+                try record("scroll viewport has no exposed input point", fields: ["id": id, "viewport": rect(visibleArea),
+                    "window": target.windowNumber, "scroll": String(describing: ObjectIdentifier(scroll))])
+                throw GateBlocked("The scroll viewport has no exposed wheel target: " + id)
+            }
+            let point = target.convertPoint(toScreen: clip.convert(wheelPoint, to: nil))
             let before = clip.bounds.origin
+            let originalDocumentFrame = document.frame
             @MainActor final class ScrollCompletion {
+                var armed = false
                 var ended = false
             }
             let completion = ScrollCompletion()
             let observer = NotificationCenter.default.addObserver(forName: NSScrollView.didEndLiveScrollNotification,
                                                                   object: scroll, queue: .main) { _ in
-                MainActor.assumeIsolated { completion.ended = true }
+                MainActor.assumeIsolated { if completion.armed { completion.ended = true } }
             }
             defer { NotificationCenter.default.removeObserver(observer) }
-            try await postWheel(delta: delta, at: CGPoint(x: point.x, y: screen.frame.height - point.y), in: target,
-                                transaction: transaction)
-            try await wait("native scroll applied " + id, seconds: 2) { clip.bounds.origin != before }
+            let originalBounds = clip.bounds
+            let posted = try await postWheel(delta: delta, at: CGPoint(x: point.x, y: screen.frame.height - point.y),
+                                              in: target, transaction: transaction) {
+                guard target.contentView === root, target.isKeyWindow else { throw GateBlocked("The scroll window changed: " + id) }
+                root.layoutSubtreeIfNeeded()
+                guard self.probe(id, in: target) === view, scroll.contentView === clip, scroll.documentView === document,
+                      scroll.window === target, document.frame == originalDocumentFrame,
+                      !self.fullyVisible(view, root: root), clip.bounds == originalBounds,
+                      view.convert(view.bounds, to: clip) == frame,
+                      clip.visibleRect == visibleArea, target.convertPoint(toScreen: clip.convert(wheelPoint, to: nil)) == point,
+                      ownsWheel(at: wheelPoint) else { return false }
+                completion.armed = true
+                return true
+            }
+            if !posted {
+                try await waitForPresentation(of: target, control: id)
+                previousClip = nil
+                response = nil
+                continue
+            }
+            do {
+                try await wait("native scroll applied " + id, seconds: 2) { clip.bounds.origin != before }
+            } catch {
+                try record("native scroll displacement missing", fields: ["id": id, "delta": delta, "window": target.windowNumber,
+                    "before": rect(originalBounds), "after": rect(clip.bounds), "targetBefore": rect(frame),
+                    "targetAfter": rect(view.convert(view.bounds, to: clip)), "documentFrame": rect(document.frame),
+                    "sameControl": self.probe(id, in: target) === view, "sameDocument": scroll.documentView === document,
+                    "sameScrollWindow": scroll.window === target, "nativeScrollEnded": completion.ended])
+                throw error
+            }
             var previousGeometry: [NSRect] = []
             var stableSince: TimeInterval?
             var stableSamples = 0
@@ -251,15 +300,22 @@ final class ProductionVisualSourcesDriver {
     }
 
     func postWheel(delta: Int32, at location: CGPoint, in target: NSWindow, transaction: UUID? = nil) async throws {
+        _ = try await postWheel(delta: delta, at: location, in: target, transaction: transaction) { true }
+    }
+
+    private func postWheel(delta: Int32, at location: CGPoint, in target: NSWindow, transaction: UUID?,
+                           ifNeeded: () throws -> Bool) async throws -> Bool {
         let token = try transaction ?? NativeAcceptancePointer.claim()
         defer { if transaction == nil { NativeAcceptancePointer.release(token) } }
         guard CGPreflightPostEventAccess() else { throw GateBlocked("Native wheel input needs event-posting permission.") }
         try await ProductionNativeReadingAcceptance.movePointer(to: location, window: target, driver: self, transaction: token)
+        guard try ifNeeded() else { return false }
         for event in try HangDiagnosticReplay.scrollGestureEvents(delta: delta, location: location) {
             guard let input = event.cgEvent else { throw GateBlocked("The native wheel event is unavailable.") }
             input.post(tap: .cghidEventTap)
             try await Task.sleep(for: .milliseconds(30))
         }
+        return true
     }
 
     func measureFont(_ id: String, in target: NSWindow, scale: Double) async throws -> Double {
@@ -300,11 +356,27 @@ final class ProductionVisualSourcesDriver {
         stage = "click " + id
         let sheetParent = editingText ? target.sheetParent : nil
         try await reveal(id, in: target, transaction: transaction)
-        if let sheetParent {
-            try await waitForPresentation(of: target, control: id)
-            guard target.sheetParent === sheetParent, sheetParent.attachedSheet === target, target.isKeyWindow else {
-                throw GateBlocked("The text field's sheet changed during presentation: " + id)
+        let editing: NativeAcceptancePointer.FieldTarget
+        if editingText, let field = editableOwner(id, in: target) as? NSTextField {
+            editing = .field(field, requiredEditor: nil)
+        } else {
+            editing = editingText ? .unfocused : .ordinary
+        }
+        var fieldPresentation: NativeAcceptancePointer.FieldPresentation?
+        if editingText {
+            guard let marker = probe(id, in: target) else { throw GateBlocked("The native text field disappeared: " + id) }
+            var presentation = NativeAcceptancePointer.FieldPresentation(sheetParent: sheetParent)
+            do {
+                try await waitForPresentation(of: target, control: id) {
+                    self.probe(id, in: target) === marker
+                        && presentation.observe(marker, in: target, fraction: fraction, editing: editing)
+                }
+            } catch {
+                try record("text field presentation failed", fields: ["id": id, "lastObservation": presentation.evidence])
+                throw error
             }
+            try record("text field presentation", fields: ["id": id, "target": presentation.evidence])
+            fieldPresentation = presentation
             stage = "click " + id
         }
         let readiness: NativeAcceptancePointer.LocalButtonReadiness?
@@ -331,19 +403,13 @@ final class ProductionVisualSourcesDriver {
         guard hit != nil else {
             throw GateBlocked("The actual pointer target is unavailable: " + id)
         }
-        let editing: NativeAcceptancePointer.FieldTarget
-        if editingText, let field = editableOwner(id, in: target) as? NSTextField {
-            editing = .field(field, requiredEditor: nil)
-        } else {
-            editing = editingText ? .unfocused : .ordinary
-        }
         let index = interactions.count
         interactions.append(["kind": "pointer", "id": id, "window": target.windowNumber,
             "frame": rect(frame), "point": [point.x, point.y], "hitClass": String(describing: type(of: hit!)),
             "windowPoint": [windowPoint.x, windowPoint.y]])
         do {
             try await NativeAcceptancePointer.click(view, window: target, fraction: fraction, token: transaction,
-                                                    buttonReadiness: readiness, editing: editing, preDown: preDown) { evidence in
+                                                    buttonReadiness: readiness, editing: editing, fieldPresentation: fieldPresentation, preDown: preDown) { evidence in
                 self.interactions[index]["nativeInput"] = evidence
                 self.interactions[index]["localMonitorEvents"] = (evidence["received"] as? [[String: Any]])?.filter {
                     [NSEvent.EventType.leftMouseDown.rawValue, NSEvent.EventType.leftMouseUp.rawValue].contains($0["type"] as? UInt ?? 0)
@@ -794,8 +860,8 @@ final class ProductionVisualSourcesDriver {
         return ["keyDown": down, "keyUp": up]
     }
 
-    func menu(_ id: String, title: String, in target: NSWindow) async throws {
-        try await selectMenu(id, path: [title], context: false, in: target)
+    func menu(_ id: String, title: String, in target: NSWindow, preDown: (() -> Bool)? = nil) async throws {
+        try await selectMenu(id, path: [title], context: false, in: target, preDown: preDown)
     }
 
     func menu(_ id: String, path: [String], in target: NSWindow) async throws {
@@ -811,7 +877,7 @@ final class ProductionVisualSourcesDriver {
     }
 
     private func selectMenu(_ id: String, path: [String], context: Bool, in target: NSWindow,
-                            open: (() throws -> Void)? = nil) async throws {
+                            preDown: (() -> Bool)? = nil, open: (() throws -> Void)? = nil) async throws {
         guard !path.isEmpty else { throw GateBlocked("A native menu choice needs an item.") }
         @MainActor final class Tracking {
             var titles: [[String]] = []
@@ -863,7 +929,7 @@ final class ProductionVisualSourcesDriver {
                 }
                 NSApp.postEvent(event, atStart: false)
             }
-        } else { try await click(id, in: target) }
+        } else { try await click(id, in: target, preDown: preDown) }
         try await wait("native menu " + path.joined(separator: " / ")) { tracking.closed || tracking.error != nil }
         if let error = tracking.error { tracking.root?.cancelTracking(); throw GateBlocked(error) }
         guard tracking.titles.count == path.count else { throw GateBlocked("The complete native menu path was not observed.") }
@@ -1696,6 +1762,33 @@ enum NativeAcceptancePointer {
         }
     }
 
+    fileprivate struct ClipGeometry: Equatable {
+        let clip: ObjectIdentifier
+        let bounds: NSRect
+        let probeFrame: NSRect
+        let document: ObjectIdentifier?
+        let documentFrame: NSRect?
+
+        @MainActor static func ancestors(of probe: NSView) -> [Self] {
+            var result: [Self] = []
+            var parent = probe.superview
+            while let view = parent {
+                if let clip = view as? NSClipView {
+                    let document = clip.documentView
+                    result.append(Self(clip: ObjectIdentifier(clip), bounds: clip.bounds, probeFrame: probe.convert(probe.bounds, to: clip),
+                                       document: document.map { ObjectIdentifier($0) }, documentFrame: document?.frame))
+                }
+                parent = view.superview
+            }
+            return result
+        }
+
+        var evidence: [String: Any] {
+            ["object": String(describing: clip), "bounds": [bounds.minX, bounds.minY, bounds.width, bounds.height],
+             "probeFrame": [probeFrame.minX, probeFrame.minY, probeFrame.width, probeFrame.height]]
+        }
+    }
+
     fileprivate struct Target {
         let window: NSWindow
         let root: NSView
@@ -1715,7 +1808,7 @@ enum NativeAcceptancePointer {
         let accessibilityFrame: NSRect
         let kind: String
         let hosting: NSView?
-        let clippingAncestors: [[String: Any]]
+        let clippingAncestors: [ClipGeometry]
 
         var evidence: [String: Any] {
             ["windowObject": String(describing: ObjectIdentifier(window)),
@@ -1737,7 +1830,7 @@ enum NativeAcceptancePointer {
              "windowBounds": [cgFrame.minX, cgFrame.minY, cgFrame.width, cgFrame.height],
              "accessibilityRole": accessibilityRole.rawValue,
              "accessibilityFrame": [accessibilityFrame.minX, accessibilityFrame.minY, accessibilityFrame.width, accessibilityFrame.height],
-             "kind": kind, "clippingAncestors": clippingAncestors]
+             "kind": kind, "clippingAncestors": clippingAncestors.map(\.evidence)]
         }
     }
 
@@ -1859,18 +1952,9 @@ enum NativeAcceptancePointer {
               frame.width > 0, frame.height > 0, root.bounds.contains(frame) else {
             throw GateBlocked("The native pointer target has no complete finite frame.")
         }
-        var clippingAncestors: [[String: Any]] = []
-        var parent = probe.superview
-        while let view = parent {
-            if let clip = view as? NSClipView {
-                let bounds = clip.bounds
-                let probeFrame = probe.convert(probe.bounds, to: clip)
-                clippingAncestors.append(["object": String(describing: ObjectIdentifier(clip)),
-                    "bounds": [bounds.minX, bounds.minY, bounds.width, bounds.height],
-                    "probeFrame": [probeFrame.minX, probeFrame.minY, probeFrame.width, probeFrame.height]])
-                guard bounds.contains(probeFrame) else { throw GateBlocked("The native pointer target is clipped.") }
-            }
-            parent = view.superview
+        let clippingAncestors = ClipGeometry.ancestors(of: probe)
+        guard clippingAncestors.allSatisfy({ $0.bounds.contains($0.probeFrame) }) else {
+            throw GateBlocked("The native pointer target is clipped.")
         }
         let local = NSPoint(x: probe.bounds.minX + probe.bounds.width * fraction.x,
                             y: probe.bounds.minY + probe.bounds.height * fraction.y)
@@ -2055,6 +2139,46 @@ enum NativeAcceptancePointer {
         return comparisons.values.allSatisfy { $0 }
     }
 
+    @MainActor struct FieldPresentation {
+        let sheetParent: NSWindow?
+        private var previous: Target?
+        private(set) var evidence: [String: Any] = [:]
+
+        init(sheetParent: NSWindow?) {
+            self.sheetParent = sheetParent
+        }
+
+        private func hasOriginalParent(_ window: NSWindow) -> Bool {
+            window.sheetParent === sheetParent && (sheetParent == nil || sheetParent?.attachedSheet === window)
+        }
+
+        mutating func observe(_ marker: NSView, in window: NSWindow, fraction: NSPoint, editing: FieldTarget) -> Bool {
+            var rejection: [String: Any] = [:]
+            do {
+                guard hasOriginalParent(window) else { throw GateBlocked("The text field's parent window changed.") }
+                let sample = try NativeAcceptancePointer.target(marker, window: window, fraction: fraction, editing: editing,
+                    windowFailure: { rejection = $0 }, accessibilityFailure: { rejection = $0 })
+                let unchanged = matches(sample)
+                previous = sample
+                evidence = sample.evidence
+                return unchanged
+            } catch {
+                rejection["reason"] = String(describing: error)
+                evidence = rejection
+                previous = nil
+                return false
+            }
+        }
+
+        fileprivate func matches(_ sample: Target) -> Bool {
+            guard let previous, hasOriginalParent(sample.window), previous.clippingAncestors == sample.clippingAncestors,
+                  previous.fieldOwner === sample.fieldOwner, previous.fieldEditor === sample.fieldEditor,
+                  previous.screenPoint == sample.screenPoint else { return false }
+            var comparisons: [String: Bool] = [:]
+            return NativeAcceptancePointer.same(previous, sample, comparisons: &comparisons)
+        }
+    }
+
     @MainActor struct LocalButtonReadiness {
         let id: String
         let title: String
@@ -2144,7 +2268,7 @@ enum NativeAcceptancePointer {
 
     static func click(_ probe: NSView, window: NSWindow, fraction: NSPoint,
                       token: UUID, buttonReadiness: LocalButtonReadiness? = nil,
-                      editing: FieldTarget = .ordinary, preDown: (() -> Bool)? = nil,
+                      editing: FieldTarget = .ordinary, fieldPresentation: FieldPresentation? = nil, preDown: (() -> Bool)? = nil,
                       record: ([String: Any]) throws -> Void) async throws {
         guard owner == token, CGPreflightPostEventAccess(),
               !CGEventSource.buttonState(.combinedSessionState, button: .left) else {
@@ -2164,6 +2288,9 @@ enum NativeAcceptancePointer {
         }
         let original = try target(probe, window: window, fraction: fraction, editing: editing, windowFailure: reportWindowFailure,
                                   accessibilityFailure: reportAccessibilityFailure)
+        if let fieldPresentation, !fieldPresentation.matches(original) {
+            throw GateBlocked("The settled text field changed before movement.")
+        }
         if let buttonReadiness, !buttonReadiness.matches(original) {
             try record(["kind": "native-pointer", "status": "refused-unsettled-button",
                 "settledButton": buttonReadiness.evidence, "originalTarget": original.evidence,
