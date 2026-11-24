@@ -17,12 +17,16 @@ struct ShotPlanningView: View {
 
     private var editing: ShotPlanningEditing {
         let root = editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
+        let agent = editor.agentService
+        let decisionOpen = agent.pendingDialog != nil || agent.currentPipelineRepairFailure != nil
+            || agent.pendingSpendApproval != nil || editor.generationBatchCoordinator.pending != nil
+            || agent.pendingGateApproval != nil
         _ = editor.pipelinePhaseExecution.snapshot
         return .init(hasPlan: draft != nil && storyboard != nil, reading: loading, failed: failure != nil,
             projectOpen: root != nil, phasePending: editor.projectState?.nextPhaseName == "shot_planning",
-            jobRunning: editor.agentService.isStreaming
+            jobRunning: agent.isStreaming
                 || root.map { editor.pipelinePhaseRunCoordinator.runningPhase(projectRoot: $0) != nil } ?? false,
-            requestOpen: editor.agentService.isComposerBlocked)
+            decisionOpen: decisionOpen, followUpPending: agent.isComposerBlocked && !decisionOpen)
     }
 
     private var editable: Bool { editing == .editable }
@@ -468,17 +472,18 @@ private struct ShotPlanningRow: View {
 }
 
 enum ShotPlanningEditing: Equatable {
-    case editable, loading, unavailable, failed, approved, jobRunning, requestOpen
+    case editable, loading, unavailable, failed, approved, jobRunning, decisionOpen, followUpPending
 
     // A re-read of the displayed plan never locks it; the canonical writer rejects edits against a changed plan.
     init(hasPlan: Bool, reading: Bool, failed: Bool, projectOpen: Bool, phasePending: Bool,
-         jobRunning: Bool, requestOpen: Bool) {
+         jobRunning: Bool, decisionOpen: Bool, followUpPending: Bool) {
         if failed { self = .failed }
         else if !hasPlan { self = reading ? .loading : .unavailable }
         else if !projectOpen { self = .unavailable }
         else if !phasePending { self = .approved }
         else if jobRunning { self = .jobRunning }
-        else if requestOpen { self = .requestOpen }
+        else if decisionOpen { self = .decisionOpen }
+        else if followUpPending { self = .followUpPending }
         else { self = .editable }
     }
 
@@ -486,7 +491,8 @@ enum ShotPlanningEditing: Equatable {
         switch self {
         case .approved: "Reopen Shot Planning to change approved decisions."
         case .jobRunning: "Wait for the current job before editing."
-        case .requestOpen: "Finish the open step in AI activity before editing."
+        case .decisionOpen: "Respond in Production, below the current phase, before editing."
+        case .followUpPending: "Wait for the agent to continue in AI activity before editing."
         case .editable, .loading, .unavailable, .failed: nil
         }
     }
