@@ -312,9 +312,9 @@ enum ProductionV2PlanningAcceptance {
         try driver.capture("animatic-second-moment", target: driver.window)
         let playingWhenLeaving = playback.isPlaying
         guard playingWhenLeaving, playback.failure == nil else { throw failed("The Animatic stopped or failed before the native tab change.") }
-        try await driver.click("storyboard.view", in: driver.window, enabled: false, fraction: NSPoint(x: 0.25, y: 0.5))
+        try await driver.segment("storyboard.view", title: "Board", titles: ["Board", "Animatic"], expected: "board", in: driver.window)
         try await driver.wait("leaving the playing Animatic stops its actual playback") {
-            driver.state("storyboard.view", in: driver.window) == false && !playback.isPlaying && editor.storyboardAnimaticPlayback == nil
+            driver.text("storyboard.view", in: driver.window) == "board" && !playback.isPlaying && editor.storyboardAnimaticPlayback == nil
         }
         guard playback.failure == nil, playback.tick < playback.endTick else { throw failed("The Animatic failed or reached its natural end before the tab-change observation.") }
         try driver.capture("animatic-left-stopped", target: driver.window)

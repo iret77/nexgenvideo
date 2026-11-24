@@ -2970,10 +2970,10 @@ extension WorkspaceUIAcceptance {
             try await activate("animatic.play")
             try await require({ editor.storyboardAnimaticPlayback?.isPlaying == false }, "The Animatic did not pause.")
             try capture("animatic")
-            guard click(identifier: "storyboard.view", in: window, fraction: NSPoint(x: 0.25, y: 0.5)) == nil else {
-                throw ToolError("The Board switch is unreachable.")
-            }
-            try await require({ probeState(identifier: "storyboard.view", in: window) == false }, "The Board switch did not return to sketches.")
+            try await ProductionVisualSourcesDriver(window: window, output: evidenceURL, name: "scale-\(scaleLabel(scale))-planning-storyboard-view")
+                .segment("storyboard.view", title: "Board", titles: ["Board", "Animatic"], expected: "board", in: window)
+            try await require({ probeText(identifier: "storyboard.view", in: window) == "board"
+                && editor.storyboardAnimaticPlayback == nil }, "The Board switch did not return to sketches.")
             try requestApproval("storyboard", path: StoryboardV2.currentPath)
             editor.showsAgentActivity = true
             try await require({ probeState(identifier: "agent.gate.approve", in: window) == true
