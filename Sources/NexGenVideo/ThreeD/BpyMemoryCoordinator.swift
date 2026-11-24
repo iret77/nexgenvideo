@@ -40,7 +40,13 @@ nonisolated final class BpyMemoryCoordinator: @unchecked Sendable {
         let authorizationSamples: [Sample]
     }
 
-
+    enum SelftestSensor: Sendable { case normal, warning, critical, missing, stalled }
+    private struct Selftest: Sendable {
+        let owners: Set<UUID>
+        var generation = UUID()
+        var mode: SelftestSensor = .normal
+        var warningOnWorker = false
+    }
 
     static let shared = BpyMemoryCoordinator()
     static let policy = "system-pressure-v1"
@@ -67,6 +73,7 @@ nonisolated final class BpyMemoryCoordinator: @unchecked Sendable {
     private var clockFailed = false
     private var childReleases: UInt64 = 0
     private var retiringOwners = Set<UUID>()
+    private var selftest: Selftest?
     private struct Consumer {
         let owner: UUID
         let cancellation: BpyOperationCancellation
@@ -86,6 +93,7 @@ nonisolated final class BpyMemoryCoordinator: @unchecked Sendable {
 
     func register(owner: UUID, generation: UUID) throws {
         try lock.withLock {
+            guard selftest == nil || selftest?.owners.contains(owner) == true else { throw BpyAdmissionFailure.closed }
             try state.register(owner: owner, generation: generation)
         }
     }
@@ -187,6 +195,11 @@ nonisolated final class BpyMemoryCoordinator: @unchecked Sendable {
             childReleases += 1
             if let authorizedAt = state.sampleAt, let sample = samples.last(where: { $0.clock.awake == authorizedAt }) {
                 authorizationSamples[id, default: []].append(sample)
+            }
+            if child == .worker, let owner = state.permits[id]?.identity.owner, selftest?.owners.contains(owner) == true,
+               selftest?.warningOnWorker == true {
+                selftest?.mode = .warning
+                selftest?.generation = UUID()
             }
             return try receiptLocked(id)
         }
@@ -348,9 +361,57 @@ nonisolated final class BpyMemoryCoordinator: @unchecked Sendable {
             authorizationSamples: authorizationSamples[id] ?? [])
     }
 
+    func beginSelftest(owner: UUID, warningOnWorker: Bool = false) throws {
+        try beginSelftest(owners: [owner], warningOnWorker: warningOnWorker)
+    }
+
+    func beginSelftest(owners: Set<UUID>, warningOnWorker: Bool = false) throws {
+        try lock.withLock {
+            guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false,
+                  !owners.isEmpty, owners.count <= bpyRuntimeServiceNames.count,
+                  selftest == nil, !state.cleanupFailed, !state.sensorUnavailable,
+                  consumers.values.allSatisfy({ $0.stop != nil || owners.contains($0.owner) }),
+                  state.permits.values.allSatisfy({ $0.cleanupComplete || owners.contains($0.identity.owner) }) else {
+                throw BpyAdmissionFailure.closed
+            }
+            selftest = Selftest(owners: owners, warningOnWorker: warningOnWorker)
+        }
+    }
+
+    func selftestSensor(owner: UUID, mode: SelftestSensor) throws {
+        try lock.withLock {
+            guard selftest?.owners.contains(owner) == true else { throw BpyAdmissionFailure.closed }
+            selftest?.mode = mode; selftest?.generation = UUID()
+        }
+        sensorQueue.async { [weak self] in self?.sample() }
+    }
+
     func selftestReleaseCount() throws -> UInt64 {
         guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false else { throw BpyAdmissionFailure.closed }
         return lock.withLock { childReleases }
+    }
+
+    @discardableResult
+    func selftestCriticalEvent(owner: UUID) throws -> BpyClockReading {
+        guard let now = readClock() else { throw BpyAdmissionFailure.sensorUnavailable }
+        try lock.withLock {
+            guard selftest?.owners.contains(owner) == true else { throw BpyAdmissionFailure.closed }
+            let flags = DispatchSource.MemoryPressureEvent.normal.rawValue | DispatchSource.MemoryPressureEvent.critical.rawValue
+            appendSample(.init(clock: now, pressure: UInt32(truncatingIfNeeded: flags), error: nil, source: "selftest-event"))
+            state.notified(flags: flags, at: now)
+        }
+        deliverEffects()
+        return now
+    }
+
+    func endSelftest(owner: UUID) {
+        lock.withLock { if selftest?.owners.contains(owner) == true { selftest = nil } }
+        sensorQueue.async { [weak self] in self?.sample() }
+    }
+
+    func diagnosticCleanupFailed() throws -> Bool {
+        guard ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false else { throw BpyAdmissionFailure.closed }
+        return lock.withLock { state.cleanupFailed }
     }
 
     private var hasWork: Bool {
@@ -364,7 +425,7 @@ nonisolated final class BpyMemoryCoordinator: @unchecked Sendable {
         guard let clock = readClock() else { throw BpyAdmissionFailure.sensorUnavailable }
         let id = UUID()
         try lock.withLock {
-            guard !state.closedOwners.contains(owner) else { throw BpyAdmissionFailure.closed }
+            guard !state.closedOwners.contains(owner), selftest == nil || selftest?.owners.contains(owner) == true else { throw BpyAdmissionFailure.closed }
             consumers[id] = Consumer(owner: owner, cancellation: cancellation, began: clock.awake)
         }
         let work = BpyConsumerWork(id: id, coordinator: self, cancellation: cancellation)
@@ -482,11 +543,24 @@ nonisolated final class BpyMemoryCoordinator: @unchecked Sendable {
 
     private func sample() {
         if lock.withLock({ state.sensorUnavailable }) { return }
-        let reading = sensor()
+        let injected = lock.withLock { selftest }
+        let reading: SensorReading
+        if let injected {
+            switch injected.mode {
+            case .normal: reading = .init(level: .normal, error: nil, permanent: false)
+            case .warning: reading = .init(level: .warning, error: nil, permanent: false)
+            case .critical: reading = .init(level: .critical, error: nil, permanent: false)
+            case .missing: reading = .init(level: nil, error: ENOENT, permanent: true)
+            case .stalled:
+                _ = DispatchSemaphore(value: 0).wait(timeout: .now() + 3)
+                reading = .init(level: nil, error: ETIMEDOUT, permanent: false)
+            }
+        } else { reading = sensor() }
         guard let now = readClock() else { return }
         lock.withLock {
+            guard injected?.generation == selftest?.generation else { return }
             appendSample(.init(clock: now, pressure: reading.level?.rawValue,
-                error: reading.error, source: "sysctl", byteCount: reading.byteCount))
+                error: reading.error, source: injected == nil ? "sysctl" : "selftest-sensor", byteCount: reading.byteCount))
             state.sampled(reading.level, permanent: reading.permanent, at: now)
         }
         deliverEffects()
