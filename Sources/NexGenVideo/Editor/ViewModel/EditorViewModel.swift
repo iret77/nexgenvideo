@@ -818,6 +818,12 @@ final class EditorViewModel {
         workflowHandoffPending = false
     }
 
+    // A kickoff that could not be sent while the agent backend was unavailable is sent once it becomes ready.
+    private func retryPendingWorkflowHandoff() {
+        guard workflowHandoffPending else { return }
+        Task { await refreshEngineState() }
+    }
+
     /// Whether every production-start affordance must be disabled.
     var productionStarted: Bool { productionStarting || hasProductionPipeline }
 
@@ -1585,6 +1591,7 @@ final class EditorViewModel {
             }
         )
         agentService.editor = self
+        agentService.onBackendReady = { [weak self] in self?.retryPendingWorkflowHandoff() }
         searchIndex.assetsProvider = { [weak self] in self?.mediaAssets ?? [] }
 
         // Files and engine state can change outside the app only while it is inactive; in-app panels and sheets are not external changes.

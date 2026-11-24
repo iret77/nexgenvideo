@@ -6,7 +6,7 @@ import Observation
 @MainActor
 final class AgentService {
 
-    private var apiKey: String = ""
+    private var apiKey: String = "" { didSet { noteBackendReadiness() } }
     private var apiKeyObserver: NSObjectProtocol?
     private var backendObserver: NSObjectProtocol?
     private var claudeStatusObserver: NSObjectProtocol?
@@ -22,8 +22,10 @@ final class AgentService {
     private var modelDiscoveryGeneration = 0
     private let apiKeyLoader: @Sendable () async -> String?
 
-    private(set) var backend: AgentBackend
-    private(set) var claudeStatus: ClaudeCodeLocator.Status?
+    private(set) var backend: AgentBackend { didSet { noteBackendReadiness() } }
+    private(set) var claudeStatus: ClaudeCodeLocator.Status? { didSet { noteBackendReadiness() } }
+    @ObservationIgnored private var backendWasReady = false
+    @ObservationIgnored var onBackendReady: (@MainActor () -> Void)?
     private(set) var isCheckingAPIKey = true
     private(set) var isCheckingClaude = false
     private var claudeStatusGeneration = 0
@@ -85,20 +87,30 @@ final class AgentService {
         ) { [weak self] notification in
             let status = notification.object as? ClaudeCodeLocator.Status
             MainActor.assumeIsolated {
-                guard let self,
-                      self.backend == .claudeCode,
-                      let status else { return }
-                self.claudeStatusGeneration &+= 1
-                self.claudeStatus = status
-                self.isCheckingClaude = false
-                if status.isAuthenticated, case .authenticationRequired? = self.streamError {
-                    self.streamError = nil
-                }
+                guard let status else { return }
+                self?.applyClaudeCodeStatus(status)
             }
         }
         if refreshBackendStatusOnInit {
             refreshBackendStatus()
         }
+    }
+
+    func applyClaudeCodeStatus(_ status: ClaudeCodeLocator.Status) {
+        guard backend == .claudeCode else { return }
+        claudeStatusGeneration &+= 1
+        claudeStatus = status
+        isCheckingClaude = false
+        if status.isAuthenticated, case .authenticationRequired? = streamError {
+            streamError = nil
+        }
+    }
+
+    private func noteBackendReadiness() {
+        let ready = canStream
+        guard ready != backendWasReady else { return }
+        backendWasReady = ready
+        if ready { onBackendReady?() }
     }
 
     func reloadAPIKey() {
