@@ -2760,7 +2760,7 @@ extension NativePointerInteractionTests {
                 for _ in 0..<6 {
                     if viewport.contains(target) { break }
                     let delta = ProductionVisualSourcesDriver.revealWheelDelta(
-                        distance: target.midY - viewport.midY, flipped: flipped, prior: prior)
+                        distance: target.midY - viewport.midY, flipped: flipped, viewport: viewport.height, prior: prior)
                     let origin = viewport.minY
                     let travel = CGFloat(delta) * 4.43 * (flipped ? -1 : 1)
                     viewport.origin.y = min(891.5, max(0.5, origin + travel))
@@ -3376,6 +3376,7 @@ extension NativePointerInteractionTests {
 
     private func verifyRevealOfReplacedLazyControls() async throws {
         try await verifyLazyStoryboardMenu()
+        try await verifyFirstWheelStepKeepsLazyRows()
         let fixture = try await Fixture("replaced-reveal-target")
         defer { fixture.close() }
         let window = fixture.window, driver = fixture.driver
@@ -3402,5 +3403,101 @@ extension NativePointerInteractionTests {
         #expect(wheels.allSatisfy { $0["controlReplaced"] as? Bool == true })
         #expect(target.replacements >= wheels.count && target.current !== original)
         #expect(clip.bounds.contains(target.current.convert(target.current.bounds, to: clip)))
+    }
+}
+
+extension NativePointerInteractionTests {
+    // Moves 7 pt per posted wheel unit, the rate the signed Board run measured; the first gesture may move faster.
+    @MainActor private final class FixedRateScroll: NSScrollView {
+        var firstGestureRate: CGFloat = 7
+        private(set) var gestures: [Int64] = []
+        private var units: Int64 = 0
+
+        override func scrollWheel(with event: NSEvent) {
+            let delta = event.cgEvent?.getIntegerValueField(.scrollWheelEventPointDeltaAxis1) ?? 0
+            units += delta
+            let clip = contentView
+            if delta != 0, let document = documentView {
+                let rate = gestures.isEmpty ? firstGestureRate : 7
+                let limit = max(0, document.frame.height - clip.bounds.height)
+                clip.scroll(to: NSPoint(x: clip.bounds.minX, y: min(limit, max(0, clip.bounds.minY - CGFloat(delta) * rate))))
+                reflectScrolledClipView(clip)
+            }
+            guard event.phase.contains(.ended) else { return }
+            gestures.append(units)
+            units = 0
+            NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: self)
+        }
+    }
+
+    // Keeps its row only within 60 pt of the viewport, as a lazy stack does.
+    @MainActor private final class LazyRow {
+        let document = FlippedDocument(frame: NSRect(x: 0, y: 0, width: 360, height: 1600))
+        let frame = NSRect(x: 40, y: 150, width: 160, height: 24)
+        private(set) var current: AppRelaunchClickProbeView?
+        private(set) var drops = 0
+
+        func update(_ viewport: NSRect) {
+            let materialized = frame.intersects(viewport.insetBy(dx: 0, dy: -60))
+            if materialized, current == nil {
+                let view = AppRelaunchClickProbeView(frame: frame)
+                view.identifier = NSUserInterfaceItemIdentifier("lazy.wheel.target")
+                view.acceptanceState = true
+                document.addSubview(view)
+                current = view
+            } else if !materialized, let view = current {
+                view.removeFromSuperview()
+                current = nil
+                drops += 1
+            }
+        }
+    }
+
+    private func revealLazyRow(firstGestureRate: CGFloat) async throws -> (wheels: [[String: Any]], row: LazyRow) {
+        let fixture = try await Fixture("lazy-wheel-" + String(Int(firstGestureRate)))
+        defer { fixture.close() }
+        let window = fixture.window, driver = fixture.driver
+        let root = NSView(frame: NSRect(origin: .zero, size: window.contentLayoutRect.size))
+        let scroll = FixedRateScroll(frame: NSRect(x: 0, y: root.bounds.height - 160, width: root.bounds.width, height: 120))
+        scroll.firstGestureRate = firstGestureRate
+        scroll.borderType = .noBorder
+        scroll.automaticallyAdjustsContentInsets = false
+        scroll.hasVerticalScroller = true
+        let row = LazyRow()
+        scroll.documentView = row.document
+        root.addSubview(scroll)
+        window.contentView = root
+        let clip = scroll.contentView
+        clip.scroll(to: .zero)
+        scroll.reflectScrolledClipView(clip)
+        row.update(clip.bounds)
+        clip.postsBoundsChangedNotifications = true
+        let observer = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip,
+                                                              queue: .main) { _ in MainActor.assumeIsolated { row.update(clip.bounds) } }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        try await driver.waitForPresentation(of: window, control: "lazy.wheel.target")
+        try #require(clip.bounds.height == 120 && clip.bounds.minY == 0 && row.current != nil)
+        let start = driver.interactions.count
+        try await driver.reveal("lazy.wheel.target", in: window)
+        let shown = try #require(row.current)
+        #expect(clip.bounds.contains(shown.convert(shown.bounds, to: clip)))
+        let wheels = driver.interactions.dropFirst(start).filter {
+            $0["kind"] as? String == "wheel" && $0["id"] as? String == "lazy.wheel.target"
+        }
+        #expect(scroll.gestures == wheels.compactMap { wheel in (wheel["delta"] as? Int32).map { Int64($0) } })
+        return (wheels, row)
+    }
+
+    private func verifyFirstWheelStepKeepsLazyRows() async throws {
+        let calibrated = try await revealLazyRow(firstGestureRate: 7)
+        // An uncalibrated step of 100 units carried this 120 pt viewport 700 pt past the row and dropped it.
+        let first = try #require(calibrated.wheels.first?["delta"] as? Int32)
+        #expect(first < 0 && abs(first) <= 15)
+        #expect(calibrated.row.drops == 0 && !calibrated.wheels.contains { $0["controlLost"] as? Bool == true })
+
+        let overshot = try await revealLazyRow(firstGestureRate: 40)
+        #expect(overshot.row.drops >= 1)
+        #expect(overshot.wheels.first?["controlLost"] as? Bool == true)
+        #expect(overshot.wheels.count >= 2 && overshot.wheels.last?["controlLost"] as? Bool == false)
     }
 }
