@@ -404,13 +404,14 @@ private extension SequenceReviewCategoryV1 {
 
 private struct ReviewAcceptanceProbe: View {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.pipelineAcceptanceProbes) private var forced
     let identifier: String
     let state: Bool?
     let text: String?
 
     var body: some View {
-        if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested
-            || ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"] != nil {
+        if forced ?? (WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested
+            || ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"] != nil) {
             AppRelaunchClickProbe(identifier: identifier, acceptanceState: state ?? isEnabled, acceptanceText: text)
                 .allowsHitTesting(false)
         }

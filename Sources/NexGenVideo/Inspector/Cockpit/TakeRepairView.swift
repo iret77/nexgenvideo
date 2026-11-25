@@ -48,7 +48,7 @@ struct TakeRepairView: View {
     }
 
     var body: some View {
-        DisclosureGroup {
+        DisclosureSection("Iteration decision", probe: "take.repair.open") {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 if !hasCurrentReview {
                     Text("Complete and save the take review before recording an iteration decision.")
@@ -67,7 +67,7 @@ struct TakeRepairView: View {
                     .reviewAcceptanceProbe("take.repair.operation", state: !busy, text: operation.rawValue)
                 TextField("Explain the single change, clean rewrite or stop", text: $reason).disabled(busy)
                     .reviewAcceptanceProbe("take.repair.reason", state: !busy, text: reason)
-                DisclosureGroup {
+                DisclosureSection("Iteration limits", probe: "take.repair.limits") {
                     TextField("Rolls per prompt revision", value: $policy.rollsPerPrompt, format: .number)
                         .reviewAcceptanceProbe("take.repair.rolls", text: String(policy.rollsPerPrompt))
                     TextField("Failed iterations before clean rewrite", value: $policy.failuresBeforeRewrite, format: .number)
@@ -78,8 +78,6 @@ struct TakeRepairView: View {
                         .reviewAcceptanceProbe("take.repair.channels", text: String(policy.channelsBeforeModelLimit))
                     TextField("Iterations before simplifying the shot", value: $policy.iterationsBeforeSimplification, format: .number)
                         .reviewAcceptanceProbe("take.repair.simplify-after", text: String(policy.iterationsBeforeSimplification))
-                } label: {
-                    Text("Iteration limits").reviewAcceptanceProbe("take.repair.limits")
                 }.disabled(busy)
                 Button("Save iteration decision") {
                     let choice = operation, explanation = reason, limits = policy
@@ -108,8 +106,6 @@ struct TakeRepairView: View {
                 }
                 if let message { Text(message).foregroundStyle(AppTheme.Text.secondaryColor).reviewAcceptanceProbe("take.repair.message", text: message) }
             }.padding(.vertical, AppTheme.Spacing.sm)
-        } label: {
-            Text("Iteration decision").reviewAcceptanceProbe("take.repair.open")
         }
         .task(id: loadIdentity) { await load() }
     }

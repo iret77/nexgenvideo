@@ -3243,39 +3243,39 @@ extension NativePointerInteractionTests {
 @Suite("Native disclosure discovery", .serialized)
 @MainActor
 struct NativeDisclosureInteractionTests {
-    @MainActor private struct Disclosures: View {
-        @State private var camera = false
+    @MainActor private struct Sections: View {
+        @State var camera: Bool
 
         var body: some View {
-            VStack(alignment: .leading, spacing: 12) {
-                DisclosureGroup(isExpanded: $camera) {
-                    Text("Blocking").background {
-                        AppRelaunchClickProbe(identifier: "disclosure.camera.content", acceptanceState: true).allowsHitTesting(false)
-                    }
-                } label: {
-                    Text("Camera and continuity").background {
-                        AppRelaunchClickProbe(identifier: "disclosure.camera", acceptanceState: true).allowsHitTesting(false)
-                    }
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                DisclosureSection("Camera and continuity", probe: "disclosure.camera", isExpanded: $camera) {
+                    Text("Blocking").reviewAcceptanceProbe("disclosure.camera.content")
                 }
-                DisclosureGroup("Required references") { Text("Reference") }
+                DisclosureSection("Iteration limits", probe: "disclosure.limits") {
+                    Text("Rolls").reviewAcceptanceProbe("disclosure.limits.content")
+                }
+                .disabled(true)
             }
-            .padding(24)
+            .padding(AppTheme.Spacing.xl)
+            .environment(\.pipelineAcceptanceProbes, true)
             .frame(width: 420, height: 240, alignment: .topLeading)
         }
     }
 
-    @Test func triangleGeometryAcceptsOnlyTheEnabledControlBesideItsLabel() {
-        let label = NSRect(x: 120, y: 60, width: 140, height: 16)
-        let beside = NSRect(x: 104, y: 60, width: 13, height: 16)
-        #expect(ProductionNativeDisclosureAcceptance.accepts(beside, enabled: true, beside: label))
-        #expect(!ProductionNativeDisclosureAcceptance.accepts(beside, enabled: false, beside: label))
-        #expect(!ProductionNativeDisclosureAcceptance.accepts(beside.offsetBy(dx: 0, dy: 60), enabled: true, beside: label))
-        #expect(!ProductionNativeDisclosureAcceptance.accepts(beside.offsetBy(dx: -64, dy: 0), enabled: true, beside: label))
-        #expect(!ProductionNativeDisclosureAcceptance.accepts(NSRect(x: 104, y: 52, width: 13, height: 40), enabled: true, beside: label))
-        #expect(!ProductionNativeDisclosureAcceptance.accepts(.zero, enabled: true, beside: label))
+    private func probe(_ id: String, in root: NSView) -> AppRelaunchClickProbeView? { WorkspaceUIAcceptance.findProbe(in: root, identifier: id) as? AppRelaunchClickProbeView }
+
+    @Test func sectionStateDrivesItsProbeAndOmitsCollapsedContent() {
+        for expanded in [false, true] {
+            let host = hosted(Sections(camera: expanded))
+            let camera = probe("disclosure.camera", in: host)
+            #expect(camera?.acceptanceText == (expanded ? "expanded" : "collapsed") && camera?.acceptanceState == true)
+            #expect((probe("disclosure.camera.content", in: host) != nil) == expanded)
+            #expect(probe("disclosure.limits", in: host)?.acceptanceState == false)
+            #expect(probe("disclosure.limits", in: host)?.acceptanceText == "collapsed" && probe("disclosure.limits.content", in: host) == nil)
+        }
     }
 
-    @Test func mainThreadLookupFindsTheSwiftUIDisclosureTriangleAndItsPointerTogglesTheGroup() async throws {
+    @Test func pointerTogglesTheDisclosureSectionThroughItsProbe() async throws {
         try #require(ProcessInfo.processInfo.arguments.contains("--no-parallel"))
         let events = try #require(ProcessInfo.processInfo.environment["NGV_APPKIT_TEST_EVENTS"])
         let folder = URL(fileURLWithPath: events).deletingLastPathComponent()
@@ -3288,8 +3288,8 @@ struct NativeDisclosureInteractionTests {
                              styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         sheet.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: Disclosures())
-        sheet.contentView = NSHostingView(rootView: Disclosures())
+        window.contentView = NSHostingView(rootView: Sections(camera: false))
+        sheet.contentView = NSHostingView(rootView: Sections(camera: false))
         defer {
             if sheet.sheetParent != nil { window.endSheet(sheet) }
             sheet.contentView = nil; window.contentView = nil
@@ -3308,15 +3308,37 @@ struct NativeDisclosureInteractionTests {
         try await toggleTwice(driver: driver, in: sheet)
     }
 
+    private func hosted(_ sections: Sections) -> NSView {
+        let host = NSHostingView(rootView: sections)
+        host.setFrameSize(NSSize(width: 420, height: 240))
+        host.layoutSubtreeIfNeeded()
+        return host
+    }
+
     private func toggleTwice(driver: ProductionVisualSourcesDriver, in target: NSWindow) async throws {
         for expanded in [true, false] {
+            let start = driver.interactions.count
             try await ProductionNativeDisclosureAcceptance.toggle("disclosure.camera", content: "disclosure.camera.content",
                 expanded: expanded, driver: driver, in: target)
-            let pointer = try #require(driver.interactions.last { $0["label"] as? String == "native disclosure pointer" })
-            let evidence = try #require(pointer["evidence"] as? [String: Any])
-            #expect((evidence["matches"] as? [[Double]])?.count == 1)
-            #expect((evidence["nearby"] as? [[String: Any]])?.contains { $0["role"] as? String == kAXDisclosureTriangleRole } == true)
+            let state = expanded ? "expanded" : "collapsed"
+            #expect(driver.text("disclosure.camera", in: target) == state)
+            #expect((driver.state("disclosure.camera.content", in: target) != nil) == expanded)
+            let added = driver.interactions.dropFirst(start)
+            let pointer = try #require(added.last { $0["kind"] as? String == "pointer" && $0["id"] as? String == "disclosure.camera" })
+            #expect(pointer["localMonitorDownObserved"] as? Bool == true && pointer["localMonitorUpObserved"] as? Bool == true)
+            let record = try #require(added.last { $0["label"] as? String == "native disclosure pointer" })
+            #expect((record["evidence"] as? [String: Any])?["after"] as? String == state)
         }
+        let start = driver.interactions.count
+        do {
+            try await driver.click("disclosure.limits", in: target)
+            Issue.record("A disabled disclosure accepted pointer input.")
+        } catch {
+            #expect((error as? GateBlocked)?.message == "Control is disabled: disclosure.limits")
+        }
+        #expect(!driver.interactions.dropFirst(start).contains { $0["kind"] as? String == "pointer" })
+        #expect(driver.text("disclosure.limits", in: target) == "collapsed")
+        #expect(driver.state("disclosure.limits.content", in: target) == nil)
     }
 }
 

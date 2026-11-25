@@ -40,24 +40,27 @@ struct MusicvideoProductionReviewView: View {
                 Button("Reload music plan") { Task { await load() } }.buttonStyle(InlineActionButtonStyle())
             } else if let details {
                 Text(details.value.visualArc.concept).textSelection(.enabled)
-                DisclosureGroup { mix(details) } label: { Text("Song and final mix").reviewAcceptanceProbe("production.musicvideo.mix.open") }
-                DisclosureGroup("Visual development · \(details.value.visualArc.sections.count) sections") { arc(details) }
-                DisclosureGroup {
+                DisclosureSection("Song and final mix", probe: "production.musicvideo.mix.open") { mix(details) }
+                DisclosureSection("Visual development · \(details.value.visualArc.sections.count) sections",
+                                  probe: "production.musicvideo.arc.open") { arc(details) }
+                DisclosureSection("Performance · \(details.value.performanceSegments.count) audio segments",
+                                  probe: "production.musicvideo.performance.open") {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                         if details.value.performanceSegments.isEmpty {
                             Text("No generated performance audio segments are planned.").foregroundStyle(AppTheme.Text.secondaryColor)
                         }
                         ForEach(details.value.performanceSegments, id: \.draft.id) { segment in performance(segment, details) }
                     }.padding(.top, AppTheme.Spacing.sm)
-                } label: { Text("Performance · \(details.value.performanceSegments.count) audio segments").reviewAcceptanceProbe("production.musicvideo.performance.open") }
-                DisclosureGroup {
+                }
+                DisclosureSection("Performance coverage · \(details.value.coverage.count) groups",
+                                  probe: "production.musicvideo.coverage.open") {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                         if details.value.coverage.isEmpty {
                             Text("No dance, concert, instrument or staged vocal coverage is planned.").foregroundStyle(AppTheme.Text.secondaryColor)
                         }
                         ForEach(details.value.coverage, id: \.id) { item in coverage(item, details) }
                     }.padding(.top, AppTheme.Spacing.sm)
-                } label: { Text("Performance coverage · \(details.value.coverage.count) groups").reviewAcceptanceProbe("production.musicvideo.coverage.open") }
+                }
             } else { ProgressView("Reading music plan…") }
         }
         .padding(AppTheme.Spacing.md)
