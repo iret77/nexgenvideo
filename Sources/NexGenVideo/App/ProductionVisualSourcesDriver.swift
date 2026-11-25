@@ -400,14 +400,26 @@ final class ProductionVisualSourcesDriver {
         if editingText {
             guard let marker = probe(id, in: target) else { throw GateBlocked("The native text field disappeared: " + id) }
             var presentation = NativeAcceptancePointer.FieldPresentation(sheetParent: sheetParent)
-            do {
-                try await waitForPresentation(of: target, control: id) {
-                    self.probe(id, in: target) === marker
-                        && presentation.observe(marker, in: target, fraction: fraction, editing: editing)
+            for reflow in 0... {
+                // A settled reflow after reveal (e.g. the phase dock rewrapping after a commit) needs a new reveal.
+                var clipped = false
+                do {
+                    try await waitForPresentation(of: target, control: id) {
+                        guard self.probe(id, in: target) === marker, let root = target.contentView else { return false }
+                        clipped = !self.fullyVisible(marker, root: root)
+                        return clipped || presentation.observe(marker, in: target, fraction: fraction, editing: editing)
+                    }
+                } catch {
+                    try record("text field presentation failed", fields: ["id": id, "lastObservation": presentation.evidence])
+                    throw error
                 }
-            } catch {
-                try record("text field presentation failed", fields: ["id": id, "lastObservation": presentation.evidence])
-                throw error
+                guard clipped else { break }
+                try record("text field left its viewport after reveal", fields: ["id": id, "reflow": reflow + 1,
+                    "probeFrame": target.contentView.map { rect(marker.convert(marker.bounds, to: $0)) } ?? [],
+                    "clippingAncestors": NativeAcceptancePointer.ClipGeometry.ancestors(of: marker).map(\.evidence)])
+                guard reflow < 2 else { throw GateBlocked("The text field keeps leaving its viewport after reveal: " + id) }
+                try await reveal(id, in: target, transaction: transaction)
+                presentation = NativeAcceptancePointer.FieldPresentation(sheetParent: sheetParent)
             }
             try record("text field presentation", fields: ["id": id, "target": presentation.evidence])
             fieldPresentation = presentation
