@@ -776,6 +776,7 @@ jobs:
       artifact: NexGenVideo-app
       app_zip: NexGenVideo.zip
       distribution: false
+      selftest_scope: storage-isolation
 
   merge_gate:
     name: Merge Gate
