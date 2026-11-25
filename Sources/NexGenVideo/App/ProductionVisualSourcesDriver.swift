@@ -101,6 +101,127 @@ final class ProductionVisualSourcesDriver {
         try record(requiredViewport == nil ? "native window presentation stable" : "native scene viewport stable", fields: fields)
     }
 
+    /// Waits until this app's windows over the target, the window at the input point and the target's layout are settled.
+    /// Permanent covers, inactive windows and lasting clipping end the wait and are left to the binding guards.
+    @discardableResult
+    func settle(_ id: String?, in target: NSWindow, fraction: NSPoint = NSPoint(x: 0.5, y: 0.5), at point: NSPoint? = nil,
+                transaction: UUID? = nil, prepare: () throws -> Void = {}, ready: (() -> Bool)? = nil) async throws -> [String: Any] {
+        let label = id ?? "window " + String(target.windowNumber)
+        let outer = stage
+        stage = "settle " + label
+        try persist()
+        try prepare()
+        let began = ProcessInfo.processInfo.systemUptime
+        var deadline = began + NativeInputSettling.limitSeconds
+        var settling = NativeInputSettling()
+        var reveals: [[String: Any]] = []
+        var sample = settleSample(id, in: target, fraction: fraction, at: point)
+        var verdict = "", lastWait = ""
+        func evidence() -> [String: Any] {
+            var value: [String: Any] = ["id": label, "window": target.windowNumber, "verdict": verdict, "lastWait": lastWait,
+                "waitedSeconds": ProcessInfo.processInfo.systemUptime - began, "samples": settling.samples,
+                "stableSeconds": settling.stableFor, "changes": settling.changes, "reveals": reveals]
+            if verdict != "settled" || settling.changes > 0 || !reveals.isEmpty {
+                value["transitions"] = settling.transitions
+                value["final"] = sample.evidence
+            }
+            return value
+        }
+        while verdict.isEmpty {
+            let now = ProcessInfo.processInfo.systemUptime
+            switch settling.observe(sample, at: now) {
+            case .settled:
+                if ready?() ?? true { verdict = "settled" } else if now >= deadline { verdict = "unready" } else { lastWait = "target readiness" }
+            case .reveal:
+                if let id, reveals.count < NativeInputSettling.revealLimit {
+                    reveals.append(["uptime": now, "sample": sample.evidence])
+                    try await reveal(id, in: target, transaction: transaction)
+                    // Scrolling is input, not waiting; the wait budget resumes after it.
+                    deadline += ProcessInfo.processInfo.systemUptime - now
+                    stage = "settle " + label
+                    try prepare()
+                    settling.reset()
+                    sample = settleSample(id, in: target, fraction: fraction, at: point)
+                    continue
+                }
+                verdict = "clipped"
+            case .covered: verdict = "covered"
+            case .inactive: verdict = "inactive"
+            case .missing: verdict = "missing"
+            case .wait(let reason):
+                lastWait = reason
+                if now >= deadline {
+                    guard reason == NativeInputSettling.leavingCover else {
+                        try record("native input target did not settle", fields: evidence())
+                        throw GateBlocked("The native input target did not settle: " + label)
+                    }
+                    verdict = "covered"
+                }
+            }
+            if verdict.isEmpty {
+                try await Task.sleep(for: .milliseconds(50))
+                sample = settleSample(id, in: target, fraction: fraction, at: point)
+            }
+        }
+        stage = outer
+        return evidence()
+    }
+
+    private func refused<T>(_ settled: [String: Any], _ id: String, _ body: () async throws -> T) async throws -> T {
+        do { return try await body() } catch {
+            try? record("native input target refused", fields: ["id": id, "error": String(describing: error), "settle": settled])
+            throw error
+        }
+    }
+
+    private func settleSample(_ id: String?, in target: NSWindow, fraction: NSPoint, at fixed: NSPoint?) -> NativeInputSettling.Sample {
+        var sample = NativeInputSettling.Sample()
+        sample.targetWindow = target.windowNumber
+        sample.targetFrame = target.frame
+        sample.targetActive = NSApp.isActive && target.isVisible && target.isKeyWindow
+        sample.probeExpected = id != nil
+        var point = fixed
+        if let id, let root = target.contentView {
+            root.layoutSubtreeIfNeeded()
+            if let view = probe(id, in: target), view.window === target {
+                sample.probe = ObjectIdentifier(view)
+                sample.geometry = [root.bounds, view.convert(view.bounds, to: root)]
+                    + NativeAcceptancePointer.ClipGeometry.ancestors(of: view).flatMap { [$0.bounds, $0.probeFrame, $0.documentFrame ?? .null] }
+                sample.clipped = !fullyVisible(view, root: root)
+                if point == nil {
+                    let local = NSPoint(x: view.bounds.minX + view.bounds.width * fraction.x,
+                                        y: view.bounds.minY + view.bounds.height * fraction.y)
+                    point = target.convertPoint(toScreen: view.convert(local, to: nil))
+                }
+            }
+        }
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let own = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? [])
+            .filter { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid }
+        func number(_ row: [String: Any]) -> Int? { (row[kCGWindowNumber as String] as? NSNumber)?.intValue }
+        func bounds(_ row: [String: Any]) -> CGRect? {
+            (row[kCGWindowBounds as String] as? [String: Any]).flatMap { CGRect(dictionaryRepresentation: $0 as CFDictionary) }
+        }
+        if let point, [point.x, point.y].allSatisfy(\.isFinite) {
+            let covering = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)
+            sample.pointWindow = covering
+            sample.pointWindowOwned = own.contains { number($0) == covering }
+        }
+        if let targetBounds = own.first(where: { number($0) == target.windowNumber }).flatMap(bounds) {
+            sample.windows = own.compactMap { row -> NativeInputSettling.Window? in
+                guard let listed = number(row), let frame = bounds(row), frame.intersects(targetBounds) else { return nil }
+                let window = NSApp.window(withWindowNumber: listed)
+                // A dismissed sheet stays on screen, detached from its parent, until its animation ends.
+                let leaving = listed != target.windowNumber && window.map {
+                    !$0.isVisible || ($0.isSheet && $0.sheetParent?.attachedSheet !== $0)
+                } == true
+                return NativeInputSettling.Window(number: listed, bounds: frame, alpha: (row[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? -1,
+                             leaving: leaving)
+            }
+        }
+        return sample
+    }
+
     func text(_ id: String, in target: NSWindow) -> String? { WorkspaceUIAcceptance.probeText(identifier: id, in: target) }
     func state(_ id: String, in target: NSWindow) -> Bool? {
         (probe(id, in: target) as? AppRelaunchClickProbeView)?.acceptanceState
@@ -196,6 +317,7 @@ final class ProductionVisualSourcesDriver {
         var previousClip: NSClipView?
         var previousDocument: NSView?
         var response: WheelResponse?
+        var windowSettle: [String: Any]?, unreportedSettle: [String: Any]?
         for _ in 0..<45 {
             root.layoutSubtreeIfNeeded()
             guard let view = probe(id, in: target) else { throw GateBlocked("Control disappeared while scrolling: " + id) }
@@ -247,18 +369,29 @@ final class ProductionVisualSourcesDriver {
             }
             defer { NotificationCenter.default.removeObserver(observer) }
             let originalBounds = clip.bounds
-            let posted = try await postWheel(delta: delta, at: CGPoint(x: point.x, y: screen.frame.height - point.y),
-                                              in: target, transaction: transaction) {
-                guard target.contentView === root, target.isKeyWindow else { throw GateBlocked("The scroll window changed: " + id) }
-                root.layoutSubtreeIfNeeded()
-                guard self.probe(id, in: target) === view, scroll.contentView === clip, scroll.documentView === document,
-                      scroll.window === target, document.frame == originalDocumentFrame,
-                      !self.fullyVisible(view, root: root), clip.bounds == originalBounds,
-                      view.convert(view.bounds, to: clip) == frame,
-                      clip.visibleRect == visibleArea, target.convertPoint(toScreen: clip.convert(wheelPoint, to: nil)) == point,
-                      ownsWheel(at: wheelPoint, clip: clip, scroll: scroll, root: root, window: target) else { return false }
-                completion.armed = true
-                return true
+            if windowSettle == nil {
+                windowSettle = try await settle(nil, in: target, at: point, transaction: transaction)
+                unreportedSettle = windowSettle
+            }
+            let posted: Bool
+            do {
+                posted = try await postWheel(delta: delta, at: CGPoint(x: point.x, y: screen.frame.height - point.y),
+                                             in: target, transaction: transaction) {
+                    guard target.contentView === root, target.isKeyWindow else { throw GateBlocked("The scroll window changed: " + id) }
+                    root.layoutSubtreeIfNeeded()
+                    guard self.probe(id, in: target) === view, scroll.contentView === clip, scroll.documentView === document,
+                          scroll.window === target, document.frame == originalDocumentFrame,
+                          !self.fullyVisible(view, root: root), clip.bounds == originalBounds,
+                          view.convert(view.bounds, to: clip) == frame,
+                          clip.visibleRect == visibleArea, target.convertPoint(toScreen: clip.convert(wheelPoint, to: nil)) == point,
+                          ownsWheel(at: wheelPoint, clip: clip, scroll: scroll, root: root, window: target) else { return false }
+                    completion.armed = true
+                    return true
+                }
+            } catch {
+                try? record("native input target refused", fields: ["id": id, "error": String(describing: error),
+                    "settle": windowSettle ?? [:]])
+                throw error
             }
             if !posted {
                 try await waitForPresentation(of: target, control: id)
@@ -324,17 +457,25 @@ final class ProductionVisualSourcesDriver {
             previousClip = clip
             previousDocument = document
             response = WheelResponse(delta: delta, displacement: clip.bounds.minY - before.y)
-            interactions.append(["kind": "wheel", "id": id, "delta": delta,
+            interactions.append(["kind": "wheel", "id": id, "delta": delta, "windowSettle": unreportedSettle ?? [:],
                 "before": [before.x, before.y], "after": [clip.bounds.origin.x, clip.bounds.origin.y],
                 "nativeScrollEnded": completion.ended, "settledGeometry": previousGeometry.map(rect),
                 "settledGeometrySamples": stableSamples,
                 "settledGeometrySeconds": ProcessInfo.processInfo.systemUptime - (stableSince ?? ProcessInfo.processInfo.systemUptime)])
+            unreportedSettle = nil
         }
         throw GateBlocked("Wheel input did not reveal the complete control: " + id)
     }
 
     func postWheel(delta: Int32, at location: CGPoint, in target: NSWindow, transaction: UUID? = nil) async throws {
-        _ = try await postWheel(delta: delta, at: location, in: target, transaction: transaction) { true }
+        guard let screen = NSScreen.screens.first else { throw GateBlocked("The native wheel screen is unavailable.") }
+        let settled = try await settle(nil, in: target, at: NSPoint(x: location.x, y: screen.frame.maxY - location.y))
+        do {
+            _ = try await postWheel(delta: delta, at: location, in: target, transaction: transaction) { true }
+        } catch {
+            try? record("native input target refused", fields: ["error": String(describing: error), "settle": settled])
+            throw error
+        }
     }
 
     private func postWheel(delta: Int32, at location: CGPoint, in target: NSWindow, transaction: UUID?,
@@ -390,69 +531,74 @@ final class ProductionVisualSourcesDriver {
         stage = "click " + id
         let sheetParent = editingText ? target.sheetParent : nil
         try await reveal(id, in: target, transaction: transaction)
-        let editing: NativeAcceptancePointer.FieldTarget
-        if editingText, let field = editableOwner(id, in: target) as? NSTextField {
-            editing = .field(field, requiredEditor: nil)
-        } else {
-            editing = editingText ? .unfocused : .ordinary
+        var editing: NativeAcceptancePointer.FieldTarget = editingText ? .unfocused : .ordinary
+        var marker: NSView?
+        var presentation = NativeAcceptancePointer.FieldPresentation(sheetParent: sheetParent)
+        let settled: [String: Any]
+        do {
+            settled = try await settle(id, in: target, fraction: fraction, transaction: transaction, prepare: {
+                guard editingText else { return }
+                guard let current = self.probe(id, in: target) else { throw GateBlocked("The native text field disappeared: " + id) }
+                marker = current
+                if let field = self.editableOwner(id, in: target) as? NSTextField {
+                    editing = .field(field, requiredEditor: nil)
+                } else {
+                    editing = .unfocused
+                }
+                presentation = NativeAcceptancePointer.FieldPresentation(sheetParent: sheetParent)
+            }, ready: editingText ? {
+                guard let marker, self.probe(id, in: target) === marker else { return false }
+                return presentation.observe(marker, in: target, fraction: fraction, editing: editing)
+            } : nil)
+        } catch {
+            if editingText { try record("text field presentation failed", fields: ["id": id, "lastObservation": presentation.evidence]) }
+            throw error
         }
         var fieldPresentation: NativeAcceptancePointer.FieldPresentation?
         if editingText {
-            guard let marker = probe(id, in: target) else { throw GateBlocked("The native text field disappeared: " + id) }
-            var presentation = NativeAcceptancePointer.FieldPresentation(sheetParent: sheetParent)
-            for reflow in 0... {
-                // A settled reflow after reveal (e.g. the phase dock rewrapping after a commit) needs a new reveal.
-                var clipped = false
-                do {
-                    try await waitForPresentation(of: target, control: id) {
-                        guard self.probe(id, in: target) === marker, let root = target.contentView else { return false }
-                        clipped = !self.fullyVisible(marker, root: root)
-                        return clipped || presentation.observe(marker, in: target, fraction: fraction, editing: editing)
-                    }
-                } catch {
-                    try record("text field presentation failed", fields: ["id": id, "lastObservation": presentation.evidence])
-                    throw error
-                }
-                guard clipped else { break }
-                try record("text field left its viewport after reveal", fields: ["id": id, "reflow": reflow + 1,
-                    "probeFrame": target.contentView.map { rect(marker.convert(marker.bounds, to: $0)) } ?? [],
-                    "clippingAncestors": NativeAcceptancePointer.ClipGeometry.ancestors(of: marker).map(\.evidence)])
-                guard reflow < 2 else { throw GateBlocked("The text field keeps leaving its viewport after reveal: " + id) }
-                try await reveal(id, in: target, transaction: transaction)
-                presentation = NativeAcceptancePointer.FieldPresentation(sheetParent: sheetParent)
+            if settled["verdict"] as? String == "settled" {
+                try record("text field presentation", fields: ["id": id, "target": presentation.evidence, "settle": settled])
+            } else {
+                try record("text field presentation failed", fields: ["id": id, "lastObservation": presentation.evidence, "settle": settled])
             }
-            try record("text field presentation", fields: ["id": id, "target": presentation.evidence])
             fieldPresentation = presentation
-            stage = "click " + id
         }
+        stage = "click " + id
         let readiness: NativeAcceptancePointer.LocalButtonReadiness?
         let observation = localButton?.target == .hoveredButton ? NativeAcceptancePointer.HoverObservation() : nil
         defer { observation?.close() }
-        if let localButton, let observation {
-            readiness = try await hoverAndSettleButton(id, title: localButton.title, in: target,
-                                                       fraction: fraction, transaction: transaction, observation: observation)
-        } else if let localButton {
-            readiness = try await settleButton(id, title: localButton.title, in: target, fraction: fraction,
-                                               localTarget: localButton.target)
-        } else {
-            readiness = nil
-        }
-        try visible([id], in: target)
-        guard !enabled || state(id, in: target) == true,
-              let root = target.contentView else { throw GateBlocked("Control is disabled: " + id) }
-        guard let view = probe(id, in: target) else { throw GateBlocked("The native pointer probe disappeared: " + id) }
-        let frame = view.convert(view.bounds, to: root)
-        let point = view.convert(NSPoint(x: view.bounds.minX + view.bounds.width * fraction.x,
-                                        y: view.bounds.minY + view.bounds.height * fraction.y), to: root)
-        let hit = root.hitTest(root.convert(point, to: root.superview))
-        let windowPoint = root.convert(point, to: nil)
-        guard hit != nil else {
-            throw GateBlocked("The actual pointer target is unavailable: " + id)
+        let view: NSView, frame: NSRect, point: NSPoint, hit: NSView?, windowPoint: NSPoint
+        do {
+            if let localButton, let observation {
+                readiness = try await hoverAndSettleButton(id, title: localButton.title, in: target,
+                                                           fraction: fraction, transaction: transaction, observation: observation)
+            } else if let localButton {
+                readiness = try await settleButton(id, title: localButton.title, in: target, fraction: fraction,
+                                                   localTarget: localButton.target)
+            } else {
+                readiness = nil
+            }
+            try visible([id], in: target)
+            guard !enabled || state(id, in: target) == true,
+                  let root = target.contentView else { throw GateBlocked("Control is disabled: " + id) }
+            guard let found = probe(id, in: target) else { throw GateBlocked("The native pointer probe disappeared: " + id) }
+            view = found
+            frame = view.convert(view.bounds, to: root)
+            point = view.convert(NSPoint(x: view.bounds.minX + view.bounds.width * fraction.x,
+                                         y: view.bounds.minY + view.bounds.height * fraction.y), to: root)
+            hit = root.hitTest(root.convert(point, to: root.superview))
+            windowPoint = root.convert(point, to: nil)
+            guard hit != nil else {
+                throw GateBlocked("The actual pointer target is unavailable: " + id)
+            }
+        } catch {
+            try? record("native input target refused", fields: ["id": id, "error": String(describing: error), "settle": settled])
+            throw error
         }
         let index = interactions.count
         interactions.append(["kind": "pointer", "id": id, "window": target.windowNumber,
             "frame": rect(frame), "point": [point.x, point.y], "hitClass": String(describing: type(of: hit!)),
-            "windowPoint": [windowPoint.x, windowPoint.y]])
+            "windowPoint": [windowPoint.x, windowPoint.y], "settle": settled])
         do {
             try await NativeAcceptancePointer.click(view, window: target, fraction: fraction, token: transaction,
                                                     buttonReadiness: readiness, editing: editing, fieldPresentation: fieldPresentation, preDown: preDown) { evidence in
@@ -565,6 +711,7 @@ final class ProductionVisualSourcesDriver {
 
     private func publicButtonFraction(_ id: String, title: String, in target: NSWindow, transaction: UUID) async throws -> NSPoint {
         try await reveal(id, in: target, transaction: transaction)
+        let settled = try await settle(id, in: target, transaction: transaction)
         var match: (frames: [NSRect], evidence: [String: Any]) = ([], [:])
         stage = "actual enabled button " + title
         try persist()
@@ -580,13 +727,13 @@ final class ProductionVisualSourcesDriver {
                 throw GateBlocked("Native visual sources: actual enabled button " + title + "; " + diagnostic())
             }
         } catch {
-            interactions.append(match.evidence)
+            interactions.append(match.evidence.merging(["settle": settled]) { _, new in new })
             try persist()
             throw error
         }
         match = await buttonFrames(id, title: title, in: target)
         try Task.checkCancellation()
-        interactions.append(match.evidence)
+        interactions.append(match.evidence.merging(["settle": settled]) { _, new in new })
         try persist()
         guard match.frames.count == 1, let frame = match.frames.first, let view = probe(id, in: target) else {
             throw GateBlocked("The actual button has no unique enabled accessibility frame: " + title)
@@ -652,7 +799,8 @@ final class ProductionVisualSourcesDriver {
 
     func drag(_ id: String, from start: NSPoint, to end: NSPoint, in target: NSWindow) async throws {
         try await reveal(id, in: target)
-        try visible([id], in: target)
+        let settled = try await settle(id, in: target, fraction: start)
+        try await refused(settled, id) { try visible([id], in: target) }
         guard target.isKeyWindow, state(id, in: target) == true,
               let view = probe(id, in: target), let root = target.contentView else {
             throw GateBlocked("The drag control is unavailable: " + id)
@@ -680,13 +828,14 @@ final class ProductionVisualSourcesDriver {
             try await Task.sleep(for: .milliseconds(30))
         }
         interactions.append(["kind": "drag", "id": id, "window": target.windowNumber,
-            "start": [start.x, start.y], "end": [end.x, end.y]])
+            "start": [start.x, start.y], "end": [end.x, end.y], "settle": settled])
         try persist()
     }
 
     func modifiedClick(_ id: String, modifiers: NSEvent.ModifierFlags, in target: NSWindow) async throws {
         try await reveal(id, in: target)
-        try visible([id], in: target)
+        let settled = try await settle(id, in: target)
+        try await refused(settled, id) { try visible([id], in: target) }
         guard state(id, in: target) == true, let view = probe(id, in: target), let root = target.contentView else {
             throw GateBlocked("The modified pointer control is unavailable: " + id)
         }
@@ -700,13 +849,14 @@ final class ProductionVisualSourcesDriver {
             try await Task.sleep(for: .milliseconds(30))
         }
         interactions.append(["kind": "modified-pointer", "id": id, "modifiers": modifiers.rawValue,
-                             "command": modifiers.contains(.command), "shift": modifiers.contains(.shift)])
+                             "command": modifiers.contains(.command), "shift": modifiers.contains(.shift), "settle": settled])
         try persist()
     }
 
     func dragBetween(_ id: String, sourcePoint: NSPoint? = nil, destination: NSView,
                      point: NSPoint, label: String, in target: NSWindow) async throws {
         try await reveal(id, in: target)
+        let settled = try await settle(id, in: target)
         guard target.isKeyWindow, destination.window === target, let source = probe(id, in: target),
               let root = target.contentView, !destination.isHiddenOrHasHiddenAncestor else {
             throw GateBlocked("The native drag source or destination is unavailable.")
@@ -731,7 +881,7 @@ final class ProductionVisualSourcesDriver {
             try await Task.sleep(for: .milliseconds(30))
         }
         interactions.append(["kind": "cross-view-drag", "id": id, "destination": label,
-            "sourcePoint": [start.x, start.y], "destinationPoint": [end.x, end.y], "queuedEvents": 14])
+            "sourcePoint": [start.x, start.y], "destinationPoint": [end.x, end.y], "queuedEvents": 14, "settle": settled])
         try persist()
     }
 
@@ -778,12 +928,16 @@ final class ProductionVisualSourcesDriver {
         try await reveal(id, in: target)
         guard arrival.window === target, let active = focusedField(id, in: target),
               active.owner === arrival.field, active.editor === arrival.editor else { return nil }
-        guard state(id, in: target) == true, let marker = probe(id, in: target) else {
-            throw GateBlocked("The field reached by Tab is disabled or missing: " + id)
+        let settled = try await settle(id, in: target)
+        return try await refused(settled, id) {
+            guard state(id, in: target) == true, let marker = probe(id, in: target) else {
+                throw GateBlocked("The field reached by Tab is disabled or missing: " + id)
+            }
+            var evidence = try NativeAcceptancePointer.tabTarget(marker, field: arrival.field, editor: arrival.editor, window: target)
+            try visible([id], in: target)
+            evidence["settle"] = settled
+            return evidence
         }
-        let evidence = try NativeAcceptancePointer.tabTarget(marker, field: arrival.field, editor: arrival.editor, window: target)
-        try visible([id], in: target)
-        return evidence
     }
 
     private func editField(_ id: String, value: String, in target: NSWindow, requireFocusExit: Bool,
@@ -961,10 +1115,13 @@ final class ProductionVisualSourcesDriver {
             if menu === tracking.root { tracking.closed = true }
         }
         defer { NotificationCenter.default.removeObserver(begin); NotificationCenter.default.removeObserver(end) }
+        var settled: [String: Any]?
         if let open { try open() }
         else if context {
             try await reveal(id, in: target)
-            try visible([id], in: target)
+            let current = try await settle(id, in: target)
+            settled = current
+            try await refused(current, id) { try visible([id], in: target) }
             guard target.isKeyWindow, let view = probe(id, in: target) else { throw GateBlocked("No native context-menu target.") }
             let location = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
             for type in [NSEvent.EventType.rightMouseDown, .rightMouseUp] {
@@ -980,7 +1137,8 @@ final class ProductionVisualSourcesDriver {
         if let error = tracking.error { tracking.root?.cancelTracking(); throw GateBlocked(error) }
         guard tracking.titles.count == path.count else { throw GateBlocked("The complete native menu path was not observed.") }
         interactions.append(["kind": context ? "context-menu" : "menu", "id": id,
-            "item": path.last!, "path": path, "titles": tracking.titles.first ?? [], "menus": tracking.titles, "closed": tracking.closed])
+            "item": path.last!, "path": path, "titles": tracking.titles.first ?? [], "menus": tracking.titles, "closed": tracking.closed,
+            "settle": settled ?? [:]])
         try persist()
     }
 
@@ -1027,6 +1185,7 @@ final class ProductionVisualSourcesDriver {
         }
         let deadline = ProcessInfo.processInfo.systemUptime + 60
         var last: [String: Any] = ["shotID": shotID, "control": control, "expectedFingerprint": fingerprint]
+        var windowSettle: [String: Any]?
         do {
             try await waitForPresentation(of: window, control: contentID, ready: current)
             while ProcessInfo.processInfo.systemUptime < deadline {
@@ -1069,6 +1228,10 @@ final class ProductionVisualSourcesDriver {
                 let observer = NotificationCenter.default.addObserver(forName: NSScrollView.didEndLiveScrollNotification,
                     object: scroll, queue: .main) { _ in MainActor.assumeIsolated { if delivery.armed { delivery.ended = true } } }
                 defer { NotificationCenter.default.removeObserver(observer) }
+                if windowSettle == nil {
+                    windowSettle = try await settle(nil, in: window, at: point, transaction: token)
+                    last["windowSettle"] = windowSettle
+                }
                 let sent = try await postWheel(delta: delta, at: quartz, in: window, transaction: token) {
                     guard current(), self.window.contentView === root, self.probe(contentID, in: self.window) === marker,
                           marker.enclosingScrollView === scroll, scroll.contentView === clip, scroll.documentView === document else {
@@ -1098,7 +1261,8 @@ final class ProductionVisualSourcesDriver {
                     return now - since >= 0.25
                 }
                 try record("native Board scroll towards saved shot", fields: ["shotID": shotID, "control": control,
-                    "fingerprint": fingerprint, "delta": delta, "before": rect(viewport), "after": rect(clip.bounds)])
+                    "fingerprint": fingerprint, "delta": delta, "before": rect(viewport), "after": rect(clip.bounds),
+                    "windowSettle": last.removeValue(forKey: "windowSettle") ?? [String: Any]()])
             }
             throw GateBlocked("The saved Storyboard moment did not appear after native scrolling.")
         } catch {
@@ -1156,7 +1320,8 @@ final class ProductionVisualSourcesDriver {
 
     func segment(_ id: String, title: String, titles: [String], expected: String? = nil, in target: NSWindow) async throws {
         try await reveal(id, in: target)
-        try visible([id], in: target)
+        let settled = try await settle(id, in: target)
+        try await refused(settled, id) { try visible([id], in: target) }
         guard let segmentIndex = titles.firstIndex(of: title), let view = probe(id, in: target), let root = target.contentView else {
             throw GateBlocked("The native segmented control is unavailable: " + id)
         }
@@ -1204,7 +1369,7 @@ final class ProductionVisualSourcesDriver {
         }
         let point = view.convert(NSPoint(x: selected.midX, y: selected.midY), to: root)
         interactions.append(["kind": "pointer", "id": id, "window": target.windowNumber,
-            "frame": rect(frame), "point": [point.x, point.y], "hitClass": String(describing: type(of: hit))])
+            "frame": rect(frame), "point": [point.x, point.y], "hitClass": String(describing: type(of: hit)), "settle": settled])
         try persist()
         try await wait("native segment selected " + title) {
             control.selectedSegment == segmentIndex && self.text(id, in: target) == (expected ?? title)
@@ -1452,7 +1617,7 @@ final class ProductionVisualSourcesDriver {
         } ?? []
         if candidates.count == 1, let field = candidates.first, let root = panel.contentView {
             guard fullyVisible(field, root: root) else { throw GateBlocked("The output filename field is clipped.") }
-            try nativePointer(field.convert(NSPoint(x: field.bounds.midX, y: field.bounds.midY), to: nil), in: panel)
+            try await nativePointer(field.convert(NSPoint(x: field.bounds.midX, y: field.bounds.midY), to: nil), in: panel)
             try await wait("output filename field owns keyboard") {
                 guard let editor = panel.firstResponder as? NSTextView else { return false }
                 return field.currentEditor() === editor && editor.isEditable
@@ -1480,7 +1645,7 @@ final class ProductionVisualSourcesDriver {
             guard matches.count == 1, let frame = matches.first else {
                 throw GateBlocked("The native output name has no unique visible text field.")
             }
-            try nativePointer(panel.convertPoint(fromScreen: NSPoint(x: frame.midX, y: frame.midY)), in: panel)
+            try await nativePointer(panel.convertPoint(fromScreen: NSPoint(x: frame.midX, y: frame.midY)), in: panel)
             try await wait("accessible output filename owns keyboard") {
                 guard let field = self.axElement(app, kAXFocusedUIElementAttribute) else { return false }
                 return self.axValue(field, kAXRoleAttribute) as? String == kAXTextFieldRole
@@ -1505,7 +1670,8 @@ final class ProductionVisualSourcesDriver {
         try persist()
     }
 
-    private func nativePointer(_ point: NSPoint, in window: NSWindow) throws {
+    private func nativePointer(_ point: NSPoint, in window: NSWindow) async throws {
+        let settled = try await settle(nil, in: window, at: window.convertPoint(toScreen: point))
         guard window.isVisible, window.isKeyWindow, let root = window.contentView,
               root.bounds.contains(root.convert(point, from: nil)), root.hitTest(root.convert(root.convert(point, from: nil), to: root.superview)) != nil else {
             throw GateBlocked("The native pointer location has no visible hit target.")
@@ -1518,7 +1684,7 @@ final class ProductionVisualSourcesDriver {
             }
             NSApp.postEvent(event, atStart: false)
         }
-        interactions.append(["kind": "native-pointer", "window": window.windowNumber, "point": [point.x, point.y]])
+        interactions.append(["kind": "native-pointer", "window": window.windowNumber, "point": [point.x, point.y], "settle": settled])
         try persist()
     }
 
@@ -2711,4 +2877,118 @@ enum NativeAcceptancePointer {
 
     private static var owner: UUID?
     private static var cleanupFailure: String?
+}
+
+/// Classifies window-server and layout samples of a native input target until it is settled or permanently refused.
+struct NativeInputSettling {
+    struct Window: Equatable {
+        let number: Int
+        let bounds: CGRect
+        let alpha: Double
+        let leaving: Bool
+    }
+
+    struct Sample: Equatable {
+        var windows: [Window] = []
+        var targetWindow = 0
+        var targetFrame = CGRect.null
+        var targetActive = false
+        var pointWindow: Int?
+        var pointWindowOwned = false
+        var probeExpected = false
+        var probe: ObjectIdentifier?
+        var geometry: [CGRect] = []
+        var clipped = false
+
+        var leavingCover: Int? {
+            guard let covering = pointWindow, covering != targetWindow, pointWindowOwned,
+                  windows.contains(where: { $0.number == covering && $0.leaving }) else { return nil }
+            return covering
+        }
+
+        var evidence: [String: Any] {
+            func rect(_ value: CGRect) -> [Any] {
+                [value.minX, value.minY, value.width, value.height].map { $0.isFinite ? Double($0) as Any : String(describing: $0) }
+            }
+            let listed = windows.map { window -> [String: Any] in
+                ["number": window.number, "bounds": rect(window.bounds), "alpha": window.alpha, "leaving": window.leaving]
+            }
+            return ["windows": listed,
+                    "targetWindow": targetWindow, "targetFrame": rect(targetFrame), "targetActive": targetActive,
+                    "windowAtPoint": pointWindow ?? -1, "windowAtPointOwned": pointWindowOwned,
+                    "probeFound": probe != nil, "geometry": geometry.map(rect), "clipped": clipped]
+        }
+    }
+
+    enum Decision: Equatable {
+        case wait(String)
+        case settled
+        case reveal
+        case covered(Int)
+        case inactive
+        case missing
+    }
+
+    static let stableSeconds: TimeInterval = 0.25
+    static let limitSeconds: TimeInterval = 10
+    static let revealLimit = 2
+    static let leavingCover = "a closing window of this app covers the input point"
+    static let changing = "window or target geometry changed"
+
+    private var previous: Sample?
+    private var stableSince: TimeInterval = 0
+    private var reportedCover: Int?
+    private(set) var samples = 0
+    private(set) var changes = 0
+    private(set) var stableFor: TimeInterval = 0
+    private(set) var transitions: [[String: Any]] = []
+
+    mutating func reset() {
+        previous = nil
+        stableFor = 0
+    }
+
+    mutating func observe(_ sample: Sample, at now: TimeInterval) -> Decision {
+        samples += 1
+        if let previous, previous == sample {
+            stableFor = now - stableSince
+        } else {
+            if let previous {
+                changes += 1
+                note(Self.difference(previous, sample), at: now)
+            }
+            previous = sample
+            stableSince = now
+            stableFor = 0
+        }
+        if let covering = sample.leavingCover {
+            if reportedCover != covering { note(["leavingWindow": covering], at: now) }
+            reportedCover = covering
+            return .wait(Self.leavingCover)
+        }
+        guard stableFor >= Self.stableSeconds else { return .wait(Self.changing) }
+        if sample.probeExpected && sample.probe == nil { return .missing }
+        if let covering = sample.pointWindow, covering != sample.targetWindow { return .covered(covering) }
+        if !sample.targetActive { return .inactive }
+        return sample.clipped ? .reveal : .settled
+    }
+
+    private mutating func note(_ change: [String: Any], at now: TimeInterval) {
+        guard transitions.count < 32 else { return }
+        transitions.append(change.merging(["uptime": now]) { _, new in new })
+    }
+
+    static func difference(_ old: Sample, _ new: Sample) -> [String: Any] {
+        var changed: [String] = []
+        if old.windows != new.windows { changed.append("windows") }
+        if old.targetFrame != new.targetFrame || old.targetActive != new.targetActive { changed.append("target-window") }
+        if old.pointWindow != new.pointWindow || old.pointWindowOwned != new.pointWindowOwned { changed.append("window-at-point") }
+        if old.probe != new.probe { changed.append("probe") }
+        if old.geometry != new.geometry { changed.append("geometry") }
+        if old.clipped != new.clipped { changed.append("clipping") }
+        let before = Dictionary(old.windows.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
+        let after = Dictionary(new.windows.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
+        let moved = Set(before.keys).union(after.keys).filter { before[$0] != after[$0] }.sorted()
+        return ["changed": changed, "windows": moved, "windowAtPoint": new.pointWindow ?? -1, "clipped": new.clipped]
+    }
 }

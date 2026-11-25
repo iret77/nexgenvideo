@@ -1184,7 +1184,7 @@ struct NativePointerInteractionTests {
         do {
             try await fixture.driver.click("pointer.Undo", in: fixture.window)
             Issue.record("An input-catching window accepted a click through to the original window.")
-        } catch {}
+        } catch { try verifyPermanentCoverRefusal(error, cover: overlay, driver: fixture.driver) }
         try await Task.sleep(for: .milliseconds(100))
         #expect(counter.count == 0)
         #expect(fixture.capture.count("Undo") == 1)
@@ -1957,7 +1957,7 @@ struct NativePointerInteractionTests {
     }
 
     @Test func canonicalNativeAccessibilityIdentityAndGeometryAreRevalidatedBeforeDown() async throws {
-        let fixture = try await CanonicalNativeFixture("revalidation")
+        try await verifyTransientWindowsSettleBeforeInput(); let fixture = try await CanonicalNativeFixture("revalidation")
         defer { fixture.close() }
         try await fixture.ready()
         let counter = DownCounter()
@@ -2741,6 +2741,7 @@ private extension NativePointerInteractionTests {
 extension NativePointerInteractionTests {
     private func verifyWheelTargetingInSceneViewport() async throws {
         try await verifyLazyStoryboardMenu()
+        try await verifyReflowAfterRevealIsRevealedAgain()
         let outer = NSScrollView(), inner = NSScrollView()
         let outerDocument = NSView(), innerDocument = NSView()
         outer.documentView = outerDocument
@@ -2842,4 +2843,198 @@ extension NativePointerInteractionTests {
         #expect(driver.interactions.contains { $0["label"] as? String == "native Board scroll towards saved shot" })
         #expect(shots.filter { fixture.capture.count($0) > 0 } == [target])
     }
+}
+
+extension NativePointerInteractionTests {
+    private func verifyPermanentCoverRefusal(_ error: Error, cover: NSWindow, driver: ProductionVisualSourcesDriver) throws {
+        #expect((error as? GateBlocked)?.message == "The original native window is covered at the pointer target.")
+        let refused = try #require(driver.interactions.last { $0["kind"] as? String == "pointer" && $0["id"] as? String == "pointer.Undo" })
+        let settle = try #require(refused["settle"] as? [String: Any])
+        #expect(settle["verdict"] as? String == "covered")
+        #expect(((settle["final"] as? [String: Any])?["windowAtPoint"] as? Int) == cover.windowNumber)
+        #expect((settle["waitedSeconds"] as? Double ?? .infinity) < NativeInputSettling.limitSeconds / 2)
+    }
+
+    private func verifyInputSettlingDecisions() {
+        typealias Settling = NativeInputSettling
+        let target = 393, sheet = 406
+        func sample(_ windows: [Settling.Window], at point: Int?, owned: Bool = true, active: Bool = true,
+                    clipped: Bool = false, probe: Bool = true) -> Settling.Sample {
+            var value = Settling.Sample()
+            value.windows = [.init(number: target, bounds: CGRect(x: 152, y: 110, width: 720, height: 500), alpha: 1, leaving: false)] + windows
+            value.targetWindow = target
+            value.targetFrame = CGRect(x: 152, y: 158, width: 720, height: 500)
+            value.targetActive = active
+            value.pointWindow = point
+            value.pointWindowOwned = owned
+            value.probeExpected = true
+            value.probe = probe ? ObjectIdentifier(Settling.self) : nil
+            value.geometry = [CGRect(x: 14, y: 441, width: 61, height: 42)]
+            value.clipped = clipped
+            return value
+        }
+        func run(_ samples: [(TimeInterval, Settling.Sample)]) -> [Settling.Decision] {
+            var settling = Settling()
+            return samples.map { settling.observe($0.1, at: $0.0) }
+        }
+        func sheetWindow(y: CGFloat, leaving: Bool) -> Settling.Window {
+            .init(number: sheet, bounds: CGRect(x: 152, y: y, width: 720, height: 500), alpha: 1, leaving: leaving)
+        }
+
+        let presenting = run([(0, sample([sheetWindow(y: 109, leaving: false)], at: target)),
+                              (0.2, sample([sheetWindow(y: 109, leaving: false)], at: target)),
+                              (0.24, sample([sheetWindow(y: 110, leaving: false)], at: target)),
+                              (0.4, sample([sheetWindow(y: 110, leaving: false)], at: target)),
+                              (0.5, sample([sheetWindow(y: 110, leaving: false)], at: target))])
+        #expect(presenting.prefix(4).allSatisfy { $0 == .wait(Settling.changing) } && presenting.last == .settled)
+
+        let dismissing = run([(0, sample([sheetWindow(y: 78, leaving: true)], at: sheet)),
+                              (0.6, sample([sheetWindow(y: 78, leaving: true)], at: sheet)),
+                              (0.7, sample([], at: target)),
+                              (0.9, sample([], at: target)),
+                              (0.96, sample([], at: target))])
+        #expect(dismissing.prefix(2).allSatisfy { $0 == .wait(Settling.leavingCover) })
+        #expect(dismissing[2] == .wait(Settling.changing) && dismissing[3] == .wait(Settling.changing) && dismissing[4] == .settled)
+
+        let permanent = run([(0, sample([sheetWindow(y: 110, leaving: false)], at: sheet)),
+                             (0.2, sample([sheetWindow(y: 110, leaving: false)], at: sheet)),
+                             (0.3, sample([sheetWindow(y: 110, leaving: false)], at: sheet))])
+        #expect(permanent == [.wait(Settling.changing), .wait(Settling.changing), .covered(sheet)])
+        let foreign = run([(0, sample([], at: 77, owned: false)), (0.3, sample([], at: 77, owned: false))])
+        #expect(foreign.last == .covered(77))
+        let reflow = run([(0, sample([], at: target)), (0.1, sample([], at: target, clipped: true)),
+                          (0.3, sample([], at: target, clipped: true)), (0.36, sample([], at: target, clipped: true))])
+        #expect(reflow.dropLast().allSatisfy { $0 == .wait(Settling.changing) } && reflow.last == .reveal)
+        #expect(run([(0, sample([], at: target, active: false)), (0.3, sample([], at: target, active: false))]).last == .inactive)
+        #expect(run([(0, sample([], at: nil, probe: false)), (0.3, sample([], at: nil, probe: false))]).last == .missing)
+
+        var restarted = Settling()
+        _ = restarted.observe(sample([], at: target, clipped: true), at: 0)
+        #expect(restarted.observe(sample([], at: target, clipped: true), at: 0.3) == .reveal)
+        restarted.reset()
+        #expect(restarted.observe(sample([], at: target), at: 0.31) == .wait(Settling.changing))
+        #expect(restarted.observe(sample([], at: target), at: 0.6) == .settled)
+    }
+
+    private func verifyTransientWindowsSettleBeforeInput() async throws {
+        verifyInputSettlingDecisions()
+        let fixture = try await Fixture("transient-windows")
+        defer { fixture.close() }
+        try await fixture.ready(unobscured: ["Undo"])
+        let window = fixture.window, driver = fixture.driver
+        let sheetCapture = Capture()
+        let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 360),
+                             styleMask: [.titled], backing: .buffered, defer: false)
+        sheet.isReleasedWhenClosed = false
+        sheet.contentView = Hosting(rootView: Controls(capture: sheetCapture))
+        defer {
+            if window.attachedSheet === sheet { window.endSheet(sheet) }
+            sheet.orderOut(nil)
+        }
+        func pointer(_ id: String) throws -> [String: Any] {
+            try #require(driver.interactions.last { $0["kind"] as? String == "pointer" && $0["id"] as? String == id })
+        }
+
+        window.beginSheet(sheet, completionHandler: nil)
+        let presentingBounds = nativePointerCGBounds(sheet)
+        try await driver.click("pointer.Undo", in: sheet)
+        try await driver.wait("presenting sheet delivered Undo") { sheetCapture.count("Undo") == 1 }
+        let presented = try pointer("pointer.Undo")
+        let presentedInput = try #require(presented["nativeInput"] as? [String: Any])
+        let presentedSettle = try #require(presented["settle"] as? [String: Any])
+        let settledBounds = try #require(nativePointerCGBounds(sheet))
+        try #require(presentingBounds != settledBounds)
+        let bound = try #require((presentedInput["preDownGuard"] as? [String: Any])?["originalTarget"] as? [String: Any])
+        #expect(presentedInput["status"] as? String == "delivered" && presentedInput["window"] as? Int == sheet.windowNumber)
+        #expect(bound["windowBounds"] as? [CGFloat] == [settledBounds.minX, settledBounds.minY, settledBounds.width, settledBounds.height])
+        #expect(presentedSettle["verdict"] as? String == "settled" && (presentedSettle["changes"] as? Int ?? 0) > 0)
+
+        let parentPoint = try fixture.point("Undo")
+        try #require(NSWindow.windowNumber(at: parentPoint, belowWindowWithWindowNumber: 0) == sheet.windowNumber)
+        window.endSheet(sheet)
+        try #require(NSWindow.windowNumber(at: parentPoint, belowWindowWithWindowNumber: 0) == sheet.windowNumber)
+        let location = NSEvent.mouseLocation
+        let movements = abs(location.x - parentPoint.x) < 0.5 && abs(location.y - parentPoint.y) < 0.5 ? 2 : 1
+        try await driver.click("pointer.Undo", in: window)
+        try await driver.wait("parent Undo after the sheet left") { fixture.capture.count("Undo") == 1 }
+        try delivered("Undo", in: fixture, movements: movements)
+        #expect(sheetCapture.count("Undo") == 1)
+        let dismissedSettle = try #require(try pointer("pointer.Undo")["settle"] as? [String: Any])
+        let transitions = try #require(dismissedSettle["transitions"] as? [[String: Any]])
+        #expect(dismissedSettle["verdict"] as? String == "settled")
+        #expect(transitions.contains { $0["leavingWindow"] as? Int == sheet.windowNumber
+            || ($0["windows"] as? [Int])?.contains(sheet.windowNumber) == true })
+        try fixture.record("transient-windows", ["presented": presented, "dismissed": try pointer("pointer.Undo")])
+    }
+
+    @MainActor private final class ReflowModel: ObservableObject {
+        @Published var viewport: CGFloat = 200
+        @Published var text = "0"
+    }
+
+    @MainActor private struct ReflowField: View {
+        @ObservedObject var model: ReflowModel
+
+        var body: some View {
+            VStack {
+                ScrollView {
+                    VStack(spacing: AppTheme.Spacing.sm) {
+                        Color.clear.frame(height: 140)
+                        TextField("Camera name", text: $model.text).background {
+                            AppRelaunchClickProbe(identifier: "reflow.field", acceptanceState: true, acceptanceText: model.text)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .padding(AppTheme.Spacing.md)
+                }
+                .frame(height: model.viewport)
+                Spacer()
+            }
+            .interfaceStyle()
+        }
+    }
+
+    private func verifyReflowAfterRevealIsRevealedAgain() async throws {
+        let fixture = try await Fixture("reflow-after-reveal")
+        defer { fixture.close() }
+        let model = ReflowModel()
+        let window = fixture.window, driver = fixture.driver
+        window.contentView = NSHostingView(rootView: ReflowField(model: model))
+        try await driver.waitForPresentation(of: window, control: "reflow.field")
+        let field = try #require(window.contentView.flatMap { WorkspaceUIAcceptance.findProbe(in: $0, identifier: "reflow.field") })
+        let clip = try #require(field.enclosingScrollView?.contentView)
+        try #require(clip.bounds.contains(field.convert(field.bounds, to: clip)))
+        // The viewport shrinks only once the driver is settling the already revealed field.
+        let reflow = Task { @MainActor in
+            while !Task.isCancelled {
+                if driver.stage == "settle reflow.field" {
+                    model.viewport = 150
+                    return true
+                }
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+            return false
+        }
+        defer { reflow.cancel() }
+        try await driver.fill("reflow.field", value: "Wide", in: window)
+        let reflowed = await reflow.value
+        #expect(reflowed)
+        #expect(model.text == "Wide")
+        let presentation = try #require(driver.interactions.last {
+            $0["label"] as? String == "text field presentation" && ($0["evidence"] as? [String: Any])?["id"] as? String == "reflow.field"
+        })
+        let settle = try #require((presentation["evidence"] as? [String: Any])?["settle"] as? [String: Any])
+        let reveals = try #require(settle["reveals"] as? [[String: Any]])
+        #expect(settle["verdict"] as? String == "settled" && reveals.count == 1)
+        #expect(((reveals.first?["sample"] as? [String: Any])?["clipped"] as? Bool) == true)
+        #expect(clip.bounds.contains(field.convert(field.bounds, to: clip)))
+    }
+}
+
+@MainActor private func nativePointerCGBounds(_ window: NSWindow) -> CGRect? {
+    let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+    let matches = rows.filter { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid()
+        && ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == window.windowNumber }
+    guard matches.count == 1, let raw = matches[0][kCGWindowBounds as String] as? [String: Any] else { return nil }
+    return CGRect(dictionaryRepresentation: raw as CFDictionary)
 }
