@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import AVKit
 import NexGenEngine
 
 @MainActor
@@ -8,7 +9,7 @@ enum ProductionNativePlayerAcceptance {
                               playerID id: String = "take.preview.player", recordLabel: String = "complete native take playback") async throws {
         try await driver.reveal(id, in: sheet)
         try driver.visible([id], in: sheet)
-        guard let player = ProductionNativePlaybackAcceptance.player(id, in: sheet),
+        guard let playerView = ProductionNativePlaybackAcceptance.playerView(id, in: sheet), let player = playerView.player,
               let frame = WorkspaceUIAcceptance.probeFrame(identifier: id, in: sheet),
               let root = sheet.contentView, let screen = NSScreen.screens.first else {
             throw GateBlocked("The candidate's actual native player is unavailable.")
@@ -17,36 +18,37 @@ enum ProductionNativePlayerAcceptance {
         guard player.currentTime().seconds < 0.05, player.rate == 0 else {
             throw GateBlocked("The take was already playing before native input.")
         }
-        let transaction = try NativeAcceptancePointer.claim()
-        defer { NativeAcceptancePointer.release(transaction) }
-        let hover = sheet.convertToScreen(root.convert(NSRect(x: frame.midX, y: frame.midY, width: 0, height: 0), to: nil)).origin
-        _ = try await NativeAcceptancePointer.move(to: CGPoint(x: hover.x, y: screen.frame.maxY - hover.y),
-                                                   window: sheet, token: transaction) { evidence in
-            try driver.record("native player hover", fields: evidence)
+        do {
+            let transaction = try NativeAcceptancePointer.claim()
+            defer { NativeAcceptancePointer.release(transaction) }
+            let hover = sheet.convertToScreen(root.convert(NSRect(x: frame.midX, y: frame.midY, width: 0, height: 0), to: nil)).origin
+            _ = try await NativeAcceptancePointer.move(to: CGPoint(x: hover.x, y: screen.frame.maxY - hover.y),
+                                                       window: sheet, token: transaction) { evidence in
+                try driver.record("native player hover", fields: evidence)
+            }
         }
-        // The peer reader answers AX queries; an in-process query on the main thread cannot be served.
-        var match: (frames: [NSRect], evidence: [String: Any]) = ([], [:])
-        let deadline = ProcessInfo.processInfo.systemUptime + 10
-        while ProcessInfo.processInfo.systemUptime < deadline {
-            try Task.checkCancellation()
-            match = await driver.publicButtonWindowFrames(id, title: "Play", in: sheet)
-            if match.frames.count == 1 { break }
-            try await Task.sleep(for: .milliseconds(100))
+        // AX IPC to the own process cannot be served from the main thread, and sheets are absent from AXWindows.
+        let playerScreen = sheet.convertToScreen(playerView.convert(playerView.bounds, to: nil))
+        var controls: [NSRect] = [], observed: [[String: Any]] = []
+        func recordControls() throws {
+            try driver.record("native player Play control", fields: ["playerID": id, "elements": observed,
+                "playerScreenFrame": [playerScreen.minX, playerScreen.minY, playerScreen.width, playerScreen.height]])
         }
-        try driver.record("native player Play control", fields: match.evidence)
-        guard match.frames.count == 1, let control = match.frames.first else {
+        do {
+            try await driver.wait("actual AVPlayer Play control") {
+                (controls, observed) = playControls(in: playerView, within: playerScreen)
+                return controls.count == 1
+            }
+        } catch {
+            try recordControls()
+            throw error
+        }
+        try recordControls()
+        guard controls.count == 1, let control = controls.first,
+              let fraction = driver.probeFraction(ofScreenRect: control, id, in: sheet) else {
             throw GateBlocked("The native player did not expose one visible Play control.")
         }
-        let point = NSPoint(x: control.midX, y: control.midY)
-        guard root.hitTest(root.convert(root.convert(point, from: nil), to: root.superview)) != nil else { throw GateBlocked("The native Play control is occluded.") }
-        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: sheet.windowNumber, context: nil,
-                eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0) else {
-                throw GateBlocked("The native Play pointer event could not be created.")
-            }
-            NSApp.postEvent(event, atStart: false)
-        }
+        try await driver.click(id, in: sheet, fraction: fraction)
         try await driver.wait("whole candidate actually playing") { player.rate > 0 && player.currentTime().seconds > 0 }
         try driver.capture("whole-take-playing", target: sheet)
         try await driver.wait("whole candidate reached its last frame", seconds: duration + 5) {
@@ -55,5 +57,24 @@ enum ProductionNativePlayerAcceptance {
         try driver.record(recordLabel, fields: ["playerID": id, "input": "nativePointer",
             "control": "Play", "controlFrame": [control.minX, control.minY, control.width, control.height],
             "observedSeconds": player.currentTime().seconds, "expectedSeconds": duration])
+    }
+
+    private static func playControls(in playerView: AVPlayerView, within player: NSRect) -> ([NSRect], [[String: Any]]) {
+        var pending: [any NSAccessibilityProtocol] = [playerView], visited = Set<ObjectIdentifier>()
+        var matches: [NSRect] = [], observed: [[String: Any]] = []
+        while let element = pending.popLast(), visited.count < 256 {
+            guard visited.insert(ObjectIdentifier(element)).inserted else { continue }
+            let role = element.accessibilityRole()?.rawValue ?? "", frame = element.accessibilityFrame()
+            let label = element.accessibilityLabel() ?? "", title = element.accessibilityTitle() ?? ""
+            let enabled = element.isAccessibilityEnabled()
+            if role == NSAccessibility.Role.button.rawValue {
+                observed.append(["label": label, "title": title, "enabled": enabled,
+                                 "screenFrame": [frame.minX, frame.minY, frame.width, frame.height]])
+            }
+            if role == NSAccessibility.Role.button.rawValue, enabled, [label, title].contains("Play"),
+               frame.width > 0, frame.height > 0, player.insetBy(dx: -1, dy: -1).contains(frame) { matches.append(frame) }
+            pending += (element.accessibilityChildren() ?? []).compactMap { $0 as? any NSAccessibilityProtocol }
+        }
+        return (matches, observed)
     }
 }

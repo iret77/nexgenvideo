@@ -781,10 +781,12 @@ final class ProductionVisualSourcesDriver {
                        y: (frame.midY - view.bounds.minY) / view.bounds.height)
     }
 
-    func publicButtonWindowFrames(_ id: String, title: String, in target: NSWindow) async -> (frames: [NSRect], evidence: [String: Any]) {
-        let match = await buttonFrames(id, title: title, in: target)
-        guard let view = probe(id, in: target) else { return ([], match.evidence) }
-        return (match.frames.map { view.convert($0, to: nil) }, match.evidence)
+    func probeFraction(ofScreenRect screenRect: NSRect, _ id: String, in target: NSWindow) -> NSPoint? {
+        guard let view = probe(id, in: target), view.bounds.width > 0, view.bounds.height > 0 else { return nil }
+        let local = view.convert(target.convertFromScreen(screenRect), from: nil)
+        guard view.bounds.insetBy(dx: -1, dy: -1).contains(local) else { return nil }
+        return NSPoint(x: (local.midX - view.bounds.minX) / view.bounds.width,
+                       y: (local.midY - view.bounds.minY) / view.bounds.height)
     }
 
     private func buttonFrames(_ id: String, title: String, in target: NSWindow,

@@ -305,6 +305,10 @@ enum ProductionV2TakeAcceptance {
 @MainActor
 enum ProductionNativePlaybackAcceptance {
     static func player(_ identifier: String, in window: NSWindow) -> AVPlayer? {
+        playerView(identifier, in: window)?.player
+    }
+
+    static func playerView(_ identifier: String, in window: NSWindow) -> AVPlayerView? {
         guard let root = window.contentView, let frame = WorkspaceUIAcceptance.probeFrame(identifier: identifier, in: window) else { return nil }
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
         let candidates = descendants(root).compactMap { $0 as? AVPlayerView }.filter { view in
@@ -312,7 +316,7 @@ enum ProductionNativePlaybackAcceptance {
             return !view.isHiddenOrHasHiddenAncestor && actual.width > 0 && actual.height > 0
                 && frame.insetBy(dx: -1, dy: -1).contains(actual)
         }
-        return candidates.count == 1 ? candidates[0].player : nil
+        return candidates.count == 1 ? candidates[0] : nil
     }
 }
 

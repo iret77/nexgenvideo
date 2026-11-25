@@ -290,30 +290,34 @@ def verify_native_intake(app, pack, runner, binding):
 def record_analysis_failure(report, started, state):
     import pwd
     import traceback
-    native, client = state.get("native"), state.get("client")
-    crashes = report / "crash-reports"
+    failure = traceback.format_exc()
+    native = state.get("native")
     copied = []
-    for directory in (Path(pwd.getpwuid(os.getuid()).pw_dir) / "Library/Logs/DiagnosticReports",
-                      Path("/Library/Logs/DiagnosticReports")):
-        try:
-            candidates = sorted(directory.glob("NexGenVideo*.ips"))
-        except OSError:
-            continue
-        for path in candidates:
+    try:
+        crashes = report / "crash-reports"
+        for directory in (Path(pwd.getpwuid(os.getuid()).pw_dir) / "Library/Logs/DiagnosticReports",
+                          Path("/Library/Logs/DiagnosticReports")):
             try:
-                info = path.lstat()
-                if not path.is_file() or path.is_symlink() or info.st_mtime < started or info.st_size > 32 * 1024 * 1024:
-                    continue
-                crashes.mkdir(exist_ok=True)
-                destination = crashes / (str(len(copied)) + "-" + path.name)
-                destination.write_bytes(path.read_bytes())
-                copied.append(dict(original=str(path), file=destination.name, bytes=info.st_size))
+                candidates = sorted(directory.glob("NexGenVideo*.ips"))
             except OSError:
                 continue
-    with (report / "analysis-error.json").open("x") as out:
-        json.dump(dict(traceback=traceback.format_exc(),
-                       nativePID=native.pid if native else None, nativeExit=native.poll() if native else None,
-                       testExit=client.process.poll() if client else None, crashReports=copied), out)
+            for path in candidates:
+                try:
+                    info = path.lstat()
+                    if path.is_symlink() or not path.is_file() or info.st_mtime < started or info.st_size > 32 * 1024 * 1024:
+                        continue
+                    crashes.mkdir(exist_ok=True)
+                    destination = crashes / (str(len(copied)) + "-" + path.name)
+                    destination.write_bytes(path.read_bytes())
+                    copied.append(dict(original=str(path), file=destination.name, bytes=info.st_size))
+                except OSError:
+                    continue
+        with (report / ("analysis-error-" + str(time.time_ns()) + ".json")).open("x") as out:
+            json.dump(dict(traceback=failure, nativePID=native.pid if native else None,
+                           nativeExitBeforeTeardown=state.get("nativeExit"), testExitBeforeTeardown=state.get("testExit"),
+                           crashReports=copied), out)
+    except Exception:
+        print("Private analysis failure record incomplete", file=sys.stderr)
 
 
 def analyze():
@@ -335,17 +339,20 @@ def analyze():
         with session(app, env, report, "private-audio", report=report, private=config_for()) as client:
             if client is None:
                 raise ValueError("Missing the bound file dialog XCTest products")
-            state["client"] = client
             with ExitStack() as stack:
                 log = stack.enter_context((report / "private-app.log").open("xb"))
                 native = start(stack, [app / "Contents/MacOS/NexGenVideo", "-ApplePersistenceIgnoreState", "YES",
                                        "-AppleLanguages", "(en)", "-AppleLocale", "en_US"], env=env, log=log)
                 state["native"] = native
-                observer = start_footer_observer(stack, app, env, report, native)
-                code = wait_for_native(native, client, 49 * 60)
-                if code:
-                    raise RuntimeError("The private analysis failed")
-                finish_footer_observer(observer)
+                try:
+                    observer = start_footer_observer(stack, app, env, report, native)
+                    code = wait_for_native(native, client, 49 * 60)
+                    if code:
+                        raise RuntimeError("The private analysis failed")
+                    finish_footer_observer(observer)
+                except Exception:
+                    state.update(nativeExit=native.poll(), testExit=client.process.poll())
+                    raise
     except Exception:
         record_analysis_failure(report, started, state)
         raise
