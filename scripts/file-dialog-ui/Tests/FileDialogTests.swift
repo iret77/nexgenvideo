@@ -173,9 +173,18 @@ final class FileDialogTests: XCTestCase {
             return running.count == 1 && running[0].processIdentifier == pid
                 && running[0].bundleURL.map { canonical($0).path } == canonical(fixture.app).path
         }
+        func registrations() -> String {
+            NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
+                .map { "\($0.processIdentifier) \($0.bundleURL?.path ?? "<no bundle>")" }.joined(separator: ", ")
+        }
+        let exitStatus = fixture.report.appendingPathComponent("dialog-native-exit-\(pid).json")
+        func exited() -> String? {
+            if let status = try? String(contentsOf: exitStatus, encoding: .utf8) { return status }
+            return kill(pid, 0) != 0 && errno == ESRCH ? "no such process" : nil
+        }
         func activeTarget() throws {
             try require(isTarget() && app.state == .runningForeground && app.alerts.count == 0,
-                        "The intended foreground application or modal context changed")
+                        "The intended foreground application or modal context changed; registered: [\(registrations())]")
         }
         // The supervisor binds the PID at spawn; LaunchServices registers the application later.
         var registered: NSRunningApplication?
@@ -210,7 +219,7 @@ final class FileDialogTests: XCTestCase {
             func file(_ name: String) -> URL { fixture.report.appendingPathComponent(prefix + name) }
             try wait("The expected native file panel did not appear", seconds: 1800) {
                 if FileManager.default.fileExists(atPath: file("visible.json").path) { return true }
-                if !isTarget() { throw Failure("The supervised application exited before the next panel") }
+                if let status = exited() { throw Failure("The supervised application exited before the next panel: " + status) }
                 return false
             }
             var receipt = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file("visible.json"))) as? [String: Any])

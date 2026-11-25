@@ -146,4 +146,7 @@ def wait_for_native(native, client, timeout):
         if time.monotonic() >= deadline:
             raise subprocess.TimeoutExpired(native.args, timeout)
         time.sleep(0.1)
+    # The XCTest judges an early exit only from the status the parent observed.
+    with (client.report / ("dialog-native-exit-" + str(native.pid) + ".json")).open("x") as out:
+        json.dump(dict(pid=native.pid, returncode=native.returncode), out)
     return native.returncode
