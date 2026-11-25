@@ -25,6 +25,8 @@ CASES = {
         {"cancelPreservedStoryboard"}),
 }
 
+SCOPED_CASES = {"storage-isolation": tuple(case for case in CASES if case != "nativeBibleUI")}
+
 CANCELLATIONS = {
     "nativeClayUI": ("Clay close during loading", "Clay cancel during actual caller hash"),
     "nativeBibleUI": ("Bible close during loading", "Bible cancel during actual caller hash"),
@@ -139,7 +141,11 @@ def local_file(directory, name):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("evidence", type=Path)
+    parser.add_argument("--scope", choices=tuple(SCOPED_CASES))
     args = parser.parse_args()
     result = json.loads((args.evidence / "result.json").read_text())
-    if not validate(result["productionSpatial"], args.evidence):
+    if result.get("scope") != args.scope:
+        raise SystemExit("Native spatial UI evidence belongs to another acceptance scope.")
+    cases = SCOPED_CASES[args.scope] if args.scope else CASES
+    if not validate_cases(result["productionSpatial"], args.evidence, cases):
         raise SystemExit("Native spatial UI evidence is incomplete or inconsistent.")
