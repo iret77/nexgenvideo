@@ -112,7 +112,7 @@ struct BibleSpatialViewSheet: View {
                     }
                     if scenes.isEmpty && !loading && failure == nil && location != nil {
                         Text("Create location geometry and a camera in Production Design first.").foregroundStyle(AppTheme.Text.secondaryColor)
-                        Button("Open Production Design") { editor.revealCockpit(.productionDesign); dismiss() }.buttonStyle(InlineActionButtonStyle())
+                        Button("Open Production Design") { editor.revealCockpit(.productionDesign); close() }.buttonStyle(InlineActionButtonStyle())
                     }
                     if saving { ProgressView("Saving reference assignment…") }
                     else if operation != nil { ProgressView("Rendering location view…") }
@@ -133,7 +133,7 @@ struct BibleSpatialViewSheet: View {
             }
             HStack {
                 Button(operation != nil && !saving ? "Cancel render" : "Cancel") {
-                    if let operation { operation.cancel() } else { dismiss() }
+                    if let operation { operation.cancel() } else { close() }
                 }.buttonStyle(InlineActionButtonStyle()).keyboardShortcut(.cancelAction).disabled(saving)
                     .reviewAcceptanceProbe("bible.spatial.cancel", state: !saving)
                 Spacer()
@@ -149,13 +149,17 @@ struct BibleSpatialViewSheet: View {
         .task { await load() }.task(id: sceneID) { await loadScene() }
         .interactiveDismissDisabled(operation != nil || saving)
         .onDisappear { operation?.cancel(); readLifetime.cancel() }
-        .onChange(of: editor.workingRoot) { _, value in if value != home { operation?.cancel(); dismiss() } }
-        .onChange(of: editor.openWorkingCopyGeneration) { _, value in if value != generation { operation?.cancel(); dismiss() } }
+        .onChange(of: editor.workingRoot) { _, value in if value != home { close() } }
+        .onChange(of: editor.openWorkingCopyGeneration) { _, value in if value != generation { close() } }
         .sheet(isPresented: $inspecting) {
             if let full = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) {
                 ProductionImageInspectionView(image: full, title: prepared?.purpose ?? "Location view")
             }
         }
+    }
+
+    private func close() {
+        SpatialSheetClose.close(render: operation, reads: readLifetime) { dismiss() }
     }
 
     private func load() async {
@@ -178,12 +182,12 @@ struct BibleSpatialViewSheet: View {
                 return (bible.locations.first { $0.id == locationID }, try FileDigest.sha256(of: ProjectLocalFile.resolve(PipelineLayout.bibleFile, dataRoot: root)),
                     try SpatialSceneStore.index(in: root).scenes)
             }
-            guard !Task.isCancelled, currentSession, listRequest == request else { return }
+            guard !Task.isCancelled, !readLifetime.isCancelled, currentSession, listRequest == request else { return }
             guard let currentLocation = value.0 else {
                 throw ToolError("This location is no longer in References. Close this view and select a current location.")
             }
             location = currentLocation; bibleSHA256 = value.1; scenes = value.2
-        } catch { if !Task.isCancelled, currentSession, listRequest == request { failure = error.localizedDescription } }
+        } catch { if !Task.isCancelled, !readLifetime.isCancelled, currentSession, listRequest == request { failure = error.localizedDescription } }
     }
 
     private func loadScene() async {
@@ -197,9 +201,13 @@ struct BibleSpatialViewSheet: View {
             let value = try await PipelineSpatialDerivationWriter.background(cancellation: cancellation, dataRoot: root) {
                 try SpatialSceneStore.load(selected, in: root)
             }
-            guard !Task.isCancelled, currentSession, listRequest == request, self.selected == selected else { return }
+            guard !Task.isCancelled, !readLifetime.isCancelled, currentSession, listRequest == request, self.selected == selected else { return }
             scene = value; failure = nil
-        } catch { if !Task.isCancelled, currentSession, listRequest == request, self.selected == selected { failure = error.localizedDescription } }
+        } catch {
+            if !Task.isCancelled, !readLifetime.isCancelled, currentSession, listRequest == request, self.selected == selected {
+                failure = error.localizedDescription
+            }
+        }
     }
 
     private func render() {

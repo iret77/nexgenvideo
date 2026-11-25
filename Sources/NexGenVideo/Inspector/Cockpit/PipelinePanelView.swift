@@ -129,11 +129,13 @@ struct PipelinePanelView: View {
     @State private var readinessToken = 0
     @State private var readinessTask: Task<Void, Never>?
     @State private var readinessRefreshQueued = false
+    @State private var readinessRevision: Int?
     @State private var approvalPhase: String?
     @State private var approvalReadiness = NativeGateApprovalReadiness.blocked(
         "The pipeline state is unavailable."
     )
     @State private var mutationReadiness = PhaseControlReadiness.checking
+    @State private var settledReadiness: PhaseDockReadiness?
     @State private var pendingRewind: RewindRequest?
     @State private var showsReadinessDiagnostics = false
 
@@ -169,6 +171,22 @@ struct PipelinePanelView: View {
             || editor.agentService.currentSpendRun != nil || editor.generationBatchCoordinator.activeBatchID != nil
     }
 
+    private var nativeEdit: String? {
+        dataRoot.flatMap { editor.pipelinePhaseRunCoordinator.activeMutation(projectRoot: $0) }
+    }
+
+    // Native edits are short host operations: the dock shows them as settling instead of removing its controls.
+    private var phaseWorkIsRunning: Bool {
+        (runningPhase != nil && nativeEdit == nil) || editor.agentService.isStreaming
+            || editor.agentService.currentSpendRun != nil || editor.generationBatchCoordinator.activeBatchID != nil
+    }
+
+    private func dockLayout(for phase: String) -> PhaseDockLayout {
+        let current = PhaseDockReadiness(phase: approvalPhase,
+            mutation: nativeEdit.map(PhaseControlReadiness.busy) ?? mutationReadiness, approval: approvalReadiness)
+        return PhaseDockLayout.resolve(phase: phase, current: current, settled: settledReadiness, saving: gateWriting)
+    }
+
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
             content
@@ -184,6 +202,7 @@ struct PipelinePanelView: View {
         .onChange(of: editor.projectURL) { _, _ in
             pendingRewind = nil
             gateError = nil
+            settledReadiness = nil
         }
         .onChange(of: approvalPhase == "render" ? editor.timeline : nil) { _, _ in refreshApprovalReadiness() }
         .onChange(of: approvalPhase == "render" ? editor.mediaAssets.map(\.url) : nil) { _, _ in refreshApprovalReadiness() }
@@ -304,8 +323,9 @@ struct PipelinePanelView: View {
                         availablePackSurfaces: editor.availableCockpitPackSurfaces) != nil
                     let running = runningPhase == phase.phase || editor.agentService.currentTaskPhase == phase.phase
                         || activeGenerationPhase == phase.phase
-                    let status = PipelinePhasePresentation.resolve(phase: phase, isCurrent: current,
-                        isRunning: running, ready: current && approvalReadiness.isReady)
+                    let status = PipelinePhasePresentation.resolve(phase: phase, isCurrent: current, isRunning: running,
+                        checking: current && dockLayout(for: phase.phase).checking,
+                        waiting: current && dockLayout(for: phase.phase).waiting, ready: current && approvalReadiness.isReady)
                     Button { selectPhase(phase.phase) } label: {
                         HStack(spacing: AppTheme.Spacing.sm) {
                             Image(systemName: status.symbol)
@@ -351,102 +371,57 @@ struct PipelinePanelView: View {
                 let isCurrent = phase.phase == data.nextPhaseName
                 let isRunning = runningPhase == phase.phase || editor.agentService.currentTaskPhase == phase.phase
                     || activeGenerationPhase == phase.phase
-                let status = PipelinePhasePresentation.resolve(phase: phase, isCurrent: isCurrent,
-                    isRunning: isRunning, ready: isCurrent && approvalReadiness.isReady)
-                Label("\(PhaseDisplay.label(phase.phase)) · \(status.label)", systemImage: status.symbol)
-                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                    .background { acceptanceProbe("dock.status", text: status.label) }
-                if hasDecision {
-                    AgentPanelView(presentation: .decision)
-                } else if let recovery = data.confirmedIdentityRecovery {
-                    ScrollView { confirmedIdentityRecoveryCard(recovery) }
-                        .frame(maxHeight: AppTheme.ComponentSize.agentDecisionMaxHeight)
-                } else if activeGenerationPhase == phase.phase, let batchID = editor.generationBatchCoordinator.activeBatchID {
-                    GenerationBatchProgressView(editor: editor, batchID: batchID)
-                } else if isCurrent, let run = editor.agentService.currentSpendRun {
-                    Label("\(run.actionLabel) · \(run.modelName)", systemImage: "sparkles")
-                        .interfaceFont(size: AppTheme.Typography.ui)
-                    Text("The result will appear here for review.")
-                        .interfaceFont(size: AppTheme.Typography.metadata)
-                        .foregroundStyle(AppTheme.Text.secondaryColor)
-                } else if isCurrent {
-                    Text(nextActionDescription(for: phase.phase))
-                        .interfaceFont(size: AppTheme.Typography.ui)
-                        .foregroundStyle(AppTheme.Text.secondaryColor)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .background { acceptanceProbe("dock.reason", text: nextActionDescription(for: phase.phase)) }
-                    if !workIsRunning {
-                        if approvalReadiness.isReady {
-                            approveButton(phase, enabled: approvalIsEnabled(for: phase.phase, isNext: true, runningPhase: runningPhase))
-                        } else {
-                            Button("Continue \(PhaseDisplay.label(phase.phase))") {
-                                continuePhase(phase.phase)
-                            }
-                            .buttonStyle(.inlineAction(.pack))
-                            .disabled(gateWriting || !mutationReadiness.isReady)
-                            .background { acceptanceProbe("dock.continue", enabled: !gateWriting && mutationReadiness.isReady) }
-                        }
-                    }
-                    if case .failed = mutationReadiness, !gateWriting, !workIsRunning, readinessTask == nil {
-                        Button("Retry phase controls") { refreshApprovalReadiness() }
-                            .buttonStyle(.inlineAction(.neutral))
-                            .background { acceptanceProbe("dock.retry", enabled: true) }
-                    }
-                    if mutationReadiness.isReady || mutationReadiness.failure != nil,
-                       let diagnostic = mutationReadiness.failure ?? approvalReadiness.blocker,
-                       mutationReadiness.failure != nil || approvalPhase == phase.phase, !workIsRunning {
-                        Button("Diagnostics") { showsReadinessDiagnostics = true }
-                            .buttonStyle(.inlineAction(.neutral))
-                            .background { acceptanceProbe("dock.diagnostics", enabled: true) }
-                            .popover(isPresented: $showsReadinessDiagnostics) {
-                                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                                    Text("\(PhaseDisplay.label(phase.phase)) diagnostics")
-                                        .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
-                                    ScrollView {
-                                        Text(diagnostic)
-                                            .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
-                                            .textSelection(.enabled)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .background { acceptanceProbe("dock.diagnostic-text", text: diagnostic) }
-                                    }
-                                    Button("Done") { showsReadinessDiagnostics = false }
-                                        .buttonStyle(.inlineAction(.neutral))
-                                        .background { acceptanceProbe("dock.diagnostics-done", enabled: true) }
-                                }
-                                .padding(AppTheme.Spacing.md)
-                                .frame(width: AppTheme.Layout.activityFlyoutWidth, height: AppTheme.Layout.activityFlyoutHeight)
-                            }
-                    }
-                } else if phase.approved {
-                    Text("Revising this phase resets its approval and all following approvals.")
-                        .interfaceFont(size: AppTheme.Typography.metadata)
-                        .foregroundStyle(AppTheme.Text.secondaryColor)
-                    if let reason = revisionBlockedReason {
-                        Text(reason)
+                let layout = dockLayout(for: phase.phase)
+                let status = PipelinePhasePresentation.resolve(phase: phase, isCurrent: isCurrent, isRunning: isRunning,
+                    checking: isCurrent && layout.checking, waiting: isCurrent && layout.waiting,
+                    ready: isCurrent && approvalReadiness.isReady)
+                let generating = activeGenerationPhase == phase.phase && editor.generationBatchCoordinator.activeBatchID != nil
+                let hostOwned = hasDecision || data.confirmedIdentityRecovery != nil || generating
+                if !hostOwned && isCurrent && editor.agentService.currentSpendRun == nil {
+                    PhaseDockCurrentPhaseView(phase: phase.phase, status: status, layout: layout,
+                        activity: gateWriting ? nil : activityDescription(for: phase.phase),
+                        showsActions: !phaseWorkIsRunning,
+                        approveEnabled: approvalIsEnabled(for: phase.phase, isNext: true, runningPhase: runningPhase),
+                        controlsReady: mutationReadiness.isReady, checkInFlight: readinessTask != nil,
+                        showsDiagnostics: $showsReadinessDiagnostics,
+                        approve: { approve(phase) }, continuePhase: { continuePhase(phase.phase) },
+                        retry: { refreshApprovalReadiness() })
+                } else if !hostOwned && !isCurrent && phase.approved {
+                    PhaseDockRevisionView(phase: phase.phase, status: status, layout: revisionLayout,
+                        reviseEnabled: !gateWriting && !workIsRunning && mutationReadiness.isReady,
+                        checkInFlight: readinessTask != nil,
+                        revise: {
+                            guard let home = editor.workingRoot,
+                                  let index = data.phases.firstIndex(where: { $0.phase == phase.phase }) else { return }
+                            pendingRewind = RewindRequest(home: home, revision: editor.engineStateRevision,
+                                phase: phase.phase, affected: data.phases[index...].map(\.phase))
+                        },
+                        retry: { refreshApprovalReadiness() })
+                } else {
+                    PhaseDockStatusLabel(phase: phase.phase, status: status)
+                        .background { acceptanceProbe("dock.status", text: status.label) }
+                    if hasDecision {
+                        AgentPanelView(presentation: .decision)
+                    } else if let recovery = data.confirmedIdentityRecovery {
+                        ScrollView { confirmedIdentityRecoveryCard(recovery) }
+                            .frame(maxHeight: AppTheme.ComponentSize.agentDecisionMaxHeight)
+                    } else if generating, let batchID = editor.generationBatchCoordinator.activeBatchID {
+                        GenerationBatchProgressView(editor: editor, batchID: batchID)
+                    } else if isCurrent, let run = editor.agentService.currentSpendRun {
+                        Label("\(run.actionLabel) · \(run.modelName)", systemImage: "sparkles")
+                            .interfaceFont(size: AppTheme.Typography.ui)
+                        Text("The result will appear here for review.")
+                            .interfaceFont(size: AppTheme.Typography.metadata)
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                    } else if let current = data.nextPhaseName {
+                        Text("Complete \(PhaseDisplay.label(current)) before starting this phase.")
                             .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.secondaryColor)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if !gateWriting, !workIsRunning, mutationReadiness.failure != nil, readinessTask == nil {
-                            Button("Retry phase controls") { refreshApprovalReadiness() }
+                        if PipelineSurfaceRouting.route(for: current, contract: editor.uiContract,
+                            availablePackSurfaces: editor.availableCockpitPackSurfaces) != nil {
+                            Button("Go to \(PhaseDisplay.label(current))") { selectPhase(current) }
                                 .buttonStyle(.inlineAction(.neutral))
                         }
-                    }
-                    Button("Revise \(PhaseDisplay.label(phase.phase))…") {
-                        guard let home = editor.workingRoot,
-                              let index = data.phases.firstIndex(where: { $0.phase == phase.phase }) else { return }
-                        pendingRewind = RewindRequest(home: home, revision: editor.engineStateRevision,
-                            phase: phase.phase, affected: data.phases[index...].map(\.phase))
-                    }
-                    .buttonStyle(.inlineAction(.neutral))
-                    .disabled(gateWriting || workIsRunning || !mutationReadiness.isReady)
-                } else if let current = data.nextPhaseName {
-                    Text("Complete \(PhaseDisplay.label(current)) before starting this phase.")
-                        .interfaceFont(size: AppTheme.Typography.ui)
-                        .foregroundStyle(AppTheme.Text.secondaryColor)
-                    if PipelineSurfaceRouting.route(for: current, contract: editor.uiContract,
-                        availablePackSurfaces: editor.availableCockpitPackSurfaces) != nil {
-                        Button("Go to \(PhaseDisplay.label(current))") { selectPhase(current) }
-                            .buttonStyle(.inlineAction(.neutral))
                     }
                 }
             }
@@ -465,19 +440,20 @@ struct PipelinePanelView: View {
         }
         .padding(AppTheme.Spacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            acceptanceProbe("dock.readiness", enabled: readinessTask == nil && mutationReadiness.isReady && runningPhase == nil
+                && readinessRevision == editor.engineStateRevision, text: readinessRevision.map(String.init))
+        }
         .background(AppTheme.Background.raisedColor)
     }
 
-    private var revisionBlockedReason: String? {
-        if gateWriting { return "Saving the phase decision…" }
-        if workIsRunning { return "Wait for the current operation to finish before revising this phase." }
-        switch mutationReadiness {
-        case .ready: return nil
-        case .checking: return "Checking whether this phase can be revised…"
-        case .busy: return mutationReadiness.dockMessage
-        case .failed:
-            return "The saved workflow could not be verified. Retry the check. If it still fails, reopen the project."
+    private var revisionLayout: PhaseDockRevisionLayout {
+        if gateWriting { return PhaseDockRevisionLayout(reason: PhaseDockReadiness.savingMessage) }
+        if phaseWorkIsRunning {
+            return PhaseDockRevisionLayout(reason: "Wait for the current operation to finish before revising this phase.")
         }
+        return .resolve(mutation: nativeEdit.map(PhaseControlReadiness.busy) ?? mutationReadiness,
+                        settled: settledReadiness?.mutation)
     }
 
     private func continuePhase(_ phase: String) {
@@ -645,7 +621,10 @@ struct PipelinePanelView: View {
     }
 
     private func nextActionDescription(for phase: String) -> String {
-        if gateWriting { return "Saving the phase decision…" }
+        (gateWriting ? nil : activityDescription(for: phase)) ?? dockLayout(for: phase).message
+    }
+
+    private func activityDescription(for phase: String) -> String? {
         if runningPhase == phase { return "AI is working on \(PhaseDisplay.label(phase)). The result will appear here for review." }
         if let failure = editor.agentService.currentPipelineRepairFailure {
             return failure.kind == .unrequestedRevision
@@ -660,11 +639,7 @@ struct PipelinePanelView: View {
         if editor.agentService.pendingGateApproval != nil { return "Review the phase decision below." }
         if editor.agentService.isComposerBlocked { return "Your input is needed in the decision below." }
         if editor.agentService.currentTaskPhase == phase { return "AI is working on \(PhaseDisplay.label(phase)). The result will appear here for review." }
-        if approvalPhase != phase { return "Checking phase readiness…" }
-        if let message = mutationReadiness.dockMessage { return message }
-        if approvalReadiness.isReady { return "Review this phase’s artifact, then approve it to continue." }
-        return approvalReadiness.userMessage
-            ?? "This phase is incomplete. Continue the phase before approval."
+        return nil
     }
 
     private func approvalIsEnabled(for phase: String, isNext: Bool, runningPhase: String?) -> Bool {
@@ -770,50 +745,25 @@ struct PipelinePanelView: View {
         acceptanceProbe(id: "pipeline.overview.\(part)", enabled: enabled, text: text)
     }
 
-    @ViewBuilder
     private func acceptanceProbe(id: String, enabled: Bool? = nil, text: String? = nil) -> some View {
-        if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested
-            || ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"]?.isEmpty == false {
-            AppRelaunchClickProbe(identifier: id,
-                acceptanceState: enabled, acceptanceText: text)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .allowsHitTesting(false)
-        }
+        PipelineAcceptanceProbe(id: id, enabled: enabled, text: text)
     }
 
-    /// Approving a phase is the one action the pipeline cannot advance without — it belongs in the row,
-    /// not behind an unlabeled “…”. The menu keeps the rarer siblings (send back, rewind).
-    private func approveButton(
-        _ phase: ProjectPhase,
-        enabled: Bool
-    ) -> some View {
-        Button {
-            apply(
-                failureMessage: "\(PhaseDisplay.label(phase.phase)) isn't ready for approval yet."
-            ) {
-                try await NativeGateWriter.approve(
-                    projectDir: $0,
-                    phase: phase.phase,
-                    declaredPack: editor.declaredPluginName,
-                    declaredBinding: editor.declaredPluginBinding,
-                        declaredProductionContract: editor.declaredProductionContract,
-                    editor: editor, executionCoordinator: editor.pipelinePhaseRunCoordinator
-                )
-            }
-        } label: {
-            Text("Approve")
-                .fixedSize(horizontal: false, vertical: true)
-                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
-                .frame(minHeight: AppTheme.IconSize.smMd)
+    private func approveButton(_ phase: ProjectPhase, enabled: Bool) -> some View {
+        PhaseApproveButton(phase: phase.phase, enabled: enabled) { approve(phase) }
+    }
+
+    private func approve(_ phase: ProjectPhase) {
+        apply(failureMessage: "\(PhaseDisplay.label(phase.phase)) isn't ready for approval yet.") {
+            try await NativeGateWriter.approve(
+                projectDir: $0,
+                phase: phase.phase,
+                declaredPack: editor.declaredPluginName,
+                declaredBinding: editor.declaredPluginBinding,
+                declaredProductionContract: editor.declaredProductionContract,
+                editor: editor, executionCoordinator: editor.pipelinePhaseRunCoordinator
+            )
         }
-        .buttonStyle(.inlineAction(.approval))
-        .disabled(!enabled)
-        .background { acceptanceProbe("approve.\(phase.phase)", enabled: enabled) }
-        .help(
-            enabled
-                ? "Approve \(PhaseDisplay.label(phase.phase)) and move to the next phase"
-                : "Complete \(PhaseDisplay.label(phase.phase)) before approving"
-        )
     }
 
     /// Direct gate controls (docs/UI_UX_CONCEPT.md §4) — approve / send back / rewind, wired to the
@@ -1043,6 +993,7 @@ struct PipelinePanelView: View {
 
     private func refreshApprovalReadiness() {
         readinessToken += 1
+        readinessRevision = nil
         guard case .loaded(let data) = state,
               let data,
               editor.workingRoot != nil
@@ -1050,6 +1001,7 @@ struct PipelinePanelView: View {
             approvalPhase = nil
             approvalReadiness = .blocked("The pipeline state is unavailable.")
             mutationReadiness = .failed("The pipeline state is unavailable.")
+            settledReadiness = nil
             return
         }
         let phase = data.nextPhaseName
@@ -1065,6 +1017,7 @@ struct PipelinePanelView: View {
                 guard !Task.isCancelled else { break }
                 let token = readinessToken
                 let currentPhase = approvalPhase
+                let revision = editor.engineStateRevision
                 guard let currentDir = editor.workingRoot else { break }
                 let readiness = await NativeGateWriter.controlReadiness(
                     projectDir: currentDir,
@@ -1080,6 +1033,11 @@ struct PipelinePanelView: View {
                 else { continue }
                 mutationReadiness = PhaseControlReadiness(readiness)
                 approvalReadiness = readiness.approval
+                readinessRevision = revision
+                if !mutationReadiness.isTransient {
+                    settledReadiness = PhaseDockReadiness(phase: currentPhase, mutation: mutationReadiness,
+                        approval: readiness.approval)
+                }
             } while readinessRefreshQueued
             readinessTask = nil
         }
@@ -1138,6 +1096,22 @@ enum PhaseControlReadiness: Equatable {
 
     var isReady: Bool { self == .ready }
 
+    var isTransient: Bool { self == .checking || isBusy }
+
+    var isBusy: Bool {
+        if case .busy = self { return true }
+        return false
+    }
+
+    var revisionMessage: String? {
+        switch self {
+        case .ready: nil
+        case .checking: "Checking whether this phase can be revised…"
+        case .busy: dockMessage
+        case .failed: "The saved workflow could not be verified. Retry the check. If it still fails, reopen the project."
+        }
+    }
+
     var failure: String? {
         if case .failed(let reason) = self { return reason }
         return nil
@@ -1152,11 +1126,11 @@ enum PhaseControlReadiness: Equatable {
         }
     }
 
-    // Phase jobs and gate writes report phase IDs; native edits report a readable operation label.
+    // Phase jobs and gate writes report phase IDs; native edits report a readable label that stays as written.
     static func operationName(_ label: String) -> String {
         let parts = label.split(separator: " ", maxSplits: 1).map(String.init)
         if parts.count == 1 { return PhaseDisplay.label(label) }
-        guard parts[1].allSatisfy({ $0.isLowercase || $0 == "_" }) else { return label }
+        guard ["Approve", "Rewind"].contains(parts[0]) || PhaseDisplay.knownLabel(parts[1]) != nil else { return label }
         return parts[0] + " " + PhaseDisplay.label(parts[1])
     }
 }

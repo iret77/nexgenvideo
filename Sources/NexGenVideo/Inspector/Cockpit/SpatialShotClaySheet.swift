@@ -66,7 +66,7 @@ struct SpatialShotClaySheet: View {
             }
             HStack {
                 Button(operation == nil ? "Done" : "Cancel render") {
-                    if let operation { operation.cancel() } else { dismiss() }
+                    if let operation { operation.cancel() } else { close() }
                 }.buttonStyle(InlineActionButtonStyle()).keyboardShortcut(.cancelAction)
                     .reviewAcceptanceProbe("shot-planning.clay.close", text: operation == nil ? "done" : "cancel")
                 Spacer()
@@ -79,9 +79,13 @@ struct SpatialShotClaySheet: View {
         .frame(width: AppTheme.Layout.productionDecisionReviewWidth, height: AppTheme.Layout.productionDecisionReviewHeight)
         .reviewAcceptanceProbe("shot-planning.clay.sheet", state: readCompleted && operation == nil, text: shotID)
         .task { await load() }.onDisappear { operation?.cancel(); readLifetime.cancel() }
-        .onChange(of: editor.openWorkingCopyGeneration) { _, _ in operation?.cancel(); dismiss() }
-        .onChange(of: editor.workingRoot) { _, value in if value != home { operation?.cancel(); dismiss() } }
+        .onChange(of: editor.openWorkingCopyGeneration) { _, _ in close() }
+        .onChange(of: editor.workingRoot) { _, value in if value != home { close() } }
         .interactiveDismissDisabled(operation != nil)
+    }
+
+    private func close() {
+        SpatialSheetClose.close(render: operation, reads: readLifetime) { dismiss() }
     }
 
     private func load() async {
@@ -114,10 +118,12 @@ struct SpatialShotClaySheet: View {
                 }
                 return (shot.camera.spatialState, video, ProductionTimeEntry.seconds(timing.durationTicks, timebase: board.timing.timebase), shot.camera.spatialDerivation)
             }
-            guard !Task.isCancelled, readRequest == request, editor.workingRoot == home, editor.openWorkingCopyGeneration == generation else { return }
+            guard !Task.isCancelled, !readLifetime.isCancelled, readRequest == request, editor.workingRoot == home,
+                  editor.openWorkingCopyGeneration == generation else { return }
             state = value.0; video = value.1; duration = value.2; proof = value.3; loadedGeneration = generation
         } catch {
-            if !Task.isCancelled, readRequest == request, editor.workingRoot == home, editor.openWorkingCopyGeneration == generation {
+            if !Task.isCancelled, !readLifetime.isCancelled, readRequest == request, editor.workingRoot == home,
+               editor.openWorkingCopyGeneration == generation {
                 failure = error.localizedDescription
             }
         }

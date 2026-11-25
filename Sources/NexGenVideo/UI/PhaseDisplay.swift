@@ -16,6 +16,10 @@ enum PhaseDisplay {
     }
 
     static func label(_ id: String) -> String {
+        knownLabel(id) ?? id.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    static func knownLabel(_ id: String) -> String? {
         if let curated = hostLabel(id) { return curated }
         if let declared = PhaseContractRuntime.displayLabel(for: id) {
             return declared
@@ -33,7 +37,7 @@ enum PhaseDisplay {
         case "sanity": String(localized: "phase.sanity", defaultValue: "Sanity Check", comment: "Pipeline phase")
         case "frames": String(localized: "phase.frames", defaultValue: "Frames", comment: "Pipeline phase")
         case "render": String(localized: "phase.render", defaultValue: "Render", comment: "Pipeline phase")
-        default: id.replacingOccurrences(of: "_", with: " ").capitalized
+        default: nil
         }
     }
 }

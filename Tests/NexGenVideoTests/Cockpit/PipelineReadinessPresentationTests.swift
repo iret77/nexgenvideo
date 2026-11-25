@@ -55,4 +55,18 @@ struct PipelineReadinessPresentationTests {
         #expect(PipelineSurfaceRouting.route(for: "unavailable", contract: contract, availablePackSurfaces: []) == nil)
         #expect(PipelineSurfaceRouting.route(for: "project_init", contract: contract, availablePackSurfaces: [])?.destination == .tab(.project))
     }
+
+    @Test func theCurrentPhaseStatusSaysCheckingInsteadOfIncomplete() throws {
+        let phase = try JSONDecoder().decode(ProjectPhase.self,
+            from: Data(#"{"phase":"storyboard","approved":false,"state":"pending"}"#.utf8))
+        let status = PipelinePhasePresentation.resolve(phase: phase, isCurrent: true, isRunning: false, checking: true,
+                                                       ready: false)
+        #expect(status == .checking)
+        #expect(status.label == "Checking")
+        #expect(PipelinePhasePresentation.resolve(phase: phase, isCurrent: false, isRunning: false, checking: true,
+                                                  ready: false) == .upcoming)
+        let waiting = PipelinePhasePresentation.resolve(phase: phase, isCurrent: true, isRunning: false, waiting: true,
+                                                        ready: true)
+        #expect(waiting == .waiting && waiting.label == "Waiting")
+    }
 }

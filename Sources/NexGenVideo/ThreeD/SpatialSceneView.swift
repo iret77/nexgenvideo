@@ -81,7 +81,8 @@ struct SpatialSceneView: View {
                 Button(head.name) { session.open(head) }
                     .buttonStyle(.capsule(isSelected: head.id == session.current?.manifest.sceneID))
                     .disabled(session.busy)
-                    .reviewAcceptanceProbe("spatial.location.\(head.id.uuidString)", state: !session.busy)
+                    .reviewAcceptanceProbe("spatial.location.\(head.id.uuidString)", state: !session.busy,
+                                           text: head.id == session.current?.manifest.sceneID ? "current" : "")
             }
             TextField("Location name", text: $newName)
                 .disabled(!canNameLocation)

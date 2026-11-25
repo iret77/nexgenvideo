@@ -2534,6 +2534,20 @@ enum NativeAcceptancePointer {
                       hosting: hosting, clippingAncestors: clippingAncestors)
     }
 
+    private static func downTargetChange(_ hit: NSView?, original: Target, probe: NSView, window: NSWindow) -> [String: Any]? {
+        let frame = probe.window === window ? probe.convert(probe.bounds, to: original.root) : nil
+        var sameControl = hit === original.actualHit
+        if let hit, let field = original.fieldOwner { sameControl = sameControl || hit.isDescendant(of: field) }
+        let comparisons = ["samePhysicalControl": sameControl, "probeInWindow": frame != nil, "probeFrame": frame == original.probeFrame]
+        guard comparisons.values.contains(false) else { return nil }
+        func rect(_ value: NSRect?) -> [CGFloat] { value.map { [$0.minX, $0.minY, $0.width, $0.height] } ?? [] }
+        return ["reason": "The verified control moved before AppKit dispatched the Down.",
+                "comparisons": comparisons, "hitClass": hit.map { String(reflecting: type(of: $0)) } ?? "none",
+                "hitObject": hit.map { String(describing: ObjectIdentifier($0)) } ?? "none",
+                "originalHitObject": String(describing: ObjectIdentifier(original.actualHit)),
+                "probeFrame": rect(frame), "originalProbeFrame": rect(original.probeFrame)]
+    }
+
     private static func same(_ first: Target, _ next: Target, comparisons: inout [String: Bool]) -> Bool {
         comparisons = ["window": first.window === next.window, "root": first.root === next.root,
             "probe": first.probe === next.probe, "hit": first.hit === next.hit,
@@ -2731,6 +2745,7 @@ enum NativeAcceptancePointer {
             var events: [[String: Any]] = []
             var down = false
             var up = false
+            var refusedDown: [String: Any]?
         }
         let poster = NativePointerPoster(source: source, down: down, up: up, point: original.quartzPoint,
                                          window: window.windowNumber, windowBounds: original.cgFrame,
@@ -2744,8 +2759,8 @@ enum NativeAcceptancePointer {
             let location = event.locationInWindow, observedWindow = event.windowNumber, type = event.type
             let pressed = CGEventSource.buttonState(.combinedSessionState, button: .left)
             let global = NSEvent.mouseLocation
-            MainActor.assumeIsolated {
-                guard observedTag == tag else { return }
+            let dispatch = MainActor.assumeIsolated { () -> Bool in
+                guard observedTag == tag else { return true }
                 let root = original.root
                 let local = root.convert(location, from: nil)
                 let hit = root.hitTest(root.convert(local, to: root.superview))
@@ -2753,15 +2768,29 @@ enum NativeAcceptancePointer {
                     "point": [location.x, location.y], "screenPoint": [global.x, global.y],
                     "tag": tag, "buttonDown": pressed, "observedUptime": ProcessInfo.processInfo.systemUptime,
                     "hitClass": hit.map { String(describing: Swift.type(of: $0)) } ?? "none"])
-                guard observedWindow == number, abs(location.x - point.x) < 0.5,
-                      abs(location.y - point.y) < 0.5 else { return }
+                let inPlace = observedWindow == number && abs(location.x - point.x) < 0.5 && abs(location.y - point.y) < 0.5
                 if type == .leftMouseDown && pressed {
                     delivery.down = true
+                    // The pre-Down guard precedes the post; layout can still move until AppKit dispatches the press.
+                    if inPlace {
+                        delivery.refusedDown = downTargetChange(hit, original: original, probe: probe, window: window)
+                    } else {
+                        let refusal: [String: Any] = ["reason": "The tagged Down reached AppKit outside the verified window point.",
+                            "observedWindow": observedWindow, "expectedWindow": number,
+                            "observedPoint": [location.x, location.y], "expectedPoint": [point.x, point.y]]
+                        delivery.refusedDown = refusal
+                    }
                     poster.observedDown()
+                    return delivery.refusedDown == nil
                 }
-                if type == .leftMouseUp && !pressed { delivery.up = true }
+                if type == .leftMouseUp {
+                    if delivery.refusedDown != nil { return false }
+                    if inPlace && !pressed { delivery.up = true }
+                    return true
+                }
+                return true
             }
-            return event
+            return dispatch ? event : nil
         }
         defer {
             if let monitor { NSEvent.removeMonitor(monitor) }
@@ -2816,6 +2845,7 @@ enum NativeAcceptancePointer {
                     "targetComparisons": preDownTargetComparisons]]) { _, new in new }
             if let windowGuardFailure { value["windowGuardFailure"] = windowGuardFailure }
             if let accessibilityGuardFailure { value["accessibilityGuardFailure"] = accessibilityGuardFailure }
+            if let refusedDown = delivery.refusedDown { value["downTargetRefusal"] = refusedDown }
             return value
         }
 
@@ -2880,6 +2910,9 @@ enum NativeAcceptancePointer {
                   state["buttonReleased"] as? Bool == true,
                   state["error"] == nil, delivery.down else {
                 throw GateBlocked("The native pointer transaction lacks a verified OS button lifecycle.")
+            }
+            if let refusal = delivery.refusedDown {
+                throw GateBlocked(refusal["reason"] as? String ?? "AppKit refused the tagged Down.")
             }
             try record(evidence("delivered"))
         } catch {

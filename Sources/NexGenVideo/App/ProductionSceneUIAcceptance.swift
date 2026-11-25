@@ -7,7 +7,7 @@ enum ProductionSceneUIAcceptance {
     static func run(context: ProductionPlanningAcceptanceFixture.Context, output: URL) async throws -> (SpatialSceneHead, [[String: Any]]) {
         let defaults = UserDefaults.standard, oldScale = defaults.object(forKey: AppTheme.Typography.scaleKey)
         defer { if let oldScale { defaults.set(oldScale, forKey: AppTheme.Typography.scaleKey) } else { defaults.removeObject(forKey: AppTheme.Typography.scaleKey) } }
-        let window = try documentWindow(context), root = context.dataRoot
+        let window = try documentWindow(context), root = context.dataRoot, editor = context.editor
         var results: [[String: Any]] = [], lastHead: SpatialSceneHead?
         for scale in [1.0, 1.25, 1.5] {
             defaults.set(scale, forKey: AppTheme.Typography.scaleKey)
@@ -19,10 +19,24 @@ enum ProductionSceneUIAcceptance {
                 try await driver.segment("production-design.view", title: "Locations · 3D", titles: ["Design", "Locations · 3D"], expected: "locations", in: window)
                 // Edit only after every persisted location is listed; the list reflows the name field.
                 let persisted = try await Task.detached { try SpatialSceneStore.index(in: root).scenes.map(\.id.uuidString) }.value
-                try await driver.wait("real location runtime ready", seconds: 90) {
-                    driver.text("spatial.workspace.error", in: window) != nil
-                        || (driver.state("spatial.location.create", in: window) == true
-                            && persisted.allSatisfy { driver.state("spatial.location." + $0, in: window) == true })
+                do {
+                    try await driver.wait("real location runtime ready", seconds: 90) {
+                        driver.text("spatial.workspace.error", in: window) != nil
+                            || (driver.state("spatial.location.create", in: window) == true && hostSettled(editor, driver: driver)
+                                && persisted.allSatisfy { driver.state("spatial.location." + $0, in: window) == true })
+                    }
+                } catch {
+                    try? driver.record("real location runtime ready", fields: ["completed": false,
+                        "engineRevision": editor.engineStateRevision,
+                        "createReady": driver.state("spatial.location.create", in: window) as Any? ?? NSNull(),
+                        "persistedLocations": persisted,
+                        "listedLocations": persisted.filter { driver.state("spatial.location." + $0, in: window) == true },
+                        "workspaceRevision": driver.text("spatial.workspace", in: window) as Any? ?? NSNull(),
+                        "workspaceReady": driver.state("spatial.workspace", in: window) as Any? ?? NSNull(),
+                        "dockRevision": driver.text(dockReadiness, in: window) as Any? ?? NSNull(),
+                        "dockReady": driver.state(dockReadiness, in: window) as Any? ?? NSNull(),
+                        "dockReason": driver.text("pipeline.overview.dock.reason", in: window) as Any? ?? NSNull()])
+                    throw error
                 }
                 if let error = driver.text("spatial.workspace.error", in: window) { throw failed(error) }
                 let name = "Pale room \(Int(scale * 100))"
@@ -30,12 +44,12 @@ enum ProductionSceneUIAcceptance {
                 var previous = driver.text("spatial.scene", in: window)
                 try await driver.clickButton("spatial.location.create", title: "Create location", in: window,
                                              settledTarget: .buttonOrGestureSurface)
-                try await revision(after: previous, action: "create location", scene: name, root: root, driver: driver)
+                try await revision(after: previous, action: "create location", scene: name, root: root, driver: driver, editor: editor)
                 let empty = try await read(name: name, root: root)
                 guard empty.1.snapshot.objects.isEmpty else { throw failed("The new native location did not start empty.") }
                 previous = driver.text("spatial.scene", in: window)
                 try await driver.menu("spatial.object.add", title: "Cube", in: window)
-                try await revision(after: previous, action: "add cube", scene: name, root: root, driver: driver)
+                try await revision(after: previous, action: "add cube", scene: name, root: root, driver: driver, editor: editor)
                 let created = try await read(name: name, root: root)
                 guard created.1.snapshot.objects.count == 1, let cube = created.1.snapshot.objects.first else {
                     throw failed("The Add object menu did not create exactly one real cube.")
@@ -44,20 +58,20 @@ enum ProductionSceneUIAcceptance {
                 try await driver.fill("spatial.position.0", value: "0.5", in: window)
                 previous = driver.text("spatial.scene", in: window)
                 try await driver.click("spatial.transform.apply", in: window)
-                try await revision(after: previous, action: "apply transform", scene: name, root: root, driver: driver)
+                try await revision(after: previous, action: "apply transform", scene: name, root: root, driver: driver, editor: editor)
                 let moved = try await read(name: name, root: root)
                 guard let movedCube = moved.1.snapshot.objects.first(where: { $0.id == cube.id }),
                       abs(movedCube.matrixWorld[3] - 0.5) < 0.000001 else { throw failed("The typed transform did not change the actual Blender object.") }
                 previous = driver.text("spatial.scene", in: window)
                 try await driver.clickButton("spatial.undo", title: "Undo", in: window, settledTarget: .button)
-                try await revision(after: previous, action: "undo", scene: name, root: root, driver: driver)
+                try await revision(after: previous, action: "undo", scene: name, root: root, driver: driver, editor: editor)
                 let undone = try await read(name: name, root: root)
                 guard undone.1.snapshot.objects.first(where: { $0.id == cube.id })?.matrixWorld == cube.matrixWorld else {
                     throw failed("Native scene Undo did not restore the preceding object matrix.")
                 }
                 previous = driver.text("spatial.scene", in: window)
                 try await driver.clickButton("spatial.redo", title: "Redo", in: window, settledTarget: .button)
-                try await revision(after: previous, action: "redo", scene: name, root: root, driver: driver)
+                try await revision(after: previous, action: "redo", scene: name, root: root, driver: driver, editor: editor)
                 let restored = try await read(name: name, root: root)
                 guard restored.1.snapshot.objects.first(where: { $0.id == cube.id })?.matrixWorld == movedCube.matrixWorld else {
                     throw failed("Native scene Redo did not restore the actual transform.")
@@ -77,7 +91,7 @@ enum ProductionSceneUIAcceptance {
                 try await driver.wait("native camera keyframe checked") { driver.state("spatial.camera.keyframe", in: window) == true }
                 previous = driver.text("spatial.scene", in: window)
                 try await driver.click("spatial.camera.apply", in: window)
-                try await revision(after: previous, action: "save camera", scene: name, root: root, driver: driver)
+                try await revision(after: previous, action: "save camera", scene: name, root: root, driver: driver, editor: editor)
                 let cameraRevision = try await read(name: name, root: root)
                 guard cameraRevision.1.snapshot.cameras.count == 1, let camera = cameraRevision.1.snapshot.cameras.first,
                       camera.name == "Wide camera", camera.width == 128, camera.height == 128,
@@ -146,7 +160,7 @@ enum ProductionSceneUIAcceptance {
     }
 
     private static func revision(after previous: String?, action: String, scene: String, root: URL,
-                                 driver: ProductionVisualSourcesDriver) async throws {
+                                 driver: ProductionVisualSourcesDriver, editor: EditorViewModel) async throws {
         do {
             try await driver.wait("native scene revision committed after " + action, seconds: 90) {
                 driver.text("spatial.error", in: driver.window) != nil || (driver.state("spatial.scene", in: driver.window) == true
@@ -160,11 +174,52 @@ enum ProductionSceneUIAcceptance {
             try? await revisionEvidence(action: action, scene: scene, previous: previous, root: root, driver: driver, completed: false)
             throw failed(error)
         }
-        try await revisionEvidence(action: action, scene: scene, previous: previous, root: root, driver: driver, completed: true)
+        let canonical = try await revisionEvidence(action: action, scene: scene, previous: previous, root: root, driver: driver,
+                                                   completed: true)
+        try await settled(after: action, canonical: canonical, driver: driver, editor: editor)
     }
 
+    // A commit is complete for input only when the host has finished reacting to it; those reactions reflow the editor.
+    private static func hostSettled(_ editor: EditorViewModel, driver: ProductionVisualSourcesDriver) -> Bool {
+        let revision = String(editor.engineStateRevision), window = driver.window
+        return driver.state(dockReadiness, in: window) == true && driver.text(dockReadiness, in: window) == revision
+            && driver.state("spatial.workspace", in: window) == true && driver.text("spatial.workspace", in: window) == revision
+    }
+
+    private static func settled(after action: String, canonical: [String: String], driver: ProductionVisualSourcesDriver,
+                                editor: EditorViewModel) async throws {
+        let window = driver.window, scene = "spatial.location." + (canonical["sceneID"] ?? "")
+        func evidence(_ completed: Bool) throws {
+            try driver.record("native scene operation settled", fields: ["action": action, "completed": completed,
+                "canonical": canonical, "engineRevision": editor.engineStateRevision,
+                "sceneProbe": driver.text("spatial.scene", in: window) as Any? ?? NSNull(),
+                "sceneReady": driver.state("spatial.scene", in: window) as Any? ?? NSNull(),
+                "locationSelection": driver.text(scene, in: window) as Any? ?? NSNull(),
+                "locationReady": driver.state(scene, in: window) as Any? ?? NSNull(),
+                "workspaceRevision": driver.text("spatial.workspace", in: window) as Any? ?? NSNull(),
+                "workspaceReady": driver.state("spatial.workspace", in: window) as Any? ?? NSNull(),
+                "dockRevision": driver.text(dockReadiness, in: window) as Any? ?? NSNull(),
+                "dockReady": driver.state(dockReadiness, in: window) as Any? ?? NSNull(),
+                "dockReason": driver.text("pipeline.overview.dock.reason", in: window) as Any? ?? NSNull()])
+        }
+        do {
+            try await driver.wait("native scene operation settled after " + action, seconds: 30) {
+                driver.state("spatial.scene", in: window) == true && driver.text("spatial.scene", in: window) == canonical["revision"]
+                    && driver.state(scene, in: window) == true && driver.text(scene, in: window) == "current"
+                    && hostSettled(editor, driver: driver)
+            }
+        } catch {
+            try? evidence(false)
+            throw error
+        }
+        try evidence(true)
+    }
+
+    private static let dockReadiness = "pipeline.overview.dock.readiness"
+
+    @discardableResult
     private static func revisionEvidence(action: String, scene: String, previous: String?, root: URL,
-                                         driver: ProductionVisualSourcesDriver, completed: Bool) async throws {
+                                         driver: ProductionVisualSourcesDriver, completed: Bool) async throws -> [String: String] {
         let canonical = await Task.detached { () -> [String: String] in
             do {
                 guard let head = try SpatialSceneStore.index(in: root).scenes.first(where: { $0.name == scene }) else {
@@ -190,6 +245,7 @@ enum ProductionSceneUIAcceptance {
                 throw failed("The visible scene revision differs from its canonical head after " + action + ".")
             }
         }
+        return canonical
     }
 
     private static func failed(_ message: String) -> GateBlocked { GateBlocked("Native scene acceptance: " + message) }
