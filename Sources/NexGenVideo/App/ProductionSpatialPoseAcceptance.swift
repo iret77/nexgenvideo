@@ -83,7 +83,16 @@ enum ProductionSpatialPoseAcceptance {
                       saved.0.frames.first?.objects != saved.0.frames.last?.objects else { throw failed("Native keyframes did not persist the full motion and sparse authoring frames.") }
                 try await driver.click(prefix + "open." + shotID, in: window)
                 sheet = try await driver.sheet(prefix + "sheet")
-                try await driver.wait("reopened native sparse keyframes") { frames(driver, sheet) == [0, middle, end] }
+                // Reopening re-verifies the saved scene and pose files, which takes as long as the check above.
+                try await driver.wait("reopened native pose state loaded", seconds: 60) {
+                    driver.text(prefix + "keyframes", in: sheet) != nil || driver.text(prefix + "failure", in: sheet) != nil
+                }
+                let reopened = frames(driver, sheet), reopenFailure = driver.text(prefix + "failure", in: sheet)
+                guard reopenFailure == nil, reopened == [0, middle, end] else {
+                    try driver.capture("pose-reopen-differs", target: sheet)
+                    throw failed("Reopening did not show the saved sparse keyframes: "
+                        + (reopenFailure ?? reopened.map(String.init).joined(separator: ",")))
+                }
                 try driver.capture("pose-reopened", target: sheet)
                 try await driver.click(prefix + "cancel", in: sheet)
                 try await driver.wait("reopened pose closed") { window.attachedSheet == nil }

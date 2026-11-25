@@ -112,7 +112,8 @@ enum CaptionRevisionAcceptance {
             try await driver.wait("explicit single caption choice") { service.dialogChoiceSelections["caption-revision"] == [id] }
         }
         func documentUndo(_ target: Timeline, redo: Bool = false) async throws {
-            try await driver.click("editor.workspace.edit", in: window, enabled: false)
+            try await GenericNLEAcceptance.workspace(.edit, editor: editor, window: window, driver: driver)
+            try await GenericNLEAcceptance.settledTimeline(in: window, driver: driver)
             guard let clip = editor.timeline.tracks.flatMap(\.clips).first(where: { $0.mediaType == .video }) else {
                 throw GateBlocked("The native Undo target has no actual timeline picture.")
             }

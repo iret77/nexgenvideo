@@ -298,11 +298,13 @@ final class ProductionVisualSourcesDriver {
         return nil
     }
 
-    static func revealWheelDelta(distance: CGFloat, flipped: Bool, prior: WheelResponse?) -> Int32 {
+    static func revealWheelDelta(distance: CGFloat, flipped: Bool, viewport: CGFloat, prior: WheelResponse?) -> Int32 {
         let direction: Int32 = (distance > 0) == flipped ? -1 : 1
-        var limit: CGFloat = 100
+        // A synthetic wheel unit travels several points, so an uncalibrated step stays a fraction of the viewport.
+        var limit = max(1, viewport / 8)
         var pointsPerUnit: CGFloat = 1
         if let prior {
+            limit = 100
             pointsPerUnit = max(1, abs(prior.displacement / CGFloat(prior.delta)))
             if prior.delta.signum() != direction {
                 limit = max(1, CGFloat(abs(prior.delta)) / 2)
@@ -318,38 +320,54 @@ final class ProductionVisualSourcesDriver {
         var previousClip: NSClipView?
         var previousDocument: NSView?
         var response: WheelResponse?
+        // A lazy stack drops a row a step scrolled past; its last document frame stays the target of the next step.
+        var lost: (scroll: NSScrollView, document: NSView, frame: NSRect)?
         var windowSettle: [String: Any]?, unreportedSettle: [String: Any]?
         for _ in 0..<45 {
             root.layoutSubtreeIfNeeded()
-            guard let view = probe(id, in: target) else { throw GateBlocked("Control disappeared while scrolling: " + id) }
-            if fullyVisible(view, root: root) { return }
-            var ancestor = view.superview
-            var clipping: NSScrollView?
-            while let current = ancestor {
-                if let scroll = current as? NSScrollView,
-                   !scroll.contentView.bounds.contains(view.convert(view.bounds, to: scroll.contentView)) {
-                    clipping = scroll; break
+            let view = probe(id, in: target)
+            if let view, fullyVisible(view, root: root) { return }
+            let scroll: NSScrollView, frame: NSRect
+            if let view {
+                var ancestor = view.superview
+                var clipping: NSScrollView?
+                while let current = ancestor {
+                    if let candidate = current as? NSScrollView,
+                       !candidate.contentView.bounds.contains(view.convert(view.bounds, to: candidate.contentView)) {
+                        clipping = candidate; break
+                    }
+                    ancestor = current.superview
                 }
-                ancestor = current.superview
+                guard let clipping else { throw GateBlocked("Control is outside the native window without a scroll path: " + id) }
+                scroll = clipping
+                frame = view.convert(view.bounds, to: clipping.contentView)
+                lost = nil
+            } else if let missing = lost, missing.scroll.window === target, missing.scroll.documentView === missing.document {
+                scroll = missing.scroll
+                frame = missing.document.convert(missing.frame, to: missing.scroll.contentView)
+            } else {
+                throw GateBlocked("Control disappeared while scrolling: " + id)
             }
-            guard let scroll = clipping, let screen = NSScreen.screens.first else {
+            guard let screen = NSScreen.screens.first else {
                 throw GateBlocked("Control is outside the native window without a scroll path: " + id)
             }
             let clip = scroll.contentView
-            let frame = view.convert(view.bounds, to: clip)
             guard frame.height <= clip.bounds.height, frame.width <= clip.bounds.width else {
                 throw GateBlocked("Control exceeds its scroll viewport: " + id)
             }
             guard let document = scroll.documentView else { throw GateBlocked("The native scroll document disappeared: " + id) }
             let distance = frame.midY - clip.bounds.midY
             guard distance.isFinite, frame.maxY > clip.bounds.maxY || frame.minY < clip.bounds.minY else {
+                let targetInWindow: [Double] = view.map { rect($0.convert($0.bounds, to: nil)) } ?? []
                 try record("unreachable scroll target", fields: ["id": id, "window": target.windowNumber,
                     "targetInClip": rect(frame), "clipBounds": rect(clip.bounds), "documentFrame": rect(document.frame),
-                    "targetInWindow": rect(view.convert(view.bounds, to: nil)), "backingScale": target.backingScaleFactor])
+                    "targetInWindow": targetInWindow, "controlLost": view == nil,
+                    "backingScale": target.backingScaleFactor])
                 throw GateBlocked("The control cannot be revealed by vertical scrolling: " + id)
             }
+            let targetInDocument = clip.convert(frame, to: document)
             let prior = previousClip === clip && previousDocument === document ? response : nil
-            let delta = Self.revealWheelDelta(distance: distance, flipped: clip.isFlipped, prior: prior)
+            let delta = Self.revealWheelDelta(distance: distance, flipped: clip.isFlipped, viewport: clip.bounds.height, prior: prior)
             let visibleArea = clip.visibleRect
             guard let wheelPoint = exposedWheelPoint(in: clip, scroll: scroll, root: root, window: target) else {
                 try record("scroll viewport has no exposed input point", fields: ["id": id, "viewport": rect(visibleArea),
@@ -380,10 +398,14 @@ final class ProductionVisualSourcesDriver {
                                              in: target, transaction: transaction) {
                     guard target.contentView === root, target.isKeyWindow else { throw GateBlocked("The scroll window changed: " + id) }
                     root.layoutSubtreeIfNeeded()
-                    guard self.probe(id, in: target) === view, scroll.contentView === clip, scroll.documentView === document,
-                          scroll.window === target, document.frame == originalDocumentFrame,
-                          !self.fullyVisible(view, root: root), clip.bounds == originalBounds,
-                          view.convert(view.bounds, to: clip) == frame,
+                    if let view {
+                        guard self.probe(id, in: target) === view, !self.fullyVisible(view, root: root),
+                              view.convert(view.bounds, to: clip) == frame else { return false }
+                    } else if self.probe(id, in: target) != nil {
+                        return false
+                    }
+                    guard scroll.contentView === clip, scroll.documentView === document,
+                          scroll.window === target, document.frame == originalDocumentFrame, clip.bounds == originalBounds,
                           clip.visibleRect == visibleArea, target.convertPoint(toScreen: clip.convert(wheelPoint, to: nil)) == point,
                           ownsWheel(at: wheelPoint, clip: clip, scroll: scroll, root: root, window: target) else { return false }
                     completion.armed = true
@@ -395,7 +417,7 @@ final class ProductionVisualSourcesDriver {
                 throw error
             }
             if !posted {
-                try await waitForPresentation(of: target, control: id)
+                try await waitForPresentation(of: target, control: view == nil ? nil : id)
                 previousClip = nil
                 response = nil
                 continue
@@ -403,9 +425,10 @@ final class ProductionVisualSourcesDriver {
             do {
                 try await wait("native scroll applied " + id, seconds: 2) { clip.bounds.origin != before }
             } catch {
+                let targetAfter: [Double] = view.map { rect($0.convert($0.bounds, to: clip)) } ?? []
                 try record("native scroll displacement missing", fields: ["id": id, "delta": delta, "window": target.windowNumber,
                     "before": rect(originalBounds), "after": rect(clip.bounds), "targetBefore": rect(frame),
-                    "targetAfter": rect(view.convert(view.bounds, to: clip)), "documentFrame": rect(document.frame),
+                    "targetAfter": targetAfter, "documentFrame": rect(document.frame),
                     "sameControl": self.probe(id, in: target) === view, "sameDocument": scroll.documentView === document,
                     "sameScrollWindow": scroll.window === target, "nativeScrollEnded": completion.ended])
                 throw error
@@ -415,11 +438,13 @@ final class ProductionVisualSourcesDriver {
             var stableSince: TimeInterval?
             var stableSamples = 0
             do {
-                // Lazy content may replace the control's view while it scrolls; the settled view is the one found now.
+                // Lazy content may replace or drop the control's view while it scrolls; the settled view is the one found now.
                 try await wait("native scroll ended with settled target geometry " + id, seconds: 2) {
                     root.layoutSubtreeIfNeeded()
-                    guard completion.ended, target.contentView === root, let control = self.settledProbe(id, in: target),
-                          control.window === target, scroll.window === target, scroll.contentView === clip,
+                    let control = self.settledProbe(id, in: target)
+                    let absent = control == nil && self.probe(id, in: target) == nil
+                    guard completion.ended, target.contentView === root, control != nil || absent,
+                          control.map({ $0.window === target }) ?? true, scroll.window === target, scroll.contentView === clip,
                           scroll.documentView === document else {
                         previousGeometry = []
                         settledControl = nil
@@ -427,7 +452,8 @@ final class ProductionVisualSourcesDriver {
                         stableSamples = 0
                         return false
                     }
-                    let geometry = [clip.bounds, clip.frame, document.frame, control.convert(control.bounds, to: root)]
+                    var geometry = [clip.bounds, clip.frame, document.frame]
+                    if let control { geometry.append(control.convert(control.bounds, to: root)) }
                     guard geometry.allSatisfy({ frame in
                         [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite)
                             && frame.width > 0 && frame.height > 0
@@ -450,24 +476,28 @@ final class ProductionVisualSourcesDriver {
                     return now - (stableSince ?? now) >= 0.25
                 }
             } catch {
+                let targetFrame: String = view.map { NSStringFromRect($0.convert($0.bounds, to: root)) } ?? ""
                 try record("native scroll did not settle", fields: ["id": id, "window": target.windowNumber,
                     "nativeScrollEnded": completion.ended, "sameRoot": target.contentView === root,
                     "sameControl": self.probe(id, in: target) === view, "controlFound": self.probe(id, in: target) != nil,
-                    "uniqueShownControl": self.settledProbe(id, in: target) != nil, "sameControlWindow": view.window === target,
+                    "uniqueShownControl": self.settledProbe(id, in: target) != nil, "sameControlWindow": view?.window === target,
+                    "controlLostBefore": view == nil, "targetInDocument": NSStringFromRect(targetInDocument),
                     "sameScrollWindow": scroll.window === target, "sameClip": scroll.contentView === clip,
                     "sameDocument": scroll.documentView === document, "before": NSStringFromRect(originalBounds),
                     "after": NSStringFromRect(clip.bounds), "documentFrame": NSStringFromRect(document.frame),
-                    "targetFrame": NSStringFromRect(view.convert(view.bounds, to: root)), "stableSamples": stableSamples,
+                    "targetFrame": targetFrame, "stableSamples": stableSamples,
                     "stableSeconds": stableSince.map { ProcessInfo.processInfo.systemUptime - $0 } ?? 0])
                 throw error
             }
             previousClip = clip
             previousDocument = document
             response = WheelResponse(delta: delta, displacement: clip.bounds.minY - before.y)
+            if settledControl == nil { lost = (scroll: scroll, document: document, frame: targetInDocument) }
             interactions.append(["kind": "wheel", "id": id, "delta": delta, "windowSettle": unreportedSettle ?? [:],
                 "before": [before.x, before.y], "after": [clip.bounds.origin.x, clip.bounds.origin.y],
                 "nativeScrollEnded": completion.ended, "settledGeometry": previousGeometry.map(rect),
-                "controlReplaced": settledControl !== view,
+                "controlReplaced": settledControl !== view, "controlLost": settledControl == nil,
+                "targetInDocument": rect(targetInDocument),
                 "settledGeometrySamples": stableSamples,
                 "settledGeometrySeconds": ProcessInfo.processInfo.systemUptime - (stableSince ?? ProcessInfo.processInfo.systemUptime)])
             unreportedSettle = nil

@@ -2760,7 +2760,7 @@ extension NativePointerInteractionTests {
                 for _ in 0..<6 {
                     if viewport.contains(target) { break }
                     let delta = ProductionVisualSourcesDriver.revealWheelDelta(
-                        distance: target.midY - viewport.midY, flipped: flipped, prior: prior)
+                        distance: target.midY - viewport.midY, flipped: flipped, viewport: viewport.height, prior: prior)
                     let origin = viewport.minY
                     let travel = CGFloat(delta) * 4.43 * (flipped ? -1 : 1)
                     viewport.origin.y = min(891.5, max(0.5, origin + travel))
@@ -3376,6 +3376,7 @@ extension NativePointerInteractionTests {
 
     private func verifyRevealOfReplacedLazyControls() async throws {
         try await verifyLazyStoryboardMenu()
+        try await verifyFirstWheelStepKeepsLazyRows()
         let fixture = try await Fixture("replaced-reveal-target")
         defer { fixture.close() }
         let window = fixture.window, driver = fixture.driver
@@ -3402,5 +3403,100 @@ extension NativePointerInteractionTests {
         #expect(wheels.allSatisfy { $0["controlReplaced"] as? Bool == true })
         #expect(target.replacements >= wheels.count && target.current !== original)
         #expect(clip.bounds.contains(target.current.convert(target.current.bounds, to: clip)))
+    }
+}
+
+extension NativePointerInteractionTests {
+    // Scrolls by each received event's own delta, as NSScrollView does, whatever scale the window server applies.
+    @MainActor private final class ReceivedDeltaScroll: NSScrollView {
+        var forcedOvershoot: CGFloat?
+        private var gestures = 0
+
+        override func scrollWheel(with event: NSEvent) {
+            let clip = contentView
+            guard let document = documentView else { return }
+            let limit = max(0, document.frame.height - clip.bounds.height)
+            func move(to y: CGFloat) {
+                clip.scroll(to: NSPoint(x: clip.bounds.minX, y: min(limit, max(0, y))))
+                reflectScrolledClipView(clip)
+            }
+            if event.scrollingDeltaY != 0 { move(to: clip.bounds.minY - event.scrollingDeltaY) }
+            guard event.phase.contains(.ended) else { return }
+            gestures += 1
+            if gestures == 1, let forcedOvershoot { move(to: forcedOvershoot) }
+            NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: self)
+        }
+    }
+
+    // Keeps its row only within 400 pt of the viewport, as a lazy stack does.
+    @MainActor private final class LazyRow {
+        let document = FlippedDocument(frame: NSRect(x: 0, y: 0, width: 360, height: 1600))
+        let frame = NSRect(x: 40, y: 150, width: 160, height: 24)
+        private(set) var current: AppRelaunchClickProbeView?
+        private(set) var drops = 0
+
+        func update(_ viewport: NSRect) {
+            let materialized = frame.intersects(viewport.insetBy(dx: 0, dy: -400))
+            if materialized, current == nil {
+                let view = AppRelaunchClickProbeView(frame: frame)
+                view.identifier = NSUserInterfaceItemIdentifier("lazy.wheel.target")
+                view.acceptanceState = true
+                document.addSubview(view)
+                current = view
+            } else if !materialized, let view = current {
+                view.removeFromSuperview()
+                current = nil
+                drops += 1
+            }
+        }
+    }
+
+    private func revealLazyRow(forcedOvershoot: CGFloat?) async throws -> (wheels: [[String: Any]], row: LazyRow) {
+        let fixture = try await Fixture(forcedOvershoot == nil ? "lazy-wheel-small-step" : "lazy-wheel-forced-drop")
+        defer { fixture.close() }
+        let window = fixture.window, driver = fixture.driver
+        let root = NSView(frame: NSRect(origin: .zero, size: window.contentLayoutRect.size))
+        let scroll = ReceivedDeltaScroll(frame: NSRect(x: 0, y: root.bounds.height - 160, width: root.bounds.width, height: 120))
+        scroll.forcedOvershoot = forcedOvershoot
+        scroll.borderType = .noBorder
+        scroll.automaticallyAdjustsContentInsets = false
+        scroll.hasVerticalScroller = true
+        let row = LazyRow()
+        scroll.documentView = row.document
+        root.addSubview(scroll)
+        window.contentView = root
+        let clip = scroll.contentView
+        clip.scroll(to: .zero)
+        scroll.reflectScrolledClipView(clip)
+        row.update(clip.bounds)
+        clip.postsBoundsChangedNotifications = true
+        let observer = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip,
+                                                              queue: .main) { _ in MainActor.assumeIsolated { row.update(clip.bounds) } }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        try await driver.waitForPresentation(of: window, control: "lazy.wheel.target")
+        try #require(clip.bounds.height == 120 && clip.bounds.minY == 0 && row.current != nil)
+        let start = driver.interactions.count
+        try await driver.reveal("lazy.wheel.target", in: window)
+        let shown = try #require(row.current)
+        #expect(clip.bounds.contains(shown.convert(shown.bounds, to: clip)))
+        let wheels = driver.interactions.dropFirst(start).filter {
+            $0["kind"] as? String == "wheel" && $0["id"] as? String == "lazy.wheel.target"
+        }
+        return (wheels, row)
+    }
+
+    private func verifyFirstWheelStepKeepsLazyRows() async throws {
+        let small = try await revealLazyRow(forcedOvershoot: nil)
+        // Before calibration the step is at most an eighth of the 120 pt viewport in units; the former step was 100 units.
+        let first = try #require(small.wheels.first?["delta"] as? Int32)
+        #expect(first < 0 && abs(first) <= 15)
+        #expect(small.row.drops == 0 && !small.wheels.contains { $0["controlLost"] as? Bool == true })
+
+        let dropped = try await revealLazyRow(forcedOvershoot: 700)
+        let overshot = try #require(dropped.wheels.first?["delta"] as? Int32)
+        #expect(overshot < 0 && abs(overshot) <= 15)
+        #expect(dropped.row.drops >= 1)
+        #expect(dropped.wheels.first?["controlLost"] as? Bool == true)
+        #expect(dropped.wheels.count >= 2 && dropped.wheels.last?["controlLost"] as? Bool == false)
     }
 }

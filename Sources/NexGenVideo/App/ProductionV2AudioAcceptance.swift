@@ -33,8 +33,8 @@ enum ProductionV2AudioAcceptance {
               try await Task.detached(operation: { try FileDigest.sha256(of: importedURL) }).value == hash else {
             throw GateBlocked("Native effect import did not preserve exactly one actual audio source.")
         }
-        try await driver.click("editor.workspace.edit", in: window, enabled: false)
-        try await driver.wait("audio editing workspace") { editor.workspaceFocus == .edit }
+        try await GenericNLEAcceptance.workspace(.edit, editor: editor, window: window, driver: driver)
+        try await GenericNLEAcceptance.settledTimeline(in: window, driver: driver)
         try GenericNLEAcceptance.pointerOnRuler(frame: 0, window: window, driver: driver)
         try await driver.wait("additional audio starts at intended film frame") { editor.currentFrame == 0 }
         try await driver.click("media.asset." + asset.id, in: window)

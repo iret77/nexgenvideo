@@ -224,13 +224,52 @@ enum GenericNLEAcceptance {
         return view
     }
 
-    private static func workspace(_ focus: EditorViewModel.WorkspaceFocus, editor: EditorViewModel,
-                                  window: NSWindow, driver: ProductionVisualSourcesDriver) async throws {
+    static func workspace(_ focus: EditorViewModel.WorkspaceFocus, editor: EditorViewModel,
+                          window: NSWindow, driver: ProductionVisualSourcesDriver) async throws {
         let id = "editor.workspace." + focus.rawValue
         try await driver.click(id, in: window, enabled: false)
         try await driver.wait("workspace " + focus.rawValue) {
             editor.workspaceFocus == focus && driver.state(id, in: window) == true
         }
+    }
+
+    // The Edit layout and its divider positions are built after the workspace focus changes.
+    @discardableResult
+    static func settledTimeline(in window: NSWindow, driver: ProductionVisualSourcesDriver) async throws -> TimelineView {
+        var settled: TimelineView?, geometry: [NSRect] = []
+        var stableSince = 0.0, samples = 0
+        do {
+            try await driver.waitForPresentation(of: window) {
+                guard window.isKeyWindow, let root = window.contentView, let view = try? timelineView(in: window) else {
+                    settled = nil
+                    samples = 0
+                    return false
+                }
+                let current = [view.convert(view.bounds, to: root), view.visibleRect]
+                let now = ProcessInfo.processInfo.systemUptime
+                guard view === settled, current == geometry else {
+                    settled = view
+                    geometry = current
+                    stableSince = now
+                    samples = 1
+                    return false
+                }
+                samples += 1
+                return now - stableSince >= 0.25
+            }
+        } catch {
+            try? driver.record("visible native timeline did not settle", fields: ["window": window.windowNumber,
+                "key": window.isKeyWindow, "timelineFound": (try? timelineView(in: window)) != nil,
+                "geometry": geometry.map(NSStringFromRect), "samples": samples,
+                "stableSeconds": settled == nil ? 0 : ProcessInfo.processInfo.systemUptime - stableSince])
+            throw error
+        }
+        guard let settled, (try? timelineView(in: window)) === settled else {
+            throw GateBlocked("The visible native timeline changed after it settled.")
+        }
+        try driver.record("visible native timeline settled", fields: ["window": window.windowNumber,
+            "geometry": geometry.map(NSStringFromRect), "samples": samples])
+        return settled
     }
 
     static func pointerOnClip(_ clip: Clip, editor: EditorViewModel, window: NSWindow,

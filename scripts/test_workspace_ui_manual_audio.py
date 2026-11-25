@@ -297,6 +297,21 @@ class ManualAudioEvidenceTests(unittest.TestCase):
         changed["interactions"][6]["evidence"]["menuAvailability"][0]["inputMode"] = "Text to Music"
         self.assertFalse(self.accepts(changed))
 
+    def test_driver_settling_records_do_not_shift_the_owner_observations(self):
+        changed = copy.deepcopy(self.row)
+        settle = lambda label: {"kind": "verified-state", "label": label, "evidence": {}}
+        for index in (8, 7, 5, 4, 3, 0):
+            changed["interactions"].insert(index, settle("visible native timeline settled"))
+            changed["interactions"].insert(index, settle("native window presentation stable"))
+        self.assertTrue(self.accepts(changed))
+        foreign = copy.deepcopy(changed)
+        foreign["interactions"].insert(4, settle("unreviewed native observation"))
+        self.assertFalse(self.accepts(foreign))
+        swapped = copy.deepcopy(changed); rows = swapped["interactions"]
+        domain = [i for i, row in enumerate(rows) if row.get("kind") == "verified-state" and row["label"] in LABELS]
+        rows[domain[1]], rows[domain[2]] = rows[domain[2]], rows[domain[1]]
+        self.assertFalse(self.accepts(swapped))
+
 
 if __name__ == "__main__":
     unittest.main()

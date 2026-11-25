@@ -140,6 +140,17 @@ class ManualGenerationEvidenceTests(unittest.TestCase):
         changed = copy.deepcopy(self.row); changed["interactions"].insert(0, None)
         self.assertFalse(self.accepts(changed))
 
+    def test_driver_settling_records_do_not_shift_the_owner_observations(self):
+        changed = copy.deepcopy(self.row); rows = changed["interactions"]
+        settle = lambda label: {"kind": "verified-state", "label": label, "evidence": {}}
+        upscale = next(i for i, row in enumerate(rows) if row.get("label") == "native upscale package and source replacement")
+        for index in (upscale, upscale, 0):
+            rows.insert(index, settle("native window presentation stable"))
+        rows.insert(upscale + 2, settle("visible native timeline settled"))
+        self.assertTrue(self.accepts(changed))
+        foreign = copy.deepcopy(changed); foreign["interactions"].insert(0, settle("unreviewed native observation"))
+        self.assertFalse(self.accepts(foreign))
+
 
 if __name__ == "__main__":
     unittest.main()

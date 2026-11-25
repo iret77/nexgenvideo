@@ -10,8 +10,8 @@ enum ProductionAssemblyDriftAcceptance {
         guard let clip = original.tracks.flatMap(\.clips).first(where: { $0.mediaType == .video }), clip.opacity == 1 else {
             throw failed("The assembled production cut has no unchanged video clip for the native drift edit.")
         }
-        try await driver.click("editor.workspace.edit", in: window, enabled: false)
-        try await driver.wait("native edit workspace for drift") { editor.workspaceFocus == .edit }
+        try await GenericNLEAcceptance.workspace(.edit, editor: editor, window: window, driver: driver)
+        try await GenericNLEAcceptance.settledTimeline(in: window, driver: driver)
         try GenericNLEAcceptance.pointerOnClip(clip, editor: editor, window: window, driver: driver)
         try await driver.wait("production clip selected") { editor.selectedClipIds == [clip.id] }
         try await driver.click("editor.workspace.postproduction", in: window, enabled: false)
