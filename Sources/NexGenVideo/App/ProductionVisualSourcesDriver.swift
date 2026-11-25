@@ -781,6 +781,12 @@ final class ProductionVisualSourcesDriver {
                        y: (frame.midY - view.bounds.minY) / view.bounds.height)
     }
 
+    func publicButtonWindowFrames(_ id: String, title: String, in target: NSWindow) async -> (frames: [NSRect], evidence: [String: Any]) {
+        let match = await buttonFrames(id, title: title, in: target)
+        guard let view = probe(id, in: target) else { return ([], match.evidence) }
+        return (match.frames.map { view.convert($0, to: nil) }, match.evidence)
+    }
+
     private func buttonFrames(_ id: String, title: String, in target: NSWindow,
                               deadline: TimeInterval? = nil) async -> (frames: [NSRect], evidence: [String: Any]) {
         var evidence: [String: Any] = ["kind": "button-accessibility", "id": id, "item": title, "window": target.windowNumber]
