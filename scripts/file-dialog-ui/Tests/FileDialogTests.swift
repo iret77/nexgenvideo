@@ -177,10 +177,17 @@ final class FileDialogTests: XCTestCase {
             try require(isTarget() && app.state == .runningForeground && app.alerts.count == 0,
                         "The intended foreground application or modal context changed")
         }
-        try wait("The supervised app did not register its bundle") { isTarget() }
-        let target = try XCTUnwrap(NSRunningApplication(processIdentifier: pid))
-        try require(target.bundleURL.map { canonical($0).path } == canonical(fixture.app).path,
-                    "The supervised app bundle changed before activation")
+        // The supervisor binds the PID at spawn; LaunchServices registers the application later.
+        var registered: NSRunningApplication?
+        try wait("The supervised app PID \(pid) did not register as \(identifier) from \(fixture.app.path)", seconds: 60) {
+            try require(kill(pid, 0) == 0, "The supervised application exited before it registered")
+            guard isTarget(), let candidate = NSRunningApplication(processIdentifier: pid),
+                  candidate.bundleIdentifier == identifier,
+                  candidate.bundleURL.map({ canonical($0).path }) == canonical(fixture.app).path else { return false }
+            registered = candidate
+            return true
+        }
+        let target = try XCTUnwrap(registered)
         if !target.isActive {
             NSApplication.shared.yieldActivation(to: target)
             _ = target.activate(options: [])
