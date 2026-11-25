@@ -7,6 +7,7 @@ struct TakeRangeReviewView: View {
     let snapshot: TakeReview.Snapshot
     let wholeTakePlayer: AVPlayer?
     let canWrite: Bool
+    var fitsScrollViewport = true
     @State private var firstFrame = 0
     @State private var endFrame = 0
     @State private var player: AVPlayer?
@@ -42,8 +43,15 @@ struct TakeRangeReviewView: View {
                     .buttonStyle(InlineActionButtonStyle()).disabled(busy || !validRange)
                     .reviewAcceptanceProbe("take.range.play")
                 if player != nil {
-                    VideoPlayer(player: player).scrollViewportFittedHeight(AppTheme.Layout.reviewPlayerMaxHeight)
-                        .reviewAcceptanceProbe("take.range.player")
+                    Group {
+                        // A content-sized sheet has no stable viewport height to fit against.
+                        if fitsScrollViewport {
+                            VideoPlayer(player: player).scrollViewportFittedHeight(AppTheme.Layout.reviewPlayerMaxHeight)
+                        } else {
+                            VideoPlayer(player: player).frame(height: AppTheme.Layout.reviewPlayerMaxHeight)
+                        }
+                    }
+                    .reviewAcceptanceProbe("take.range.player")
                 }
                 if findings.count < TakeReview.Pass.allCases.count {
                     let pass = TakeReview.Pass.allCases[findings.count]
