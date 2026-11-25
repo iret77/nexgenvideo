@@ -19,8 +19,8 @@ enum ManualUpscaleAcceptance {
         editor.selectedClipIds = []
         let original = editor.timeline
         parent.makeKeyAndOrderFront(nil)
-        try await driver.click("editor.workspace.edit", in: parent, enabled: false)
-        try await driver.wait("real editing workspace for source replacement") { editor.workspaceFocus == .edit }
+        try await GenericNLEAcceptance.workspace(.edit, editor: editor, window: parent, driver: driver)
+        try await GenericNLEAcceptance.settledTimeline(in: parent, driver: driver)
         try GenericNLEAcceptance.pointerOnClip(clip, editor: editor, window: parent, driver: driver)
         try await driver.wait("actual replacement clip selected") { editor.selectedClipIds == [clip.id] }
         try await driver.click("inspector.tab.AI Edit", in: parent, enabled: false)

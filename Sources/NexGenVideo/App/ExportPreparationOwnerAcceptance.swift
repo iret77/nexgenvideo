@@ -36,7 +36,8 @@ enum ExportPreparationOwnerAcceptance {
             PipelineDeliveryStore.nativeAcceptanceAfterAdoptionSnapshot = nil
             try? originalIdentity.write(to: identityURL, options: .atomic)
         }
-        try await NativeEditingOwnerAcceptance.workspace(.edit, editor: editor, window: window, driver: driver)
+        try await GenericNLEAcceptance.workspace(.edit, editor: editor, window: window, driver: driver)
+        try await GenericNLEAcceptance.settledTimeline(in: window, driver: driver)
         guard let picture = editor.clipFor(id: "picture") else { throw Support.failed("The actual picture fixture is missing.") }
         try GenericNLEAcceptance.pointerOnClip(picture, editor: editor, window: window, driver: driver)
         try await driver.wait("actual picture selected before Export") { editor.selectedClipIds == [picture.id] }
@@ -75,7 +76,8 @@ enum ExportPreparationOwnerAcceptance {
         try await driver.wait("destination Cancel returns to Export") { !panel.isVisible && window.isKeyWindow && driver.state("export.start", in: window) == true }
         var observations: [[String: Any]] = []
         for variant in ["cancel", "timeline", "manifest", "metadata"] {
-            try await NativeEditingOwnerAcceptance.workspace(.edit, editor: editor, window: window, driver: driver)
+            try await GenericNLEAcceptance.workspace(.edit, editor: editor, window: window, driver: driver)
+            try await GenericNLEAcceptance.settledTimeline(in: window, driver: driver)
             guard let currentPicture = editor.clipFor(id: "picture") else { throw Support.failed("The actual picture disappeared.") }
             try GenericNLEAcceptance.pointerOnClip(currentPicture, editor: editor, window: window, driver: driver)
             try await driver.wait("actual picture selected for preparation") { editor.selectedClipIds == [currentPicture.id] }
@@ -146,7 +148,8 @@ enum ExportPreparationOwnerAcceptance {
             row["retryOutput"] = retry.lastPathComponent; row["retrySHA256"] = try FileDigest.sha256(of: retry)
             try driver.record("preparation observation " + variant, fields: row); observations.append(row)
             if variant == "timeline" || variant == "manifest" {
-                try await NativeEditingOwnerAcceptance.workspace(.edit, editor: editor, window: window, driver: driver)
+                try await GenericNLEAcceptance.workspace(.edit, editor: editor, window: window, driver: driver)
+                try await GenericNLEAcceptance.settledTimeline(in: window, driver: driver)
                 guard let undoPicture = editor.clipFor(id: "picture") else { throw Support.failed("The actual Undo target disappeared.") }
                 try GenericNLEAcceptance.pointerOnClip(undoPicture, editor: editor, window: window, driver: driver)
                 try await driver.wait("native fixture Undo owns the document history") {

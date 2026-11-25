@@ -32,8 +32,8 @@ enum ProductionPictureFinishingAcceptance {
         let before = try PlanningWriterIO.json(baseline)
         try before.write(to: output.appendingPathComponent("owner-v2-picture-before.json"), options: .atomic)
         let beforeSHA = FileDigest.sha256(of: before)
-        try await driver.click("editor.workspace.edit", in: window, enabled: false)
-        try await driver.wait("native music video picture selection") { editor.workspaceFocus == .edit }
+        try await GenericNLEAcceptance.workspace(.edit, editor: editor, window: window, driver: driver)
+        try await GenericNLEAcceptance.settledTimeline(in: window, driver: driver)
         try GenericNLEAcceptance.pointerOnClip(clip, editor: editor, window: window, driver: driver)
         let frame = clip.startFrame + max(1, clip.durationFrames / 5)
         try GenericNLEAcceptance.pointerOnRuler(frame: frame, window: window, driver: driver)

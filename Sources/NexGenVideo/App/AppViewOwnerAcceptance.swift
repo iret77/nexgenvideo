@@ -111,7 +111,8 @@ enum AppViewOwnerAcceptance {
     }
 
     static func run(editor: EditorViewModel, window: NSWindow, driver: ProductionVisualSourcesDriver) async throws -> [String: Any] {
-        try await NativeEditingOwnerAcceptance.workspace(.edit, editor: editor, window: window, driver: driver)
+        try await GenericNLEAcceptance.workspace(.edit, editor: editor, window: window, driver: driver)
+        try await GenericNLEAcceptance.settledTimeline(in: window, driver: driver)
         guard let clip = editor.timeline.tracks.first(where: { $0.type == .video })?.clips.first else { throw GateBlocked("The layout check needs an actual edited clip.") }
         try GenericNLEAcceptance.pointerOnClip(clip, editor: editor, window: window, driver: driver)
         try GenericNLEAcceptance.pointerOnRuler(frame: 12, window: window, driver: driver)

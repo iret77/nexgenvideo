@@ -37,7 +37,8 @@ enum ManualAudioGenerationAcceptance {
         editor.selectedClipIds = []; editor.selectedTimelineRange = nil
         editor.showGenerationPanel = true
         window.makeKeyAndOrderFront(nil)
-        try await driver.click("editor.workspace.edit", in: window, enabled: false)
+        try await GenericNLEAcceptance.workspace(.edit, editor: editor, window: window, driver: driver)
+        try await GenericNLEAcceptance.settledTimeline(in: window, driver: driver)
         try GenericNLEAcceptance.pointerOnClip(video, editor: editor, window: window, driver: driver)
         try await driver.wait("real video clip selection") { editor.selectedClipIds == [video.id] }
         try await driver.click("inspector.tab.AI Edit", in: window, enabled: false)

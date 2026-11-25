@@ -134,7 +134,8 @@ enum ExportFormatsOwnerAcceptance {
                   bundled.standardizedFileURL.resolvingSymlinksInPath().path.hasPrefix(root.standardizedFileURL.resolvingSymlinksInPath().path + "/"),
                   try FileDigest.sha256(of: original) == FileDigest.sha256(of: bundled) else { throw Support.failed("The portable copy still depends on external or changed media.") }
         }
-        try await NativeEditingOwnerAcceptance.workspace(.edit, editor: copy.editor, window: copy.window, driver: copy.driver)
+        try await GenericNLEAcceptance.workspace(.edit, editor: copy.editor, window: copy.window, driver: copy.driver)
+        try await GenericNLEAcceptance.settledTimeline(in: copy.window, driver: copy.driver)
         try GenericNLEAcceptance.pointerOnRuler(frame: 24, window: copy.window, driver: copy.driver)
         try await copy.driver.wait("actual copied film preview") { copy.editor.currentFrame == 24 }
         try copy.driver.capture("portable-reopened", target: copy.window)
