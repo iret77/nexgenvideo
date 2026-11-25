@@ -82,11 +82,23 @@ struct PhaseDockLayoutTests {
         }
     }
 
-    @Test func theUnreservedTextsReproduceTheMeasuredWrap() {
-        let width: CGFloat = 480
-        let checking = textHeight(PhaseControlReadiness.checking.dockMessage ?? "", width: width)
-        let readyText = textHeight(PhaseDockReadiness.readyMessage, width: width)
-        #expect(readyText > checking + AppTheme.Spacing.sm, "ready=\(readyText), checking=\(checking)")
+    @Test func theUnreservedTextsReproduceTheMeasuredWrap() throws {
+        let scale = AppTheme.Typography.largestScale
+        let range = AppTheme.Layout.previewMinWidth...(AppTheme.Window.projectMin.width - AppTheme.Layout.workflowSidebarMin)
+        let wrapping = stride(from: range.upperBound, through: range.lowerBound, by: -AppTheme.Spacing.xs).first { width in
+            let textWidth = width - 2 * AppTheme.Spacing.md
+            let checking = textHeight(PhaseControlReadiness.checking.dockMessage ?? "", width: textWidth, scale: scale)
+            return textHeight(PhaseDockReadiness.readyMessage, width: textWidth, scale: scale) > checking + AppTheme.Spacing.sm
+        }
+        let width = try #require(wrapping, "The ready text never wraps taller than the checking text within \(range)")
+        let ready = PhaseDockReadiness(phase: phase, mutation: .ready, approval: .ready)
+        let checking = PhaseDockReadiness(phase: phase, mutation: .checking, approval: checkingApproval)
+        let stable = try measure(.resolve(phase: phase, current: ready, settled: ready, saving: false),
+                                 current: ready, scale: scale, width: width)
+        let transient = try measure(.resolve(phase: phase, current: checking, settled: ready, saving: false),
+                                    current: checking, scale: scale, width: width)
+        #expect(abs(transient.height - stable.height) < 0.5, "width=\(width): \(transient) vs \(stable)")
+        #expect(abs((transient.actionY ?? -1) - (stable.actionY ?? 1)) < 0.5, "width=\(width): \(transient) vs \(stable)")
     }
 
     private var artifactMessage: String { PipelineReadinessPresentation.message(for: .artifact, phase: phase) }
@@ -145,9 +157,9 @@ struct PhaseDockLayoutTests {
                         offersAction: action != nil)
     }
 
-    private func textHeight(_ text: String, width: CGFloat) -> CGFloat {
+    private func textHeight(_ text: String, width: CGFloat, scale: Double) -> CGFloat {
         let host = NSHostingView(rootView: PhaseDockMessage(text: text)
-            .environment(\.interfaceScale, AppTheme.Typography.largestScale)
+            .environment(\.interfaceScale, scale)
             .frame(width: width)
             .fixedSize(horizontal: false, vertical: true))
         host.setFrameSize(.init(width: width, height: AppTheme.Window.projectMin.height))

@@ -315,7 +315,7 @@ private struct ShotPlanningRow: View {
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                 }
             }
-            DisclosureGroup {
+            DisclosureSection("Camera and continuity", probe: "shot-planning.camera.disclosure.\(shot.shotID)") {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                     Text("\(shot.camera.framing.scale) · \(shot.camera.framing.cameraView) · \(shot.camera.framing.composition)")
                         .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -345,9 +345,6 @@ private struct ShotPlanningRow: View {
                         }
                     }
                 }.padding(.top, AppTheme.Spacing.sm).disabled(!canEdit)
-            } label: {
-                Text("Camera and continuity")
-                    .reviewAcceptanceProbe("shot-planning.camera.disclosure.\(shot.shotID)")
             }
             if baseShot.camera.spatialState != nil && !preservesSpatialIntent {
                 Text("Changing camera movement or blocking clears the confirmed spatial state. Plan and confirm its keyframes again after applying.")
@@ -372,7 +369,8 @@ private struct ShotPlanningRow: View {
                     }
                 }
             if !candidate.obligations.isEmpty {
-                DisclosureGroup("Required references (\(candidate.obligations.count))") {
+                DisclosureSection("Required references (\(candidate.obligations.count))",
+                                  probe: "shot-planning.references.disclosure.\(shot.shotID)") {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                         ForEach(candidate.obligations, id: \.id) { obligation in
                             Text(obligation.subject).fontWeight(AppTheme.FontWeight.medium)

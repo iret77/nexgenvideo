@@ -121,7 +121,7 @@ struct SpendApprovalCard: View {
             if selectedOption?.generationPackage == nil { summary }
             if let requirement = approval.modelRequirement { requirementNotice(requirement) }
             if availableOptions.count > 1 || (selectedOption == nil && !availableOptions.isEmpty) {
-                DisclosureGroup("Change model", isExpanded: $showsModelSelection) {
+                DisclosureSection("Change model", isExpanded: $showsModelSelection) {
                     selectionControls
                     Text("Only connected models compatible with this request are shown.")
                         .interfaceFont(size: AppTheme.Typography.ui)

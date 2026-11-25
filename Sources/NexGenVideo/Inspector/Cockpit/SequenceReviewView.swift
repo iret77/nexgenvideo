@@ -89,7 +89,7 @@ struct SequenceReviewView: View {
     }
 
     var body: some View {
-        DisclosureGroup(isExpanded: Binding(get: { expanded }, set: { expanded = $0 })) {
+        DisclosureSection(probe: "sequence.disclosure", isExpanded: Binding(get: { expanded }, set: { expanded = $0 })) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 Text("Build a canonical reel from the exact selected sources and review cut continuity separately from whole playback.")
                     .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -172,7 +172,6 @@ struct SequenceReviewView: View {
             .padding(.vertical, AppTheme.Spacing.sm)
         } label: {
             Text("Sequence review")
-                .reviewAcceptanceProbe("sequence.disclosure", state: expanded)
         }
         .interfaceFont(size: AppTheme.Typography.ui)
         .onReceive(player?.publisher(for: \.rate).eraseToAnyPublisher() ?? Just(Float.zero).eraseToAnyPublisher()) {
@@ -404,13 +403,14 @@ private extension SequenceReviewCategoryV1 {
 
 private struct ReviewAcceptanceProbe: View {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.pipelineAcceptanceProbes) private var forced
     let identifier: String
     let state: Bool?
     let text: String?
 
     var body: some View {
-        if WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested
-            || ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"] != nil {
+        if forced ?? (WorkspaceUIAcceptance.isRequested || MusicvideoHostFlowAcceptance.isRequested
+            || ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY"] != nil) {
             AppRelaunchClickProbe(identifier: identifier, acceptanceState: state ?? isEnabled, acceptanceText: text)
                 .allowsHitTesting(false)
         }

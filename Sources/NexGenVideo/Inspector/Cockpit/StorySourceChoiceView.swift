@@ -47,7 +47,7 @@ struct StorySourceChoiceView: View {
                     .reviewAcceptanceProbe("story-source.file")
             }
             .buttonStyle(.capsule(.secondary, size: .regular)).disabled(!editable)
-            DisclosureGroup("Paste story") {
+            DisclosureSection("Paste story") {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                     TextField("Story text", text: pastedStory, axis: .vertical)
                         .textFieldStyle(.roundedBorder).disabled(!editable)

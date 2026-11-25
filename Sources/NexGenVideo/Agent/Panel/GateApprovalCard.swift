@@ -193,7 +193,7 @@ struct GateApprovalCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let changes = approval.priorChanges, !changes.lines.isEmpty {
-                    DisclosureGroup(isExpanded: $showsChanges) {
+                    DisclosureSection(isExpanded: $showsChanges) {
                         VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
                             ForEach(Array(changes.lines.enumerated()), id: \.offset) { _, line in
                                 Text("\(line.kind == .removed ? "−" : "+") \(line.number)  \(line.text)")
@@ -221,7 +221,7 @@ struct GateApprovalCard: View {
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
             if let notes = approval.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
-                DisclosureGroup(isExpanded: $showsDiagnostics) {
+                DisclosureSection(isExpanded: $showsDiagnostics) {
                     Text(notes)
                         .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)

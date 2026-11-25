@@ -356,7 +356,7 @@ struct AgentPanelView: View {
                 Button(repairActionTitle(failure)) { service.retryPipelineRepair() }
                     .buttonStyle(.capsule(.secondary, size: .regular))
                     .disabled(service.isStreaming)
-                DisclosureGroup("Diagnostic details") {
+                DisclosureSection("Diagnostic details") {
                     Text(failure.detail).textSelection(.enabled)
                 }
             }
@@ -381,7 +381,7 @@ struct AgentPanelView: View {
         if time != nil || usage != nil {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 if let time {
-                    DisclosureGroup("Time in this chat") {
+                    DisclosureSection("Time in this chat") {
                         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                             Text("Agent \(Self.clock(time.agentSeconds))")
                             Text("Tools \(Self.clock(time.toolSeconds))")

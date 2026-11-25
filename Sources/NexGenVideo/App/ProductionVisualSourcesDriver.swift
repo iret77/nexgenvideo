@@ -411,32 +411,37 @@ final class ProductionVisualSourcesDriver {
                 throw error
             }
             var previousGeometry: [NSRect] = []
+            var settledControl: NSView?
             var stableSince: TimeInterval?
             var stableSamples = 0
             do {
+                // Lazy content may replace the control's view while it scrolls; the settled view is the one found now.
                 try await wait("native scroll ended with settled target geometry " + id, seconds: 2) {
                     root.layoutSubtreeIfNeeded()
-                    guard completion.ended, target.contentView === root, self.probe(id, in: target) === view,
-                          view.window === target, scroll.window === target, scroll.contentView === clip,
+                    guard completion.ended, target.contentView === root, let control = self.settledProbe(id, in: target),
+                          control.window === target, scroll.window === target, scroll.contentView === clip,
                           scroll.documentView === document else {
                         previousGeometry = []
+                        settledControl = nil
                         stableSince = nil
                         stableSamples = 0
                         return false
                     }
-                    let geometry = [clip.bounds, clip.frame, document.frame, view.convert(view.bounds, to: root)]
+                    let geometry = [clip.bounds, clip.frame, document.frame, control.convert(control.bounds, to: root)]
                     guard geometry.allSatisfy({ frame in
                         [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite)
                             && frame.width > 0 && frame.height > 0
                     }) else {
                         previousGeometry = []
+                        settledControl = nil
                         stableSince = nil
                         stableSamples = 0
                         return false
                     }
                     let now = ProcessInfo.processInfo.systemUptime
-                    if geometry != previousGeometry {
+                    if geometry != previousGeometry || control !== settledControl {
                         previousGeometry = geometry
+                        settledControl = control
                         stableSince = now
                         stableSamples = 1
                         return false
@@ -447,7 +452,8 @@ final class ProductionVisualSourcesDriver {
             } catch {
                 try record("native scroll did not settle", fields: ["id": id, "window": target.windowNumber,
                     "nativeScrollEnded": completion.ended, "sameRoot": target.contentView === root,
-                    "sameControl": self.probe(id, in: target) === view, "sameControlWindow": view.window === target,
+                    "sameControl": self.probe(id, in: target) === view, "controlFound": self.probe(id, in: target) != nil,
+                    "uniqueShownControl": self.settledProbe(id, in: target) != nil, "sameControlWindow": view.window === target,
                     "sameScrollWindow": scroll.window === target, "sameClip": scroll.contentView === clip,
                     "sameDocument": scroll.documentView === document, "before": NSStringFromRect(originalBounds),
                     "after": NSStringFromRect(clip.bounds), "documentFrame": NSStringFromRect(document.frame),
@@ -461,6 +467,7 @@ final class ProductionVisualSourcesDriver {
             interactions.append(["kind": "wheel", "id": id, "delta": delta, "windowSettle": unreportedSettle ?? [:],
                 "before": [before.x, before.y], "after": [clip.bounds.origin.x, clip.bounds.origin.y],
                 "nativeScrollEnded": completion.ended, "settledGeometry": previousGeometry.map(rect),
+                "controlReplaced": settledControl !== view,
                 "settledGeometrySamples": stableSamples,
                 "settledGeometrySeconds": ProcessInfo.processInfo.systemUptime - (stableSince ?? ProcessInfo.processInfo.systemUptime)])
             unreportedSettle = nil
@@ -1754,6 +1761,17 @@ final class ProductionVisualSourcesDriver {
             return boardProbe(id, root: document, window: target, scroll: scroll)
         }
         return WorkspaceUIAcceptance.findProbe(in: root, identifier: id)
+    }
+
+    // The Board lookup is already unique within its scroll view; elsewhere exactly one shown probe may carry the id.
+    private func settledProbe(_ id: String, in target: NSWindow) -> NSView? {
+        if id == "storyboard.board.content" || id.hasPrefix("storyboard.sketch.sources.") { return probe(id, in: target) }
+        guard let root = target.contentView else { return nil }
+        let shown = views(root).filter { view in
+            view is AppRelaunchClickProbeView && view.identifier?.rawValue == id && view.window === target
+                && !view.isHiddenOrHasHiddenAncestor && view.bounds.width > 0 && view.bounds.height > 0
+        }
+        return shown.count == 1 ? shown.first : nil
     }
 
     private func boardProbe(_ id: String, root: NSView, window: NSWindow, scroll: NSScrollView? = nil) -> NSView? {

@@ -2740,7 +2740,7 @@ private extension NativePointerInteractionTests {
 
 extension NativePointerInteractionTests {
     private func verifyWheelTargetingInSceneViewport() async throws {
-        try await verifyLazyStoryboardMenu()
+        try await verifyRevealOfReplacedLazyControls()
         try await verifyReflowAfterRevealIsRevealedAgain()
         let outer = NSScrollView(), inner = NSScrollView()
         let outerDocument = NSView(), innerDocument = NSView()
@@ -3243,39 +3243,39 @@ extension NativePointerInteractionTests {
 @Suite("Native disclosure discovery", .serialized)
 @MainActor
 struct NativeDisclosureInteractionTests {
-    @MainActor private struct Disclosures: View {
-        @State private var camera = false
+    @MainActor private struct Sections: View {
+        @State var camera: Bool
 
         var body: some View {
-            VStack(alignment: .leading, spacing: 12) {
-                DisclosureGroup(isExpanded: $camera) {
-                    Text("Blocking").background {
-                        AppRelaunchClickProbe(identifier: "disclosure.camera.content", acceptanceState: true).allowsHitTesting(false)
-                    }
-                } label: {
-                    Text("Camera and continuity").background {
-                        AppRelaunchClickProbe(identifier: "disclosure.camera", acceptanceState: true).allowsHitTesting(false)
-                    }
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                DisclosureSection("Camera and continuity", probe: "disclosure.camera", isExpanded: $camera) {
+                    Text("Blocking").reviewAcceptanceProbe("disclosure.camera.content")
                 }
-                DisclosureGroup("Required references") { Text("Reference") }
+                DisclosureSection("Iteration limits", probe: "disclosure.limits") {
+                    Text("Rolls").reviewAcceptanceProbe("disclosure.limits.content")
+                }
+                .disabled(true)
             }
-            .padding(24)
+            .padding(AppTheme.Spacing.xl)
+            .environment(\.pipelineAcceptanceProbes, true)
             .frame(width: 420, height: 240, alignment: .topLeading)
         }
     }
 
-    @Test func triangleGeometryAcceptsOnlyTheEnabledControlBesideItsLabel() {
-        let label = NSRect(x: 120, y: 60, width: 140, height: 16)
-        let beside = NSRect(x: 104, y: 60, width: 13, height: 16)
-        #expect(ProductionNativeDisclosureAcceptance.accepts(beside, enabled: true, beside: label))
-        #expect(!ProductionNativeDisclosureAcceptance.accepts(beside, enabled: false, beside: label))
-        #expect(!ProductionNativeDisclosureAcceptance.accepts(beside.offsetBy(dx: 0, dy: 60), enabled: true, beside: label))
-        #expect(!ProductionNativeDisclosureAcceptance.accepts(beside.offsetBy(dx: -64, dy: 0), enabled: true, beside: label))
-        #expect(!ProductionNativeDisclosureAcceptance.accepts(NSRect(x: 104, y: 52, width: 13, height: 40), enabled: true, beside: label))
-        #expect(!ProductionNativeDisclosureAcceptance.accepts(.zero, enabled: true, beside: label))
+    private func probe(_ id: String, in root: NSView) -> AppRelaunchClickProbeView? { WorkspaceUIAcceptance.findProbe(in: root, identifier: id) as? AppRelaunchClickProbeView }
+
+    @Test func sectionStateDrivesItsProbeAndOmitsCollapsedContent() {
+        for expanded in [false, true] {
+            let host = hosted(Sections(camera: expanded))
+            let camera = probe("disclosure.camera", in: host)
+            #expect(camera?.acceptanceText == (expanded ? "expanded" : "collapsed") && camera?.acceptanceState == true)
+            #expect((probe("disclosure.camera.content", in: host) != nil) == expanded)
+            #expect(probe("disclosure.limits", in: host)?.acceptanceState == false)
+            #expect(probe("disclosure.limits", in: host)?.acceptanceText == "collapsed" && probe("disclosure.limits.content", in: host) == nil)
+        }
     }
 
-    @Test func mainThreadLookupFindsTheSwiftUIDisclosureTriangleAndItsPointerTogglesTheGroup() async throws {
+    @Test func pointerTogglesTheDisclosureSectionThroughItsProbe() async throws {
         try #require(ProcessInfo.processInfo.arguments.contains("--no-parallel"))
         let events = try #require(ProcessInfo.processInfo.environment["NGV_APPKIT_TEST_EVENTS"])
         let folder = URL(fileURLWithPath: events).deletingLastPathComponent()
@@ -3288,8 +3288,8 @@ struct NativeDisclosureInteractionTests {
                              styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         sheet.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: Disclosures())
-        sheet.contentView = NSHostingView(rootView: Disclosures())
+        window.contentView = NSHostingView(rootView: Sections(camera: false))
+        sheet.contentView = NSHostingView(rootView: Sections(camera: false))
         defer {
             if sheet.sheetParent != nil { window.endSheet(sheet) }
             sheet.contentView = nil; window.contentView = nil
@@ -3308,14 +3308,99 @@ struct NativeDisclosureInteractionTests {
         try await toggleTwice(driver: driver, in: sheet)
     }
 
+    private func hosted(_ sections: Sections) -> NSView {
+        let host = NSHostingView(rootView: sections)
+        host.setFrameSize(NSSize(width: 420, height: 240))
+        host.layoutSubtreeIfNeeded()
+        return host
+    }
+
     private func toggleTwice(driver: ProductionVisualSourcesDriver, in target: NSWindow) async throws {
         for expanded in [true, false] {
+            let start = driver.interactions.count
             try await ProductionNativeDisclosureAcceptance.toggle("disclosure.camera", content: "disclosure.camera.content",
                 expanded: expanded, driver: driver, in: target)
-            let pointer = try #require(driver.interactions.last { $0["label"] as? String == "native disclosure pointer" })
-            let evidence = try #require(pointer["evidence"] as? [String: Any])
-            #expect((evidence["matches"] as? [[Double]])?.count == 1)
-            #expect((evidence["nearby"] as? [[String: Any]])?.contains { $0["role"] as? String == kAXDisclosureTriangleRole } == true)
+            let state = expanded ? "expanded" : "collapsed"
+            #expect(driver.text("disclosure.camera", in: target) == state)
+            #expect((driver.state("disclosure.camera.content", in: target) != nil) == expanded)
+            let added = driver.interactions.dropFirst(start)
+            let pointer = try #require(added.last { $0["kind"] as? String == "pointer" && $0["id"] as? String == "disclosure.camera" })
+            #expect(pointer["localMonitorDownObserved"] as? Bool == true && pointer["localMonitorUpObserved"] as? Bool == true)
+            let record = try #require(added.last { $0["label"] as? String == "native disclosure pointer" })
+            #expect((record["evidence"] as? [String: Any])?["after"] as? String == state)
         }
+        let start = driver.interactions.count
+        do {
+            try await driver.click("disclosure.limits", in: target)
+            Issue.record("A disabled disclosure accepted pointer input.")
+        } catch {
+            #expect((error as? GateBlocked)?.message == "Control is disabled: disclosure.limits")
+        }
+        #expect(!driver.interactions.dropFirst(start).contains { $0["kind"] as? String == "pointer" })
+        #expect(driver.text("disclosure.limits", in: target) == "collapsed")
+        #expect(driver.state("disclosure.limits.content", in: target) == nil)
+    }
+}
+
+extension NativePointerInteractionTests {
+    // Replaces the target's view on every scroll step, as a lazy SwiftUI stack may do with a row it re-materializes.
+    @MainActor private final class ReplacingTarget {
+        let document = FlippedDocument(frame: NSRect(x: 0, y: 0, width: 360, height: 1600))
+        private(set) var current: AppRelaunchClickProbeView
+        private(set) var replacements = 0
+
+        init() {
+            current = Self.make()
+            document.addSubview(current)
+        }
+
+        func replace() {
+            let next = Self.make()
+            current.removeFromSuperview()
+            document.addSubview(next)
+            current = next
+            replacements += 1
+        }
+
+        private static func make() -> AppRelaunchClickProbeView {
+            let view = AppRelaunchClickProbeView(frame: NSRect(x: 40, y: 900, width: 160, height: 24))
+            view.identifier = NSUserInterfaceItemIdentifier("replaced.target")
+            view.acceptanceState = true
+            return view
+        }
+    }
+
+    @MainActor private final class FlippedDocument: NSView {
+        override var isFlipped: Bool { true }
+    }
+
+    private func verifyRevealOfReplacedLazyControls() async throws {
+        try await verifyLazyStoryboardMenu()
+        let fixture = try await Fixture("replaced-reveal-target")
+        defer { fixture.close() }
+        let window = fixture.window, driver = fixture.driver
+        let root = NSView(frame: NSRect(origin: .zero, size: window.contentLayoutRect.size))
+        let scroll = NSScrollView(frame: root.bounds)
+        scroll.autoresizingMask = [.width, .height]
+        scroll.hasVerticalScroller = true
+        let target = ReplacingTarget()
+        scroll.documentView = target.document
+        root.addSubview(scroll)
+        window.contentView = root
+        let clip = scroll.contentView
+        clip.postsBoundsChangedNotifications = true
+        let observer = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip,
+                                                              queue: .main) { _ in MainActor.assumeIsolated { target.replace() } }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        try await driver.waitForPresentation(of: window, control: "replaced.target")
+        let original = target.current
+        #expect(!clip.bounds.contains(original.convert(original.bounds, to: clip)))
+        let start = driver.interactions.count
+        try await driver.reveal("replaced.target", in: window)
+        let wheels = driver.interactions.dropFirst(start).filter { $0["kind"] as? String == "wheel" && $0["id"] as? String == "replaced.target" }
+        #expect(!wheels.isEmpty)
+        #expect(wheels.allSatisfy { $0["controlReplaced"] as? Bool == true })
+        #expect(target.replacements >= wheels.count && target.current !== original)
+        #expect(clip.bounds.contains(target.current.convert(target.current.bounds, to: clip)))
     }
 }

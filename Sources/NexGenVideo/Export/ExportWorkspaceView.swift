@@ -177,7 +177,7 @@ struct ExportWorkspaceView: View {
                     .reviewAcceptanceProbe("export.artwork.reveal")
                 }
             }
-            DisclosureGroup("Source and file checksums") {
+            DisclosureSection("Source and file checksums") {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                     Text("Film: \(attempt.finishedTimelineSHA256)")
                     Text("Output: \(attempt.outputSHA256 ?? "—")")

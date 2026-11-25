@@ -31,7 +31,7 @@ struct PhaseSpendApprovalIndicator: View {
                         .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 } else {
-                    DisclosureGroup(approval.runs.count == 1
+                    DisclosureSection(approval.runs.count == 1
                         ? String(localized: "1 run")
                         : String(localized: "\(approval.runs.count) runs")) {
                         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {

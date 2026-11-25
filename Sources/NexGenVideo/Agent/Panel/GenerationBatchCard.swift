@@ -280,7 +280,7 @@ struct GenerationBatchCard: View {
                     : String(localized: "The generation request could not be changed."))
                     .interfaceFont(size: AppTheme.FontSize.xxs)
                     .foregroundStyle(AppTheme.Status.errorColor)
-                DisclosureGroup("Error details") {
+                DisclosureSection("Error details") {
                     Text(error).interfaceFont(size: AppTheme.FontSize.xxs).textSelection(.enabled)
                 }
             }
@@ -665,7 +665,7 @@ struct GenerationBatchProgressView: View {
         if coordinator.pending == nil, let error = coordinator.error {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 Text(coordinator.activityError == nil ? "Previous generation message" : "Generation needs attention. Review the details below.")
-                DisclosureGroup("Diagnostic details") { Text(error).textSelection(.enabled) }
+                DisclosureSection("Diagnostic details") { Text(error).textSelection(.enabled) }
                 if coordinator.activityError != nil {
                     Button("Dismiss alert for this session") { coordinator.acknowledgeActivityError() }
                         .buttonStyle(InlineActionButtonStyle())
@@ -679,7 +679,7 @@ struct GenerationBatchProgressView: View {
             $0.batch.payload.projectKey == editor.projectId && (batchID == nil || $0.batch.id == batchID)
         }
         if !snapshots.isEmpty {
-            DisclosureGroup(isExpanded: $expanded) {
+            DisclosureSection(isExpanded: $expanded) {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                         ForEach(snapshots, id: \.batch.id) { snapshot in
@@ -702,7 +702,7 @@ struct GenerationBatchProgressView: View {
                                     Text("\(item.purpose) · \(label(execution.state))")
                                         .reviewAcceptanceProbe("generation-batch.state." + item.id, text: execution.state.rawValue)
                                     if let detail = execution.detail {
-                                        DisclosureGroup("Diagnostic details") {
+                                        DisclosureSection("Diagnostic details") {
                                             Text(detail).foregroundStyle(AppTheme.Text.secondaryColor).textSelection(.enabled)
                                         }
                                     }
@@ -719,7 +719,7 @@ struct GenerationBatchProgressView: View {
                                 Text(pause.reason == .hostBusy ? "Waiting for other pipeline work." : "Request not sent. Resolve the issue, then continue or cancel the remaining requests.")
                                     .foregroundStyle(AppTheme.Text.secondaryColor)
                                     .reviewAcceptanceProbe("generation-batch.paused." + snapshot.batch.id, text: pause.reason.rawValue)
-                                DisclosureGroup("Diagnostic details") {
+                                DisclosureSection("Diagnostic details") {
                                     Text(pause.detail).foregroundStyle(AppTheme.Text.secondaryColor).textSelection(.enabled)
                                 }
                             }

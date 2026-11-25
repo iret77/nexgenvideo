@@ -43,8 +43,8 @@ struct ProductionStyleReviewView: View {
                             details(snapshot)
                         }
                     } else {
-                        DisclosureGroup(isExpanded: $expanded) { details(snapshot) } label: {
-                            heading(snapshot).reviewAcceptanceProbe("style.disclosure", state: expanded)
+                        DisclosureSection(probe: "style.disclosure", isExpanded: $expanded) { details(snapshot) } label: {
+                            heading(snapshot)
                         }
                     }
                 }

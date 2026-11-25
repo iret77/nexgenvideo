@@ -53,7 +53,7 @@ struct AgentActivityProgressView: View {
                         Text("No response for \(AgentActivityTiming.clock(timing.silence(at: context.date))). The current state cannot be confirmed.")
                             .foregroundStyle(AppTheme.Status.warningColor)
                     }
-                    DisclosureGroup("Show activity") {
+                    DisclosureSection("Show activity") {
                         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                             Text("Elapsed \(AgentActivityTiming.clock(timing.elapsed(at: context.date)))")
                             if let lastEventAt = timing.lastEventAt {

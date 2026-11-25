@@ -69,7 +69,7 @@ private struct AgentHostStateView: View {
                 .buttonStyle(.capsule(.secondary, size: .regular))
             }
             if hasDiagnostics {
-                DisclosureGroup(isExpanded: $showsDiagnostics) {
+                DisclosureSection(isExpanded: $showsDiagnostics) {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                         diagnosticRow("Tool", state.record.toolName)
                         if let path = state.record.artifactPath {

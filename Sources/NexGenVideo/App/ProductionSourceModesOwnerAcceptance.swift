@@ -55,7 +55,8 @@ enum ProductionSourceModesOwnerAcceptance {
             try await driver.picker("shot-planning.source-mode." + target, title: "AI generation",
                 expected: SourceMode.generated.rawValue, in: driver.window)
             if driver.text("shot-planning.connection." + target, in: driver.window) == nil {
-                try await driver.click("shot-planning.camera.disclosure." + target, in: driver.window, enabled: false)
+                try await ProductionNativeDisclosureAcceptance.toggle("shot-planning.camera.disclosure." + target,
+                    content: "shot-planning.connection." + target, expanded: true, driver: driver, in: driver.window)
             }
             let chain = kind == .frameContinuation
                 ? ShotPlanningDraftV1.ShotIntent.ChainKind.frameContinuation : .nativeExtension

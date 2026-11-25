@@ -151,7 +151,7 @@ struct ProductionRenderReviewView: View {
             let inputPaths = Set(shot.review.conditioning.map(\.path) + [shot.sourceInput?.path].compactMap { $0 })
             let planning = mediaReferences(shot.review.evidence).filter { !inputPaths.contains($0.path) }
             if !planning.isEmpty {
-                DisclosureGroup("Storyboard and review references") {
+                DisclosureSection("Storyboard and review references") {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                         ForEach(Array(planning.enumerated()), id: \.element.path) { index, reference in
                             ProductionInputPreview(reference: reference, dataRoot: root, title: "Review reference \(index + 1)")

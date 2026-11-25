@@ -11,7 +11,7 @@ struct ExportCoverUtilityView: View {
 
     var body: some View {
         if editor.activePluginName == "musicvideo" {
-            DisclosureGroup("Album cover") {
+            DisclosureSection("Album cover", probe: "export.cover.open") {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                     Text("Create square, landscape or portrait artwork. Keep the clean image and optionally create a separate artist/title variant.")
                         .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -36,7 +36,6 @@ struct ExportCoverUtilityView: View {
                 }
                 .padding(.top, AppTheme.Spacing.sm)
             }
-            .reviewAcceptanceProbe("export.cover.open")
         }
     }
 }

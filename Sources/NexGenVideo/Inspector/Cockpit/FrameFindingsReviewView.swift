@@ -76,7 +76,7 @@ private struct FrameFindingsCard: View {
     }
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
+        DisclosureSection(probe: "frames.audit.open.\(audit.shotId).\(audit.role)", isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 SheetThumbnailView(label: "Reviewed frame", path: audit.renderPath, projectDir: editor.workingRoot,
                     tileHeight: AppTheme.ComponentSize.productionStyleReviewMaxHeight)
@@ -109,7 +109,6 @@ private struct FrameFindingsCard: View {
             .padding(.top, AppTheme.Spacing.sm)
         } label: {
             Text("Review deviations: \(audit.shotId) · \(audit.role)")
-                .reviewAcceptanceProbe("frames.audit.open.\(audit.shotId).\(audit.role)", text: expanded ? "expanded" : "collapsed")
         }
         .padding(AppTheme.Spacing.md)
         .task(id: refreshID) {

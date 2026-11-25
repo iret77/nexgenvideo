@@ -28,7 +28,7 @@ struct TakeRangeReviewView: View {
     private var validRange: Bool { (try? range.validate(sourceDuration: snapshot.durationSeconds)) != nil }
 
     var body: some View {
-        DisclosureGroup {
+        DisclosureSection("Review a source range", probe: "take.range.open") {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 Text("Keep a usable part of this take with its own review. The original take's verdict remains separate.")
                     .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -116,7 +116,7 @@ struct TakeRangeReviewView: View {
                     .buttonStyle(InlineActionButtonStyle()).disabled(busy)
                     .reviewAcceptanceProbe("take.range.discard")
                 if !savedRanges.isEmpty {
-                    DisclosureGroup("Saved reviewed ranges") {
+                    DisclosureSection("Saved reviewed ranges", probe: "take.range.saved.open") {
                         ForEach(savedRanges) { stored in
                             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                                 Text("Frames \(stored.review.range.startFrame)–\(stored.review.range.endFrame) at \(stored.review.range.fps) fps")
@@ -146,8 +146,6 @@ struct TakeRangeReviewView: View {
                         .reviewAcceptanceProbe("take.range.message", text: message)
                 }
             }.padding(.vertical, AppTheme.Spacing.sm)
-        } label: {
-            Text("Review a source range").reviewAcceptanceProbe("take.range.open")
         }
         .onChange(of: firstFrame) { _, _ in reset() }
         .onChange(of: endFrame) { _, _ in reset() }

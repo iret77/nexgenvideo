@@ -80,7 +80,7 @@ struct TakeWorkspaceView: View {
                         }
                     }
                     TakeRepairView(snapshot: snapshot, canWrite: writesAvailable).id(snapshot.take.id)
-                    DisclosureGroup("Submitted direction and image references") {
+                    DisclosureSection("Submitted direction and image references") {
                         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                             Text(snapshot.take.generationInput.prompt).textSelection(.enabled)
                             ForEach(Array(snapshot.referenceImages.enumerated()), id: \.offset) { index, reference in

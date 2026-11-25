@@ -108,7 +108,7 @@ struct ProductionSequenceReviewView: View {
     }
 
     var body: some View {
-        DisclosureGroup("Film review", isExpanded: Binding(get: { expanded }, set: { expanded = $0 })) {
+        DisclosureSection("Film review", probe: "sequence.disclosure", isExpanded: Binding(get: { expanded }, set: { expanded = $0 })) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                 Text("Review the actual edited film, including its picture, transitions and sound. Changes to the cut, sources or output range require another review.")
                     .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -176,7 +176,6 @@ struct ProductionSequenceReviewView: View {
             .padding(.vertical, AppTheme.Spacing.sm)
         }
         .interfaceFont(size: AppTheme.Typography.ui)
-        .reviewAcceptanceProbe("sequence.disclosure", state: expanded)
         .task(id: draft.id) { await prepareDraft() }
         .onChange(of: editor.timelineRenderRevision) { _, _ in if snapshot != nil { stale = true } }
         .onDisappear { player?.pause() }
@@ -298,7 +297,7 @@ struct ProductionSequenceReviewView: View {
                 Text("Rescue range").tag(SequenceReviewActionV1.rescue)
                 Text("Rewind planning").tag(SequenceReviewActionV1.rewind)
             }.reviewAcceptanceProbe("sequence.action", text: action.rawValue)
-            DisclosureGroup("Affected planned shots (optional for editorial additions)") {
+            DisclosureSection("Affected planned shots (optional for editorial additions)") {
                 ForEach(Array(snapshot.shotIDs.enumerated()), id: \.element) { index, id in
                     Toggle("Shot \(index + 1)", isOn: Binding(get: { selectedShots.contains(id) }, set: { active in
                         if active { selectedShots.insert(id) } else { selectedShots.remove(id) }

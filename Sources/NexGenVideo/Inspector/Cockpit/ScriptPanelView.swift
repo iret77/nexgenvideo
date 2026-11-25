@@ -78,7 +78,7 @@ struct ScriptPanelView: View {
                                 VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                                     Text(event.action).textSelection(.enabled)
                                     if let dialogue = event.dialogue { Text(dialogue).italic().textSelection(.enabled) }
-                                    DisclosureGroup("Treatment and source references") {
+                                    DisclosureSection("Treatment and source references") {
                                         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                                             Text("Treatment").fontWeight(AppTheme.FontWeight.medium)
                                             ForEach(Array((review.treatmentExcerpts[event.id] ?? []).enumerated()), id: \.offset) { _, excerpt in
