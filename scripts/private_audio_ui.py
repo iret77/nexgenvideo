@@ -287,6 +287,35 @@ def verify_native_intake(app, pack, runner, binding):
         raise RuntimeError('Private native intake failed. See the private evidence.') from None
 
 
+def record_analysis_failure(report, started, state):
+    import pwd
+    import traceback
+    native, client = state.get("native"), state.get("client")
+    crashes = report / "crash-reports"
+    copied = []
+    for directory in (Path(pwd.getpwuid(os.getuid()).pw_dir) / "Library/Logs/DiagnosticReports",
+                      Path("/Library/Logs/DiagnosticReports")):
+        try:
+            candidates = sorted(directory.glob("NexGenVideo*.ips"))
+        except OSError:
+            continue
+        for path in candidates:
+            try:
+                info = path.lstat()
+                if not path.is_file() or path.is_symlink() or info.st_mtime < started or info.st_size > 32 * 1024 * 1024:
+                    continue
+                crashes.mkdir(exist_ok=True)
+                destination = crashes / (str(len(copied)) + "-" + path.name)
+                destination.write_bytes(path.read_bytes())
+                copied.append(dict(original=str(path), file=destination.name, bytes=info.st_size))
+            except OSError:
+                continue
+    with (report / "analysis-error.json").open("x") as out:
+        json.dump(dict(traceback=traceback.format_exc(),
+                       nativePID=native.pid if native else None, nativeExit=native.poll() if native else None,
+                       testExit=client.process.poll() if client else None, crashReports=copied), out)
+
+
 def analyze():
     if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("GITHUB_REPOSITORY") != "iret77/nexgenvideo":
         raise ValueError("This acceptance runs in NexGenVideo CI")
@@ -301,18 +330,25 @@ def analyze():
     if list(report.glob("file-panel-*")) or (report / "dialog-native.pid").exists():
         raise ValueError("Private dialog evidence already exists")
     env = dict(os.environ)
-    with session(app, env, report, "private-audio", report=report, private=config_for()) as client:
-        if client is None:
-            raise ValueError("Missing the bound file dialog XCTest products")
-        with ExitStack() as stack:
-            log = stack.enter_context((report / "private-app.log").open("xb"))
-            native = start(stack, [app / "Contents/MacOS/NexGenVideo", "-ApplePersistenceIgnoreState", "YES",
-                                   "-AppleLanguages", "(en)", "-AppleLocale", "en_US"], env=env, log=log)
-            observer = start_footer_observer(stack, app, env, report, native)
-            code = wait_for_native(native, client, 49 * 60)
-            if code:
-                raise RuntimeError("The private analysis failed")
-            finish_footer_observer(observer)
+    started, state = time.time(), {}
+    try:
+        with session(app, env, report, "private-audio", report=report, private=config_for()) as client:
+            if client is None:
+                raise ValueError("Missing the bound file dialog XCTest products")
+            state["client"] = client
+            with ExitStack() as stack:
+                log = stack.enter_context((report / "private-app.log").open("xb"))
+                native = start(stack, [app / "Contents/MacOS/NexGenVideo", "-ApplePersistenceIgnoreState", "YES",
+                                       "-AppleLanguages", "(en)", "-AppleLocale", "en_US"], env=env, log=log)
+                state["native"] = native
+                observer = start_footer_observer(stack, app, env, report, native)
+                code = wait_for_native(native, client, 49 * 60)
+                if code:
+                    raise RuntimeError("The private analysis failed")
+                finish_footer_observer(observer)
+    except Exception:
+        record_analysis_failure(report, started, state)
+        raise
     with (report / "private-xctest-execution.json").open("x") as out:
         json.dump(dict(schema="private-audio-xctest/1", nativeExit=code, testExit=client.process.returncode,
                        appPID=native.pid, runnerTemp=str(runner), runID=int(os.environ["GITHUB_RUN_ID"]),
