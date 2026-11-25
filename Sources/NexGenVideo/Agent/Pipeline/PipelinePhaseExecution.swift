@@ -173,6 +173,10 @@ final class PipelinePhaseRunCoordinator {
         return jobs[key]?.phase ?? mutations[key]?.label
     }
 
+    func activeMutation(projectRoot: URL) -> String? {
+        mutations[key(for: projectRoot)]?.label
+    }
+
     func beginMutation(projectRoot: URL, label: String) -> UUID? {
         let key = key(for: projectRoot)
         guard jobs[key] == nil, mutations[key] == nil else { return nil }

@@ -38,14 +38,15 @@ enum PipelineReadinessPresentation {
 }
 
 enum PipelinePhasePresentation: Equatable {
-    case running, approved, outdated, needsRevision, ready, incomplete, upcoming
+    case running, approved, outdated, needsRevision, checking, ready, incomplete, upcoming
 
-    static func resolve(phase: ProjectPhase, isCurrent: Bool, isRunning: Bool, ready: Bool) -> Self {
+    static func resolve(phase: ProjectPhase, isCurrent: Bool, isRunning: Bool, checking: Bool = false,
+                        ready: Bool) -> Self {
         if isRunning { return .running }
         if phase.approvalCurrent { return .approved }
         if phase.approved { return .outdated }
         if phase.state == "needs_revision" { return .needsRevision }
-        if isCurrent { return ready ? .ready : .incomplete }
+        if isCurrent { return checking ? .checking : ready ? .ready : .incomplete }
         return .upcoming
     }
 
@@ -55,6 +56,7 @@ enum PipelinePhasePresentation: Equatable {
         case .approved: "Approved"
         case .outdated: "Approval outdated"
         case .needsRevision: "Needs revision"
+        case .checking: "Checking"
         case .ready: "Ready for review"
         case .incomplete: "Incomplete"
         case .upcoming: "Upcoming"
@@ -66,6 +68,7 @@ enum PipelinePhasePresentation: Equatable {
         case .running: "circle.dotted.circle"
         case .approved: "checkmark.circle.fill"
         case .outdated, .needsRevision: "exclamationmark.triangle.fill"
+        case .checking: "circle.dotted"
         case .ready: "checkmark.circle"
         case .incomplete: "circle.lefthalf.filled"
         case .upcoming: "circle"

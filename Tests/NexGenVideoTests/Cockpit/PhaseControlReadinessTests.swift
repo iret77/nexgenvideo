@@ -34,4 +34,63 @@ struct PhaseControlReadinessTests {
         #expect(ready == .ready)
         #expect(ready.dockMessage == nil)
     }
+
+    @Test func recheckingKeepsTheSettledControlsWithoutClaimingReadiness() {
+        let ready = PhaseDockReadiness(phase: "storyboard", mutation: .ready, approval: .ready)
+        let checking = PhaseDockReadiness(phase: "storyboard", mutation: .checking,
+                                          approval: .blocked("Checking approval readiness."))
+        let layout = PhaseDockLayout.resolve(phase: "storyboard", current: checking, settled: ready, saving: false)
+        #expect(layout.settling && layout.checking)
+        #expect(layout.message == PhaseControlReadiness.checking.dockMessage)
+        #expect(layout.reservedMessage == PhaseDockReadiness.readyMessage)
+        #expect(layout.stable.approves)
+        #expect(layout.stable.diagnostic == nil && !layout.stable.offersRetry)
+
+        let settled = PhaseDockLayout.resolve(phase: "storyboard", current: ready, settled: ready, saving: false)
+        #expect(!settled.settling && settled.reservedMessage == nil)
+        #expect(settled.message == PhaseDockReadiness.readyMessage)
+
+        let stalePhase = PhaseDockLayout.resolve(phase: "storyboard",
+            current: .init(phase: "treatment", mutation: .ready, approval: .ready), settled: ready, saving: false)
+        #expect(stalePhase.checking && stalePhase.message == PhaseControlReadiness.checking.dockMessage)
+    }
+
+    @Test func busyAndSavingNameTheirOperationInsideTheSettledLayout() {
+        let blocked = PhaseDockReadiness(phase: "storyboard", mutation: .ready,
+            approval: .blocked("Storyboard incomplete.", userMessage: "Storyboard needs current story relationships."))
+        let busy = PhaseDockLayout.resolve(phase: "storyboard",
+            current: .init(phase: "storyboard", mutation: .busy("Edit location"), approval: .ready), settled: blocked, saving: false)
+        #expect(busy.message == "Wait for Edit Location to finish.")
+        #expect(busy.reservedMessage == "Storyboard needs current story relationships.")
+        #expect(!busy.stable.approves && busy.stable.diagnostic == "Storyboard incomplete.")
+
+        let saving = PhaseDockLayout.resolve(phase: "storyboard", current: blocked, settled: blocked, saving: true)
+        #expect(saving.settling && !saving.checking)
+        #expect(saving.message == PhaseDockReadiness.savingMessage)
+        #expect(saving.reservedMessage == "Storyboard needs current story relationships.")
+    }
+
+    @Test func aFirstCheckOrAnotherPhasesResultReservesTheReadyLayout() {
+        let checking = PhaseDockReadiness(phase: "storyboard", mutation: .checking, approval: .blocked("Checking."))
+        let failedElsewhere = PhaseDockReadiness(phase: "treatment", mutation: .failed("gates.yaml is unreadable."),
+                                                 approval: .ready)
+        for settled in [nil, failedElsewhere] {
+            let layout = PhaseDockLayout.resolve(phase: "storyboard", current: checking, settled: settled, saving: false)
+            #expect(layout.stable == .assumedReady("storyboard"))
+            #expect(layout.reservedMessage == PhaseDockReadiness.readyMessage)
+        }
+    }
+
+    @Test func approvedPhaseRecheckAddsNoRowAndKeepsAFailureSlot() {
+        let quiet = PhaseDockRevisionLayout.resolve(mutation: .checking, settled: .ready)
+        #expect(quiet.settling && quiet.reason == nil && quiet.reserved == nil && !quiet.offersRetry)
+
+        let failure = PhaseControlReadiness.failed("gates.yaml is unreadable.")
+        let retrying = PhaseDockRevisionLayout.resolve(mutation: .checking, settled: failure)
+        #expect(retrying.reason == "Checking whether this phase can be revised…")
+        #expect(retrying.reserved == failure.revisionMessage && retrying.offersRetry)
+
+        let settled = PhaseDockRevisionLayout.resolve(mutation: failure, settled: failure)
+        #expect(!settled.settling && settled.reason == failure.revisionMessage && settled.reserved == nil)
+    }
 }
