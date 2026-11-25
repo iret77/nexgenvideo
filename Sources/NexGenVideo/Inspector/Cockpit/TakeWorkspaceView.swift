@@ -65,7 +65,7 @@ struct TakeWorkspaceView: View {
                 }
                 if let snapshot {
                     VideoPlayer(player: player)
-                        .frame(minHeight: AppTheme.Layout.previewMinHeight)
+                        .scrollViewportFittedHeight(AppTheme.Layout.reviewPlayerMaxHeight)
                         .reviewAcceptanceProbe("take.workspace.player", text: snapshot.take.id)
                     Text("\(takes.first(where: { $0.id == snapshot.take.id })?.shotLabel ?? snapshot.take.shotID) · \(snapshot.take.generationInput.model) · \(snapshot.durationSeconds, specifier: "%.2f") s")
                         .foregroundStyle(AppTheme.Text.secondaryColor)

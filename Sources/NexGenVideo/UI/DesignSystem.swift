@@ -152,7 +152,7 @@ extension View {
     // Keeps a scrolled preview fully revealable when the phase dock shrinks the viewport.
     func scrollViewportFittedHeight(_ maximum: CGFloat) -> some View {
         containerRelativeFrame(.vertical) { length, _ in
-            min(maximum, length * AppTheme.Layout.scrollPreviewViewportFraction)
+            length > 0 ? min(maximum, length * AppTheme.Layout.scrollPreviewViewportFraction) : maximum
         }
     }
 }

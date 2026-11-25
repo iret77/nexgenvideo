@@ -81,7 +81,7 @@ struct ProductionInputPreview: View {
             } else if let image {
                 Button { inspecting = true } label: {
                     Image(image, scale: 1, label: Text(title)).resizable().aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: .infinity).frame(height: AppTheme.Layout.previewMinHeight)
+                        .frame(maxWidth: .infinity).scrollViewportFittedHeight(AppTheme.Layout.inputPreviewMaxHeight)
                 }.buttonStyle(.plain).accessibilityLabel(isImage ? "Inspect \(title)" : "Play \(title)")
             } else if let failure { Text(failure).foregroundStyle(AppTheme.Status.errorColor) }
             else { ProgressView("Loading input…") }

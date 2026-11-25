@@ -42,7 +42,7 @@ struct TakeRangeReviewView: View {
                     .buttonStyle(InlineActionButtonStyle()).disabled(busy || !validRange)
                     .reviewAcceptanceProbe("take.range.play")
                 if player != nil {
-                    VideoPlayer(player: player).frame(minHeight: AppTheme.Layout.previewMinHeight)
+                    VideoPlayer(player: player).scrollViewportFittedHeight(AppTheme.Layout.reviewPlayerMaxHeight)
                         .reviewAcceptanceProbe("take.range.player")
                 }
                 if findings.count < TakeReview.Pass.allCases.count {
