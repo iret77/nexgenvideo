@@ -163,7 +163,7 @@ struct FilmFlowImportView: View {
         Text("FilmFlow provides descriptions and references, not the original screenplay or NexGenVideo approvals.")
         Text("Aspect ratio: \(material.project.aspectRatio) · Sketch style: \(material.project.sketchStyle). Current project settings are unchanged.")
         if let style = material.project.styleBible { Text(style).textSelection(.enabled) }
-        DisclosureGroup("Omitted response fields (\(snapshot.responses.reduce(0) { $0 + $1.omissions.count }))") {
+        DisclosureSection("Omitted response fields (\(snapshot.responses.reduce(0) { $0 + $1.omissions.count }))") {
             ForEach(snapshot.responses, id: \.tool) { response in
                 Text(response.tool + ": " + response.omissions.joined(separator: ", ")).textSelection(.enabled)
             }
@@ -200,7 +200,7 @@ struct FilmFlowImportView: View {
         if current != nil, prepared == nil {
             if let targets { Text("Current phase: " + targets.phase).reviewAcceptanceProbe("filmflow.phase", text: targets.phase) }
             if let message = targets?.message { Text(message).foregroundStyle(AppTheme.Text.secondaryColor) }
-            DisclosureGroup {
+            DisclosureSection(probe: "filmflow.notes.open") {
                 ForEach(Array(material.items.enumerated()), id: \.element.id) { index, source in
                     Toggle("\(index + 1). " + source.title, isOn: Binding(get: { selectedObjects.contains(source.id) },
                         set: { if $0 { selectedObjects.insert(source.id) } else { selectedObjects.remove(source.id) } }))
@@ -215,7 +215,7 @@ struct FilmFlowImportView: View {
                 } }.buttonStyle(InlineActionButtonStyle()).disabled(!mayAdoptNotes)
                     .reviewAcceptanceProbe("filmflow.notes.apply", state: mayAdoptNotes)
             } label: {
-                Text("Planning notes: choose source objects").reviewAcceptanceProbe("filmflow.notes.open")
+                Text("Planning notes: choose source objects")
             }
         }
     }

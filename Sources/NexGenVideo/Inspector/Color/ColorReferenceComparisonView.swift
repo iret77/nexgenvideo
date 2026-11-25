@@ -15,7 +15,7 @@ struct ColorReferenceComparisonView: View {
     }
 
     var body: some View {
-        DisclosureGroup("Reference color comparison", isExpanded: $expanded) {
+        DisclosureSection("Reference color comparison", probe: "color.reference.open", isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                 Text("Graded clip at playhead (clamped to clip) · raw reference midpoint")
                     .interfaceFont(size: AppTheme.Typography.metadata).foregroundStyle(AppTheme.Text.secondaryColor)
@@ -69,7 +69,6 @@ struct ColorReferenceComparisonView: View {
         }
         .interfaceFont(size: AppTheme.Typography.ui)
         .padding(AppTheme.Spacing.md)
-        .reviewAcceptanceProbe("color.reference.open", text: expanded ? "open" : "closed")
         .onChange(of: clipID) { _, _ in comparison.discard(); referenceID = nil }
         .onChange(of: editor.agentService.isStreaming) { _, streaming in
             if !streaming { comparison.agentFinished(editor: editor) }

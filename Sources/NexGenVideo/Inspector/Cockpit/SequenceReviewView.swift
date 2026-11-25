@@ -89,7 +89,7 @@ struct SequenceReviewView: View {
     }
 
     var body: some View {
-        DisclosureGroup(isExpanded: Binding(get: { expanded }, set: { expanded = $0 })) {
+        DisclosureSection(probe: "sequence.disclosure", isExpanded: Binding(get: { expanded }, set: { expanded = $0 })) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 Text("Build a canonical reel from the exact selected sources and review cut continuity separately from whole playback.")
                     .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -172,7 +172,6 @@ struct SequenceReviewView: View {
             .padding(.vertical, AppTheme.Spacing.sm)
         } label: {
             Text("Sequence review")
-                .reviewAcceptanceProbe("sequence.disclosure", state: expanded)
         }
         .interfaceFont(size: AppTheme.Typography.ui)
         .onReceive(player?.publisher(for: \.rate).eraseToAnyPublisher() ?? Just(Float.zero).eraseToAnyPublisher()) {

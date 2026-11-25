@@ -47,7 +47,7 @@ struct GenerationPackageReviewView: View {
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                 GenerationReferenceThumbnails(package: package, style: .labeled)
             }
-            DisclosureGroup("Request details") {
+            DisclosureSection("Request details") {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                     Text("Provider prompt")
                         .interfaceFont(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold)

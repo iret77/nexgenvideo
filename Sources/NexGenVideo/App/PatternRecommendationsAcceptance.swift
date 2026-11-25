@@ -26,9 +26,9 @@ enum PatternRecommendationsAcceptance {
             try await driver.click("editor.workspace.production", in: window, enabled: false)
             try await driver.click("pipeline.overview.select.brief", in: window, enabled: false)
             try await driver.wait("native pattern disclosure") {
-                ["open", "closed"].contains(driver.text("production.pattern.open", in: window) ?? "missing")
+                ["expanded", "collapsed"].contains(driver.text("production.pattern.open", in: window) ?? "missing")
             }
-            if driver.text("production.pattern.open", in: window) == "closed" {
+            if driver.text("production.pattern.open", in: window) == "collapsed" {
                 try await driver.click("production.pattern.open", in: window, enabled: false)
             }
             func displayedSnapshot() async throws -> PatternRecommendationsStore.Snapshot {

@@ -418,7 +418,7 @@ final class ProductionVisualSourcesDriver {
                 // Lazy content may replace the control's view while it scrolls; the settled view is the one found now.
                 try await wait("native scroll ended with settled target geometry " + id, seconds: 2) {
                     root.layoutSubtreeIfNeeded()
-                    guard completion.ended, target.contentView === root, let control = self.probe(id, in: target),
+                    guard completion.ended, target.contentView === root, let control = self.settledProbe(id, in: target),
                           control.window === target, scroll.window === target, scroll.contentView === clip,
                           scroll.documentView === document else {
                         previousGeometry = []
@@ -453,7 +453,7 @@ final class ProductionVisualSourcesDriver {
                 try record("native scroll did not settle", fields: ["id": id, "window": target.windowNumber,
                     "nativeScrollEnded": completion.ended, "sameRoot": target.contentView === root,
                     "sameControl": self.probe(id, in: target) === view, "controlFound": self.probe(id, in: target) != nil,
-                    "sameControlWindow": view.window === target,
+                    "uniqueShownControl": self.settledProbe(id, in: target) != nil, "sameControlWindow": view.window === target,
                     "sameScrollWindow": scroll.window === target, "sameClip": scroll.contentView === clip,
                     "sameDocument": scroll.documentView === document, "before": NSStringFromRect(originalBounds),
                     "after": NSStringFromRect(clip.bounds), "documentFrame": NSStringFromRect(document.frame),
@@ -1761,6 +1761,17 @@ final class ProductionVisualSourcesDriver {
             return boardProbe(id, root: document, window: target, scroll: scroll)
         }
         return WorkspaceUIAcceptance.findProbe(in: root, identifier: id)
+    }
+
+    // The Board lookup is already unique within its scroll view; elsewhere exactly one shown probe may carry the id.
+    private func settledProbe(_ id: String, in target: NSWindow) -> NSView? {
+        if id == "storyboard.board.content" || id.hasPrefix("storyboard.sketch.sources.") { return probe(id, in: target) }
+        guard let root = target.contentView else { return nil }
+        let shown = views(root).filter { view in
+            view is AppRelaunchClickProbeView && view.identifier?.rawValue == id && view.window === target
+                && !view.isHiddenOrHasHiddenAncestor && view.bounds.width > 0 && view.bounds.height > 0
+        }
+        return shown.count == 1 ? shown.first : nil
     }
 
     private func boardProbe(_ id: String, root: NSView, window: NSWindow, scroll: NSScrollView? = nil) -> NSView? {

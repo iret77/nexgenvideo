@@ -1,14 +1,14 @@
 import SwiftUI
 
-// The toggle is an ordinary button, so pointer, keyboard, VoiceOver and acceptance input share one path.
+// The app's only disclosure control. The toggle is an ordinary button, so pointer, keyboard, VoiceOver and acceptance input share one path.
 struct DisclosureSection<Label: View, Content: View>: View {
-    private let probe: String
+    private let probe: String?
     private let isExpanded: Binding<Bool>?
     private let content: () -> Content
     private let label: () -> Label
     @State private var ownExpanded = false
 
-    init(probe: String, isExpanded: Binding<Bool>? = nil, @ViewBuilder content: @escaping () -> Content,
+    init(probe: String? = nil, isExpanded: Binding<Bool>? = nil, @ViewBuilder content: @escaping () -> Content,
          @ViewBuilder label: @escaping () -> Label) {
         self.probe = probe
         self.isExpanded = isExpanded
@@ -19,21 +19,11 @@ struct DisclosureSection<Label: View, Content: View>: View {
     var body: some View {
         let expanded = isExpanded ?? $ownExpanded
         VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
-            Button { expanded.wrappedValue.toggle() } label: {
-                HStack(spacing: AppTheme.Spacing.xs) {
-                    Image(systemName: "chevron.right")
-                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
-                        .foregroundStyle(AppTheme.Text.secondaryColor)
-                        .rotationEffect(.degrees(expanded.wrappedValue ? 90 : 0))
-                        .animation(.easeInOut(duration: AppTheme.Anim.selection), value: expanded.wrappedValue)
-                        .frame(width: AppTheme.IconSize.xxs)
-                        .accessibilityHidden(true)
-                    label()
-                }
+            if let probe {
+                toggle(expanded).reviewAcceptanceProbe(probe, text: expanded.wrappedValue ? "expanded" : "collapsed")
+            } else {
+                toggle(expanded)
             }
-            .buttonStyle(DisclosureSectionButtonStyle())
-            .accessibilityValue(expanded.wrappedValue ? "Expanded" : "Collapsed")
-            .reviewAcceptanceProbe(probe, text: expanded.wrappedValue ? "expanded" : "collapsed")
             if expanded.wrappedValue {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) { content() }
                     .padding(.leading, AppTheme.IconSize.xxs + AppTheme.Spacing.xs)
@@ -41,11 +31,35 @@ struct DisclosureSection<Label: View, Content: View>: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    private func toggle(_ expanded: Binding<Bool>) -> some View {
+        Button { expanded.wrappedValue.toggle() } label: {
+            HStack(spacing: AppTheme.Spacing.xs) {
+                Image(systemName: "chevron.right")
+                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .rotationEffect(.degrees(expanded.wrappedValue ? 90 : 0))
+                    .animation(.easeInOut(duration: AppTheme.Anim.selection), value: expanded.wrappedValue)
+                    .frame(width: AppTheme.IconSize.xxs)
+                    .accessibilityHidden(true)
+                label()
+            }
+        }
+        .buttonStyle(DisclosureSectionButtonStyle())
+        .accessibilityValue(expanded.wrappedValue ? Text("Expanded") : Text("Collapsed"))
+        .accessibilityHint(Text("Shows or hides the section"))
+    }
 }
 
 extension DisclosureSection where Label == Text {
-    init(_ title: LocalizedStringKey, probe: String, isExpanded: Binding<Bool>? = nil,
+    init(_ title: LocalizedStringKey, probe: String? = nil, isExpanded: Binding<Bool>? = nil,
          @ViewBuilder content: @escaping () -> Content) {
+        self.init(probe: probe, isExpanded: isExpanded, content: content) { Text(title) }
+    }
+
+    @_disfavoredOverload
+    init<S: StringProtocol>(_ title: S, probe: String? = nil, isExpanded: Binding<Bool>? = nil,
+                            @ViewBuilder content: @escaping () -> Content) {
         self.init(probe: probe, isExpanded: isExpanded, content: content) { Text(title) }
     }
 }

@@ -25,7 +25,7 @@ struct PatternRecommendationsView: View {
     }
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
+        DisclosureSection(probe: "production.pattern.open", isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                 Text("Patterns are optional. The index compares compatibility; it does not predict creative success.")
                     .interfaceFont(size: AppTheme.Typography.ui).foregroundStyle(AppTheme.Text.secondaryColor)
@@ -54,7 +54,6 @@ struct PatternRecommendationsView: View {
         } label: {
             Text("Director patterns").interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
         }
-        .reviewAcceptanceProbe("production.pattern.open", text: expanded ? "open" : "closed")
         .task(id: editor.openWorkingCopyGeneration) {
             cancelLoad(); snapshot = nil; choosing = nil; reason = ""; acknowledged = false; failure = nil
             writeToken = nil; writing = false
@@ -166,7 +165,7 @@ struct PatternRecommendationsView: View {
                         .interfaceFont(size: AppTheme.Typography.ui)
                 }
             }
-            DisclosureGroup("Evidence and signature") {
+            DisclosureSection("Evidence and signature") {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                     if let detail = snapshot.details[result.id] {
                         Text(detail.description).interfaceFont(size: AppTheme.Typography.ui)

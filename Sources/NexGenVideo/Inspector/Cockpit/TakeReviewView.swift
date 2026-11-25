@@ -68,7 +68,7 @@ struct TakeReviewView: View {
                         .reviewAcceptanceProbe("take.preview.player")
                     TakeRangeReviewView(snapshot: snapshot, wholeTakePlayer: player, canWrite: canWrite, fitsScrollViewport: false).id(snapshot.take.id)
                     TakeRepairView(snapshot: snapshot, canWrite: canWrite).id(snapshot.take.id)
-                    DisclosureGroup("Submitted direction and image references") {
+                    DisclosureSection("Submitted direction and image references") {
                         ScrollView {
                             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                                 Text(snapshot.take.generationInput.prompt).textSelection(.enabled)
