@@ -11,7 +11,7 @@ import sys
 import time
 import uuid
 
-from manual_generation_extended_evidence import manual_generation_extended_evidence
+from manual_generation_extended_evidence import domain_states, manual_generation_extended_evidence
 from app_nle_owner_evidence import app_nle_owner_evidence
 from media_browser_owner_evidence import media_browser_owner_evidence
 from generation_recovery_acceptance import generation_recovery_evidence, run_generation_recovery
@@ -971,7 +971,7 @@ def manual_generation_evidence(rows, output, scale):
         or not isinstance(inputs, list) or not all(isinstance(item, dict) for item in inputs)
         or not isinstance(images, list) or not all(isinstance(name, str) for name in images)):
         return False, []
-    states = [item for item in inputs if item.get("kind") == "verified-state"]
+    states = domain_states(inputs)
     expected_labels = ["manual image generation uses the native reviewed request",
                        "source-only offering and native library picker", "native rerun loss is explicit"]
     if ([item.get("label") for item in states[:3]] != expected_labels

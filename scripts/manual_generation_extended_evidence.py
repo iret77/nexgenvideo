@@ -16,6 +16,11 @@ LABELS = (
     "native speech voice reaches actual Fal client",
     "native range duration and instrumental reach actual Fal client",
 )
+# The driver records these while it settles a window, sheet, timeline, field or pointer; they carry no owner observation.
+DRIVER_SETTLING_LABELS = frozenset({
+    "native window presentation stable", "native scene viewport stable", "visible native timeline settled",
+    "text field presentation", "button hover", "local button readiness", "native wheel pointer",
+})
 IMAGES = (
     "upscale-review-before-discard", "upscale-replaced-and-redone", "upscale-rerun-before-discard", "upscale-rerun-discarded", "audio-sfx-native-review",
     "native-video-music-lyrics-review", "timeline-music-native-review", "native-audio-results-on-timeline",
@@ -95,12 +100,16 @@ def _artifact(evidence, output, *, source):
     return payload, submit, result
 
 
+def domain_states(inputs):
+    return [item for item in inputs if item.get("kind") == "verified-state" and item.get("label") not in DRIVER_SETTLING_LABELS]
+
+
 def manual_generation_extended_evidence(row, output):
     try:
         inputs, images = row["interactions"], row["screenshots"]
         if not isinstance(inputs, list) or any(not isinstance(item, dict) for item in inputs):
             return False
-        states = [item for item in inputs if item.get("kind") == "verified-state"]
+        states = domain_states(inputs)
         if tuple(item.get("label") for item in states[3:]) != LABELS or len(states) != 9:
             return False
         evidence = [item["evidence"] for item in states[3:]]

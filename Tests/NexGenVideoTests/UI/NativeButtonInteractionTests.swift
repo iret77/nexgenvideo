@@ -3407,30 +3407,28 @@ extension NativePointerInteractionTests {
 }
 
 extension NativePointerInteractionTests {
-    // Moves 7 pt per posted wheel unit, the rate the signed Board run measured; the first gesture may move faster.
-    @MainActor private final class FixedRateScroll: NSScrollView {
-        var firstGestureRate: CGFloat = 7
-        private(set) var gestures: [Int64] = []
-        private var units: Int64 = 0
+    // Scrolls by each received event's own delta, as NSScrollView does, whatever scale the window server applies.
+    @MainActor private final class ReceivedDeltaScroll: NSScrollView {
+        var forcedOvershoot: CGFloat?
+        private var gestures = 0
 
         override func scrollWheel(with event: NSEvent) {
-            let delta = event.cgEvent?.getIntegerValueField(.scrollWheelEventPointDeltaAxis1) ?? 0
-            units += delta
             let clip = contentView
-            if delta != 0, let document = documentView {
-                let rate = gestures.isEmpty ? firstGestureRate : 7
-                let limit = max(0, document.frame.height - clip.bounds.height)
-                clip.scroll(to: NSPoint(x: clip.bounds.minX, y: min(limit, max(0, clip.bounds.minY - CGFloat(delta) * rate))))
+            guard let document = documentView else { return }
+            let limit = max(0, document.frame.height - clip.bounds.height)
+            func move(to y: CGFloat) {
+                clip.scroll(to: NSPoint(x: clip.bounds.minX, y: min(limit, max(0, y))))
                 reflectScrolledClipView(clip)
             }
+            if event.scrollingDeltaY != 0 { move(to: clip.bounds.minY - event.scrollingDeltaY) }
             guard event.phase.contains(.ended) else { return }
-            gestures.append(units)
-            units = 0
+            gestures += 1
+            if gestures == 1, let forcedOvershoot { move(to: forcedOvershoot) }
             NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: self)
         }
     }
 
-    // Keeps its row only within 60 pt of the viewport, as a lazy stack does.
+    // Keeps its row only within 400 pt of the viewport, as a lazy stack does.
     @MainActor private final class LazyRow {
         let document = FlippedDocument(frame: NSRect(x: 0, y: 0, width: 360, height: 1600))
         let frame = NSRect(x: 40, y: 150, width: 160, height: 24)
@@ -3438,7 +3436,7 @@ extension NativePointerInteractionTests {
         private(set) var drops = 0
 
         func update(_ viewport: NSRect) {
-            let materialized = frame.intersects(viewport.insetBy(dx: 0, dy: -60))
+            let materialized = frame.intersects(viewport.insetBy(dx: 0, dy: -400))
             if materialized, current == nil {
                 let view = AppRelaunchClickProbeView(frame: frame)
                 view.identifier = NSUserInterfaceItemIdentifier("lazy.wheel.target")
@@ -3453,13 +3451,13 @@ extension NativePointerInteractionTests {
         }
     }
 
-    private func revealLazyRow(firstGestureRate: CGFloat) async throws -> (wheels: [[String: Any]], row: LazyRow) {
-        let fixture = try await Fixture("lazy-wheel-" + String(Int(firstGestureRate)))
+    private func revealLazyRow(forcedOvershoot: CGFloat?) async throws -> (wheels: [[String: Any]], row: LazyRow) {
+        let fixture = try await Fixture(forcedOvershoot == nil ? "lazy-wheel-small-step" : "lazy-wheel-forced-drop")
         defer { fixture.close() }
         let window = fixture.window, driver = fixture.driver
         let root = NSView(frame: NSRect(origin: .zero, size: window.contentLayoutRect.size))
-        let scroll = FixedRateScroll(frame: NSRect(x: 0, y: root.bounds.height - 160, width: root.bounds.width, height: 120))
-        scroll.firstGestureRate = firstGestureRate
+        let scroll = ReceivedDeltaScroll(frame: NSRect(x: 0, y: root.bounds.height - 160, width: root.bounds.width, height: 120))
+        scroll.forcedOvershoot = forcedOvershoot
         scroll.borderType = .noBorder
         scroll.automaticallyAdjustsContentInsets = false
         scroll.hasVerticalScroller = true
@@ -3484,20 +3482,21 @@ extension NativePointerInteractionTests {
         let wheels = driver.interactions.dropFirst(start).filter {
             $0["kind"] as? String == "wheel" && $0["id"] as? String == "lazy.wheel.target"
         }
-        #expect(scroll.gestures == wheels.compactMap { wheel in (wheel["delta"] as? Int32).map { Int64($0) } })
         return (wheels, row)
     }
 
     private func verifyFirstWheelStepKeepsLazyRows() async throws {
-        let calibrated = try await revealLazyRow(firstGestureRate: 7)
-        // An uncalibrated step of 100 units carried this 120 pt viewport 700 pt past the row and dropped it.
-        let first = try #require(calibrated.wheels.first?["delta"] as? Int32)
+        let small = try await revealLazyRow(forcedOvershoot: nil)
+        // Before calibration the step is at most an eighth of the 120 pt viewport in units; the former step was 100 units.
+        let first = try #require(small.wheels.first?["delta"] as? Int32)
         #expect(first < 0 && abs(first) <= 15)
-        #expect(calibrated.row.drops == 0 && !calibrated.wheels.contains { $0["controlLost"] as? Bool == true })
+        #expect(small.row.drops == 0 && !small.wheels.contains { $0["controlLost"] as? Bool == true })
 
-        let overshot = try await revealLazyRow(firstGestureRate: 40)
-        #expect(overshot.row.drops >= 1)
-        #expect(overshot.wheels.first?["controlLost"] as? Bool == true)
-        #expect(overshot.wheels.count >= 2 && overshot.wheels.last?["controlLost"] as? Bool == false)
+        let dropped = try await revealLazyRow(forcedOvershoot: 700)
+        let overshot = try #require(dropped.wheels.first?["delta"] as? Int32)
+        #expect(overshot < 0 && abs(overshot) <= 15)
+        #expect(dropped.row.drops >= 1)
+        #expect(dropped.wheels.first?["controlLost"] as? Bool == true)
+        #expect(dropped.wheels.count >= 2 && dropped.wheels.last?["controlLost"] as? Bool == false)
     }
 }
