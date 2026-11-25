@@ -3239,3 +3239,83 @@ extension NativePointerInteractionTests {
         try fixture.record("moved-after-guard", ["input": input, "callbacks": fixture.capture.callbacks])
     }
 }
+
+@Suite("Native disclosure discovery", .serialized)
+@MainActor
+struct NativeDisclosureInteractionTests {
+    @MainActor private struct Disclosures: View {
+        @State private var camera = false
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 12) {
+                DisclosureGroup(isExpanded: $camera) {
+                    Text("Blocking").background {
+                        AppRelaunchClickProbe(identifier: "disclosure.camera.content", acceptanceState: true).allowsHitTesting(false)
+                    }
+                } label: {
+                    Text("Camera and continuity").background {
+                        AppRelaunchClickProbe(identifier: "disclosure.camera", acceptanceState: true).allowsHitTesting(false)
+                    }
+                }
+                DisclosureGroup("Required references") { Text("Reference") }
+            }
+            .padding(24)
+            .frame(width: 420, height: 240, alignment: .topLeading)
+        }
+    }
+
+    @Test func triangleGeometryAcceptsOnlyTheEnabledControlBesideItsLabel() {
+        let label = NSRect(x: 120, y: 60, width: 140, height: 16)
+        let beside = NSRect(x: 104, y: 60, width: 13, height: 16)
+        #expect(ProductionNativeDisclosureAcceptance.accepts(beside, enabled: true, beside: label))
+        #expect(!ProductionNativeDisclosureAcceptance.accepts(beside, enabled: false, beside: label))
+        #expect(!ProductionNativeDisclosureAcceptance.accepts(beside.offsetBy(dx: 0, dy: 60), enabled: true, beside: label))
+        #expect(!ProductionNativeDisclosureAcceptance.accepts(beside.offsetBy(dx: -64, dy: 0), enabled: true, beside: label))
+        #expect(!ProductionNativeDisclosureAcceptance.accepts(NSRect(x: 104, y: 52, width: 13, height: 40), enabled: true, beside: label))
+        #expect(!ProductionNativeDisclosureAcceptance.accepts(.zero, enabled: true, beside: label))
+    }
+
+    @Test func mainThreadLookupFindsTheSwiftUIDisclosureTriangleAndItsPointerTogglesTheGroup() async throws {
+        try #require(ProcessInfo.processInfo.arguments.contains("--no-parallel"))
+        let events = try #require(ProcessInfo.processInfo.environment["NGV_APPKIT_TEST_EVENTS"])
+        let folder = URL(fileURLWithPath: events).deletingLastPathComponent()
+            .appendingPathComponent("native-disclosure-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        let application = try await NativePointerApplicationLease.acquire()
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 520, height: 360),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 240),
+                             styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        sheet.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: Disclosures())
+        sheet.contentView = NSHostingView(rootView: Disclosures())
+        defer {
+            if sheet.sheetParent != nil { window.endSheet(sheet) }
+            sheet.contentView = nil; window.contentView = nil
+            sheet.close(); window.close(); application.close()
+        }
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        window.contentView?.layoutSubtreeIfNeeded()
+        let driver = ProductionVisualSourcesDriver(window: window, output: folder, name: "disclosure")
+        try await driver.wait("disclosure fixture active") { NSApp.isActive && window.isKeyWindow }
+        try await toggleTwice(driver: driver, in: window)
+        window.beginSheet(sheet)
+        sheet.contentView?.layoutSubtreeIfNeeded()
+        try await driver.wait("disclosure sheet active") { sheet.sheetParent === window && sheet.isKeyWindow }
+        try await toggleTwice(driver: driver, in: sheet)
+    }
+
+    private func toggleTwice(driver: ProductionVisualSourcesDriver, in target: NSWindow) async throws {
+        for expanded in [true, false] {
+            try await ProductionNativeDisclosureAcceptance.toggle("disclosure.camera", content: "disclosure.camera.content",
+                expanded: expanded, driver: driver, in: target)
+            let pointer = try #require(driver.interactions.last { $0["label"] as? String == "native disclosure pointer" })
+            let evidence = try #require(pointer["evidence"] as? [String: Any])
+            #expect((evidence["matches"] as? [[Double]])?.count == 1)
+            #expect((evidence["nearby"] as? [[String: Any]])?.contains { $0["role"] as? String == kAXDisclosureTriangleRole } == true)
+        }
+    }
+}
