@@ -67,10 +67,8 @@ enum ProductionNativePlayerAcceptance {
             let role = element.accessibilityRole()?.rawValue ?? "", frame = element.accessibilityFrame()
             let label = element.accessibilityLabel() ?? "", title = element.accessibilityTitle() ?? ""
             let enabled = element.isAccessibilityEnabled()
-            if role == NSAccessibility.Role.button.rawValue {
-                observed.append(["label": label, "title": title, "enabled": enabled,
-                                 "screenFrame": [frame.minX, frame.minY, frame.width, frame.height]])
-            }
+            observed.append(["role": role, "class": String(describing: type(of: element)), "label": label, "title": title,
+                             "enabled": enabled, "screenFrame": [frame.minX, frame.minY, frame.width, frame.height]])
             if role == NSAccessibility.Role.button.rawValue, enabled, [label, title].contains("Play"),
                frame.width > 0, frame.height > 0, player.insetBy(dx: -1, dy: -1).contains(frame) { matches.append(frame) }
             pending += (element.accessibilityChildren() ?? []).compactMap { $0 as? any NSAccessibilityProtocol }
