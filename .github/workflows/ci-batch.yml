@@ -308,6 +308,7 @@ jobs:
       expected_source_sha: ${{ needs.validate.outputs.bpy_source_sha }}
       app_artifact_id: ${{ needs.validate.outputs.bpy_artifact_id }}
       app_artifact_sha256: ${{ needs.validate.outputs.bpy_artifact_sha256 }}
+      selftest_scope: storage-isolation
 
   chat-hang-replay:
     needs: [validate, ci]

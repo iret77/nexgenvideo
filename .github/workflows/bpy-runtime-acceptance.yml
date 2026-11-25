@@ -33,6 +33,9 @@ on:
       app_artifact_sha256:
         type: string
         default: ''
+      selftest_scope:
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -410,8 +413,14 @@ jobs:
           CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
           EXPECTED_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
           NGV_BPY_CAPTURE_SANDBOX_LOGS: ${{ inputs.app_artifact_id != '' && '1' || '0' }}
+          SCOPE: ${{ inputs.selftest_scope }}
         run: |
           set -euo pipefail
+          case "$SCOPE" in
+            '') MARKER=SELFTEST_BPY_OK ;;
+            storage-isolation) MARKER=SELFTEST_BPY_STORAGE_ISOLATION_OK ;;
+            *) echo "unknown bpy self-test scope: $SCOPE" >&2; exit 1 ;;
+          esac
           APP="$RUNNER_TEMP/relocated/NexGenVideo.app"
           EVIDENCE="$RUNNER_TEMP/evidence"
           mkdir -p "$EVIDENCE"
@@ -435,17 +444,17 @@ jobs:
             NGV_BPY_DENIED_PATHS="$DENIED" \
             NGV_BPY_APPROVED_INPUT_DIR="$RUNNER_TEMP/approved-input" \
             NGV_SELFTEST_BPY="$EVIDENCE" \
-            NGV_SELFTEST_BPY_SCOPE=storage-isolation \
+            ${SCOPE:+"NGV_SELFTEST_BPY_SCOPE=$SCOPE"} \
             "$PYTHON" -I scripts/bpy_runtime_acceptance.py "$APP" --mode runtime \
             --capture-open-logs \
             --source-sha "$EXPECTED_SOURCE" --deadline "$NGV_BPY_DIAGNOSTIC_DEADLINE" \
             --output "$EVIDENCE" < /dev/null \
             > "$EVIDENCE/runtime-supervisor.log" 2> "$EVIDENCE/time.txt"
-          grep -q SELFTEST_BPY_STORAGE_ISOLATION_OK "$EVIDENCE/runtime.log"
-          jq -e --arg app "$APP" --arg foreign "$RUNNER_TEMP/denied/foreign-blender" '
+          grep -q "$MARKER" "$EVIDENCE/runtime.log"
+          jq -e --arg app "$APP" --arg foreign "$RUNNER_TEMP/denied/foreign-blender" --arg scope "$SCOPE" '
             .schema == "nexgenvideo/bpy-runtime-acceptance/2"
-            and .scope == "storage-isolation"
-            and (has("productionSpatial") | not)
+            and (if $scope == "" then (has("scope") | not) else .scope == $scope
+              and (.productionSpatial | has("historyAdmission") or has("nativeStoryboardUI") or has("nativeBibleUI") | not) end)
             and .python == "3.13.15"
             and .bpy == "5.2.2"
             and .coldStartSeconds > 0
@@ -510,6 +519,44 @@ jobs:
             and .storageRecovery.leafSymlinkRejected == true
             and .storageRecovery.regularFileRejected == true
             and .storageRecovery.searchOnlyAncestorOpened == true
+            and .productionSpatial.nativeSceneAndCamera == true
+            and .productionSpatial.storyboardNativeDerivation == true
+            and .productionSpatial.completeShotState == true
+            and .productionSpatial.fullShotClayAndDistinctEndpoints == true
+            and .productionSpatial.biblePreviewAndAssignment == true
+            and .productionSpatial.staleBibleRejected == true
+            and .productionSpatial.changedBibleProofRejected == true
+            and .productionSpatial.savedProjectReopened == true
+            and .productionSpatial.promotion.nativeSpatialProofGraphAdmitted == true
+            and .productionSpatial.promotion.neutralSpatialRejectedAsAppearance == true
+            and .productionSpatial.promotion.neutralSpatialReferenceGeometryOnly == true
+            and .productionSpatial.referencePurpose.nativeGeometryAccepted == true
+            and .productionSpatial.referencePurpose.nativeAppearanceRejected == true
+            and .productionSpatial.referencePurpose.copiedAppearanceRejected == true
+            and .productionSpatial.referencePurpose.copiedGeometryAccepted == true
+            and .productionSpatial.referencePurpose.duplicateViewAliasRejected == true
+            and (if $scope != "" then true else true
+            and [.productionSpatial.nativeStoryboardUI[].scale] == [1, 1.25, 1.5]
+            and all(.productionSpatial.nativeStoryboardUI[];
+              .viewport == [960, 640] and .sourceFilePanel == true
+              and .sourcePreviewAndAssignment == true and .changedTimeRevokesPreview == true
+              and .sourcePreparedCancelUnchanged == true and .sourceStaleAssignmentUnchanged == true
+              and .externalPreviewAndAssignment == true and .nativeImageInspection == true
+              and .filePanelCancel == true and .preparedCancelUnchanged == true
+              and .staleAssignmentUnchanged == true
+              and (.screenshots | length) >= 10 and (.interactions | length) > 20)
+            and [.productionSpatial.nativeBibleUI[].scale] == [1, 1.25, 1.5]
+            end)
+            and all(.productionSpatial.nativeClayUI[]; .cancelDuringHash == true and .closeDuringLoading == true)
+            and (if $scope != "" then true else true
+            and all(.productionSpatial.nativeBibleUI[];
+              .viewport == [960, 640] and .nativeSceneAndCameraSelection == true
+              and .requiredPurpose == true and .realRenderedPreview == true
+              and .nativeImageInspection == true and .exactPreviewAssigned == true
+              and .preparedCancelUnchanged == true and .staleAssignmentUnchanged == true
+              and .reloadAndAssign == true and .cancelDuringHash == true and .closeDuringLoading == true
+              and (.screenshots | length) >= 10 and (.interactions | length) > 20)
+            end)
             and ([.physicalStorage[].mode] | sort) == ["fileport", "memory-entry", "scm-rights"]
             and all(.physicalStorage[];
               .capacityBytes > 0 and .capacityBytes <= 67108864
@@ -572,11 +619,27 @@ jobs:
             and all(.trustedVerification.deniedPaths[]; .denied == true and (.errno == 1 or .errno == 13))
             and any(.trustedVerification.scenes[]; .engine == "CYCLES" and (.cyclesDevice == "GPU" or .cyclesDevice == "CPU"))
           ' "$EVIDENCE/result.json"
+          python3 scripts/production_spatial_ui_evidence.py "$EVIDENCE" ${SCOPE:+--scope "$SCOPE"}
+          "$RUNNER_TEMP/panorama-parser/bin/python" scripts/retained_spatial_evidence.py "$EVIDENCE"
           python3 scripts/spatial_evaluated_geometry_evidence.py "$EVIDENCE" --runtime-root "$APP/Contents/XPCServices/NexGenVideoBpyService0.xpc/Contents/Resources/BpyRuntime"
           python3 scripts/bpy_protocol_evidence.py "$EVIDENCE" --app "$APP"
-          python3 scripts/bpy_worker_evidence.py "$EVIDENCE" --scope storage-isolation
-          python3 scripts/bpy_stage_evidence.py "$EVIDENCE" --scope storage-isolation --source-sha "$EXPECTED_SOURCE"
+          python3 scripts/bpy_worker_evidence.py "$EVIDENCE" ${SCOPE:+--scope "$SCOPE"}
+          if [ -n "$SCOPE" ]; then
+            python3 scripts/bpy_stage_evidence.py "$EVIDENCE" --scope "$SCOPE" --source-sha "$EXPECTED_SOURCE"
+          fi
           test -s "$EVIDENCE/perspective.png"
+          for artifact in production-spatial-storyboard.png production-spatial-start.png \
+            production-spatial-end.png production-spatial-shot.mov \
+            production-spatial-shot-proof.json production-spatial-bible.png; do
+            test -s "$EVIDENCE/$artifact"
+          done
+          if [ -z "$SCOPE" ]; then
+          while IFS= read -r artifact; do
+            [[ -n "$artifact" && "$artifact" != */* && "$artifact" != .* ]]
+            test -f "$EVIDENCE/$artifact"
+            test -s "$EVIDENCE/$artifact"
+          done < <(jq -r '.productionSpatial | (.nativeStoryboardUI + .nativeBibleUI)[] | .screenshots[], .progress' "$EVIDENCE/result.json")
+          fi
           [ "$(sips -g pixelWidth "$EVIDENCE/perspective.png" | awk '/pixelWidth/{print $2}')" = 640 ]
           [ "$(sips -g pixelHeight "$EVIDENCE/perspective.png" | awk '/pixelHeight/{print $2}')" = 360 ]
           for attempt in {1..20}; do
@@ -587,8 +650,11 @@ jobs:
           [ -z "$after" ] || { echo "orphan bpy workers: $after"; exit 1; }
           du -sk "$APP" > "$EVIDENCE/app-size-kib.txt"
       - name: Evaluate the physical storage proof persisted by the native run
-        if: ${{ !cancelled() && steps.boundary_inputs.outcome == 'success' && (inputs.packaging_producer_source_sha == '' || steps.app_bytes_before.outcome == 'success') }}
+        if: ${{ !cancelled() && inputs.selftest_scope == 'storage-isolation' && steps.boundary_inputs.outcome == 'success' && (inputs.packaging_producer_source_sha == '' || steps.app_bytes_before.outcome == 'success') }}
+        env:
+          EXPECTED_SOURCE: ${{ inputs.expected_source_sha || github.sha }}
         run: |
+          set -euo pipefail
           jq -e '
             .schema == "nexgenvideo/bpy-stage-evidence/1"
             and .scope == "storage-isolation"
@@ -602,6 +668,8 @@ jobs:
               and (.retentionDeniedErrno == 0 or
                    (.mode != "memory-entry" and (.retentionDeniedErrno == 1 or .retentionDeniedErrno == 13)))))
           ' "$RUNNER_TEMP/evidence/stages/physical-storage.json"
+          python3 scripts/bpy_stage_evidence.py "$RUNNER_TEMP/evidence" --scope storage-isolation \
+            --source-sha "$EXPECTED_SOURCE" --physical-storage-only
       - name: Prove both sandbox boundary slots using an explicitly derived fixture
         if: ${{ !cancelled() && steps.boundary_inputs.outcome == 'success' && (inputs.packaging_producer_source_sha == '' || steps.app_bytes_before.outcome == 'success') }}
         timeout-minutes: 12

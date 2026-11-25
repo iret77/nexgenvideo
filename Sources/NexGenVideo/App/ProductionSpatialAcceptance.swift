@@ -3,7 +3,7 @@ import NexGenEngine
 
 @MainActor
 enum ProductionSpatialAcceptance {
-    static func run(output: URL) async throws -> [String: Any] {
+    static func run(output: URL, storageIsolation: Bool = false) async throws -> [String: Any] {
         var opened: ProductionPlanningAcceptanceFixture.Context?
         var selectedScene: SpatialSceneHead?
         var nativeSceneUI: [[String: Any]] = []
@@ -14,7 +14,9 @@ enum ProductionSpatialAcceptance {
         let context = try await ProductionPlanningAcceptanceFixture.makeScript { value in
             opened = value
             NSDocumentController.shared.addDocument(value.document)
-            historyAdmission = try await ProductionSpatialHistoryAcceptance.run(context: value, output: output)
+            if !storageIsolation {
+                historyAdmission = try await ProductionSpatialHistoryAcceptance.run(context: value, output: output)
+            }
             let native = try await ProductionSceneUIAcceptance.run(context: value, output: output)
             selectedScene = native.0; nativeSceneUI = native.1
             postCommitCancellation = try await ProductionSpatialCommitCancellationAcceptance.run(context: value, output: output)
@@ -27,8 +29,11 @@ enum ProductionSpatialAcceptance {
         try await ProductionPlanningAcceptanceFixture.approve("script", in: context)
         _ = try await ProductionPlanningAcceptanceFixture.writeStoryboard(in: context)
         var board = try await ProductionPlanningAcceptanceFixture.attachSketches(in: context)
-        let nativeStoryboardUI = try await ProductionVisualSourcesAcceptance.storyboard(context: context, output: output,
-            sourceVideo: output.appendingPathComponent("complete-shot/clay.mov"))
+        var nativeStoryboardUI: [[String: Any]] = []
+        if !storageIsolation {
+            nativeStoryboardUI = try await ProductionVisualSourcesAcceptance.storyboard(context: context, output: output,
+                sourceVideo: output.appendingPathComponent("complete-shot/clay.mov"))
+        }
         board = try PlanningWriterIO.storyboard(dataRoot: root, requireVisuals: false)
         guard let shot = board.timing.shots.first, let moment = shot.moments.first else { throw failed("No Storyboard moment is available.") }
         let nativeSpatialStoryboardUI = try await ProductionSpatialClayAcceptance.storyboard(context: context, scene: selectedScene,
@@ -77,8 +82,11 @@ enum ProductionSpatialAcceptance {
         withLocation.locations = [location]
         try await ProductionPlanningAcceptanceFixture.run("write_bible", args: ProductionBibleToolFixture.arguments(withLocation), in: context)
         let nativePanoramaUI = try await ProductionRetainedSpatialAcceptance.panorama(context: context, locationID: location.id, output: output)
-        let nativeBibleUI = try await ProductionVisualSourcesAcceptance.bible(context: context, output: output,
-            scene: selectedScene, cameraID: camera.id, locationID: location.id)
+        var nativeBibleUI: [[String: Any]] = []
+        if !storageIsolation {
+            nativeBibleUI = try await ProductionVisualSourcesAcceptance.bible(context: context, output: output,
+                scene: selectedScene, cameraID: camera.id, locationID: location.id)
+        }
         let expected = try FileDigest.sha256(of: ProjectLocalFile.resolve(PipelineLayout.bibleFile, dataRoot: root))
         let view = try await PipelineSpatialDerivationWriter.prepareBibleView(locationID: location.id, viewID: "wide",
             purpose: "Show the complete room and its cube.", scene: selectedScene, cameraID: camera.id,
@@ -129,15 +137,20 @@ enum ProductionSpatialAcceptance {
             let draft = try ProductionPlanningStoreV1.readShotPlanning(dataRoot: reopenedRoot, storyboard: board)
             try PipelineShotPlanningWriter.requireSpatialInputs(draft, dataRoot: reopenedRoot)
         }.value
-        return ["nativeSceneAndCamera": true, "storyboardNativeDerivation": true, "completeShotState": true,
+        var evidence: [String: Any] = ["nativeSceneAndCamera": true, "storyboardNativeDerivation": true, "completeShotState": true,
             "fullShotClayAndDistinctEndpoints": true, "biblePreviewAndAssignment": true, "staleBibleRejected": true,
             "changedBibleProofRejected": true, "savedProjectReopened": true,
             "nativePlanUI": nativePlanUI, "nativeBlockoutImportUI": nativeBlockoutImportUI, "nativePanoramaUI": nativePanoramaUI,
             "nativeSceneUI": nativeSceneUI, "nativePoseUI": nativePoseUI, "nativeClayUI": nativeClayUI,
             "nativeSpatialStoryboardUI": nativeSpatialStoryboardUI,
-            "nativeStoryboardUI": nativeStoryboardUI, "nativeBibleUI": nativeBibleUI,
             "promotion": promotion, "referencePurpose": referencePurpose, "postCommitCancellation": postCommitCancellation,
-            "hashCancellation": hashCancellation, "historyAdmission": historyAdmission]
+            "hashCancellation": hashCancellation]
+        if !storageIsolation {
+            evidence["nativeStoryboardUI"] = nativeStoryboardUI
+            evidence["nativeBibleUI"] = nativeBibleUI
+            evidence["historyAdmission"] = historyAdmission
+        }
+        return evidence
     }
 
     private static func failed(_ message: String) -> GateBlocked { GateBlocked("Spatial production acceptance: " + message) }
