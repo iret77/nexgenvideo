@@ -45,7 +45,8 @@ enum ColorReferenceComparisonAcceptance {
                   let actualReferenceURL = editor.mediaResolver.resolveURL(for: reference.id),
                   try await Task.detached(operation: { try FileDigest.sha256(of: actualReferenceURL) }).value == referenceSHA,
                   editor.timeline == baseline else { throw GateBlocked("Native reference import changed the cut or source bytes.") }
-            try await driver.click("editor.workspace.edit", in: window, enabled: false)
+            try await GenericNLEAcceptance.workspace(.edit, editor: editor, window: window, driver: driver)
+            try await GenericNLEAcceptance.settledTimeline(in: window, driver: driver)
             try GenericNLEAcceptance.pointerOnClip(clip, editor: editor, window: window, driver: driver)
             try GenericNLEAcceptance.pointerOnRuler(frame: clip.startFrame, window: window, driver: driver)
             try await driver.wait("native color target selection") { editor.selectedClipIds == [clip.id] && editor.activePreviewTab == .timeline && editor.currentFrame == clip.startFrame }
