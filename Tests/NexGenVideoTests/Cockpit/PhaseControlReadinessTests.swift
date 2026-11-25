@@ -40,15 +40,17 @@ struct PhaseControlReadinessTests {
         let checking = PhaseDockReadiness(phase: "storyboard", mutation: .checking,
                                           approval: .blocked("Checking approval readiness."))
         let layout = PhaseDockLayout.resolve(phase: "storyboard", current: checking, settled: ready, saving: false)
-        #expect(layout.settling && layout.checking)
+        #expect(layout.settling && layout.checking && !layout.waiting)
         #expect(layout.message == PhaseControlReadiness.checking.dockMessage)
-        #expect(layout.reservedMessage == PhaseDockReadiness.readyMessage)
-        #expect(layout.stable.approves)
-        #expect(layout.stable.diagnostic == nil && !layout.stable.offersRetry)
+        #expect(layout.reservedMessages(showing: layout.message) == [PhaseDockReadiness.readyMessage])
+        #expect(layout.stable?.approves == true)
+        #expect(layout.stable?.diagnostic == nil && layout.stable?.offersRetry == false)
+        #expect(layout.reservedStatuses(for: .checking) == [.ready])
 
         let settled = PhaseDockLayout.resolve(phase: "storyboard", current: ready, settled: ready, saving: false)
-        #expect(!settled.settling && settled.reservedMessage == nil)
+        #expect(!settled.settling && settled.reservedMessages(showing: settled.message).isEmpty)
         #expect(settled.message == PhaseDockReadiness.readyMessage)
+        #expect(settled.reservedMessages(showing: "Review the phase decision below.") == [PhaseDockReadiness.readyMessage])
 
         let stalePhase = PhaseDockLayout.resolve(phase: "storyboard",
             current: .init(phase: "treatment", mutation: .ready, approval: .ready), settled: ready, saving: false)
@@ -60,24 +62,29 @@ struct PhaseControlReadinessTests {
             approval: .blocked("Storyboard incomplete.", userMessage: "Storyboard needs current story relationships."))
         let busy = PhaseDockLayout.resolve(phase: "storyboard",
             current: .init(phase: "storyboard", mutation: .busy("Edit location"), approval: .ready), settled: blocked, saving: false)
-        #expect(busy.message == "Wait for Edit Location to finish.")
-        #expect(busy.reservedMessage == "Storyboard needs current story relationships.")
-        #expect(!busy.stable.approves && busy.stable.diagnostic == "Storyboard incomplete.")
+        #expect(busy.message == "Wait for Edit location to finish.")
+        #expect(busy.waiting && !busy.checking)
+        #expect(busy.reservedMessages(showing: busy.message) == ["Storyboard needs current story relationships."])
+        #expect(busy.stable?.approves == false && busy.stable?.diagnostic == "Storyboard incomplete.")
+        #expect(busy.reservedStatuses(for: .waiting) == [.incomplete])
 
         let saving = PhaseDockLayout.resolve(phase: "storyboard", current: blocked, settled: blocked, saving: true)
-        #expect(saving.settling && !saving.checking)
+        #expect(saving.settling && !saving.checking && !saving.waiting)
         #expect(saving.message == PhaseDockReadiness.savingMessage)
-        #expect(saving.reservedMessage == "Storyboard needs current story relationships.")
+        #expect(saving.reservedMessages(showing: saving.message) == ["Storyboard needs current story relationships."])
     }
 
-    @Test func aFirstCheckOrAnotherPhasesResultReservesTheReadyLayout() {
+    @Test func aFirstCheckOrAnotherPhasesResultShowsANeutralPlaceholder() {
         let checking = PhaseDockReadiness(phase: "storyboard", mutation: .checking, approval: .blocked("Checking."))
         let failedElsewhere = PhaseDockReadiness(phase: "treatment", mutation: .failed("gates.yaml is unreadable."),
                                                  approval: .ready)
         for settled in [nil, failedElsewhere] {
             let layout = PhaseDockLayout.resolve(phase: "storyboard", current: checking, settled: settled, saving: false)
-            #expect(layout.stable == .assumedReady("storyboard"))
-            #expect(layout.reservedMessage == PhaseDockReadiness.readyMessage)
+            #expect(layout.stable == nil)
+            #expect(layout.message == PhaseControlReadiness.checking.dockMessage)
+            #expect(layout.reservedMessages(showing: layout.message) == [PhaseDockReadiness.readyMessage,
+                PipelineReadinessPresentation.message(for: .artifact, phase: "storyboard")])
+            #expect(layout.reservedStatuses(for: .checking) == [.incomplete])
         }
     }
 
@@ -92,5 +99,12 @@ struct PhaseControlReadinessTests {
 
         let settled = PhaseDockRevisionLayout.resolve(mutation: failure, settled: failure)
         #expect(!settled.settling && settled.reason == failure.revisionMessage && settled.reserved == nil)
+    }
+
+    @Test func readableOperationLabelsStayAsWritten() {
+        #expect(PhaseControlReadiness.operationName("Edit location") == "Edit location")
+        #expect(PhaseControlReadiness.operationName("Add reviewed source range") == "Add reviewed source range")
+        #expect(PhaseControlReadiness.operationName("Approve storyboard") == "Approve \(PhaseDisplay.label("storyboard"))")
+        #expect(PhaseControlReadiness.operationName("Rewind pack_only_phase") == "Rewind Pack Only Phase")
     }
 }

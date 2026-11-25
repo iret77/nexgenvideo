@@ -65,5 +65,8 @@ struct PipelineReadinessPresentationTests {
         #expect(status.label == "Checking")
         #expect(PipelinePhasePresentation.resolve(phase: phase, isCurrent: false, isRunning: false, checking: true,
                                                   ready: false) == .upcoming)
+        let waiting = PipelinePhasePresentation.resolve(phase: phase, isCurrent: true, isRunning: false, waiting: true,
+                                                        ready: true)
+        #expect(waiting == .waiting && waiting.label == "Waiting")
     }
 }

@@ -19,10 +19,24 @@ enum ProductionSceneUIAcceptance {
                 try await driver.segment("production-design.view", title: "Locations · 3D", titles: ["Design", "Locations · 3D"], expected: "locations", in: window)
                 // Edit only after every persisted location is listed; the list reflows the name field.
                 let persisted = try await Task.detached { try SpatialSceneStore.index(in: root).scenes.map(\.id.uuidString) }.value
-                try await driver.wait("real location runtime ready", seconds: 90) {
-                    driver.text("spatial.workspace.error", in: window) != nil
-                        || (driver.state("spatial.location.create", in: window) == true && hostSettled(editor, driver: driver)
-                            && persisted.allSatisfy { driver.state("spatial.location." + $0, in: window) == true })
+                do {
+                    try await driver.wait("real location runtime ready", seconds: 90) {
+                        driver.text("spatial.workspace.error", in: window) != nil
+                            || (driver.state("spatial.location.create", in: window) == true && hostSettled(editor, driver: driver)
+                                && persisted.allSatisfy { driver.state("spatial.location." + $0, in: window) == true })
+                    }
+                } catch {
+                    try? driver.record("real location runtime ready", fields: ["completed": false,
+                        "engineRevision": editor.engineStateRevision,
+                        "createReady": driver.state("spatial.location.create", in: window) as Any? ?? NSNull(),
+                        "persistedLocations": persisted,
+                        "listedLocations": persisted.filter { driver.state("spatial.location." + $0, in: window) == true },
+                        "workspaceRevision": driver.text("spatial.workspace", in: window) as Any? ?? NSNull(),
+                        "workspaceReady": driver.state("spatial.workspace", in: window) as Any? ?? NSNull(),
+                        "dockRevision": driver.text(dockReadiness, in: window) as Any? ?? NSNull(),
+                        "dockReady": driver.state(dockReadiness, in: window) as Any? ?? NSNull(),
+                        "dockReason": driver.text("pipeline.overview.dock.reason", in: window) as Any? ?? NSNull()])
+                    throw error
                 }
                 if let error = driver.text("spatial.workspace.error", in: window) { throw failed(error) }
                 let name = "Pale room \(Int(scale * 100))"

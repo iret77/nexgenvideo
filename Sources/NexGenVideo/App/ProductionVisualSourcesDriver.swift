@@ -2541,7 +2541,8 @@ enum NativeAcceptancePointer {
         let comparisons = ["samePhysicalControl": sameControl, "probeInWindow": frame != nil, "probeFrame": frame == original.probeFrame]
         guard comparisons.values.contains(false) else { return nil }
         func rect(_ value: NSRect?) -> [CGFloat] { value.map { [$0.minX, $0.minY, $0.width, $0.height] } ?? [] }
-        return ["comparisons": comparisons, "hitClass": hit.map { String(reflecting: type(of: $0)) } ?? "none",
+        return ["reason": "The verified control moved before AppKit dispatched the Down.",
+                "comparisons": comparisons, "hitClass": hit.map { String(reflecting: type(of: $0)) } ?? "none",
                 "hitObject": hit.map { String(describing: ObjectIdentifier($0)) } ?? "none",
                 "originalHitObject": String(describing: ObjectIdentifier(original.actualHit)),
                 "probeFrame": rect(frame), "originalProbeFrame": rect(original.probeFrame)]
@@ -2767,18 +2768,25 @@ enum NativeAcceptancePointer {
                     "point": [location.x, location.y], "screenPoint": [global.x, global.y],
                     "tag": tag, "buttonDown": pressed, "observedUptime": ProcessInfo.processInfo.systemUptime,
                     "hitClass": hit.map { String(describing: Swift.type(of: $0)) } ?? "none"])
-                guard observedWindow == number, abs(location.x - point.x) < 0.5,
-                      abs(location.y - point.y) < 0.5 else { return true }
+                let inPlace = observedWindow == number && abs(location.x - point.x) < 0.5 && abs(location.y - point.y) < 0.5
                 if type == .leftMouseDown && pressed {
                     delivery.down = true
                     // The pre-Down guard precedes the post; layout can still move until AppKit dispatches the press.
-                    delivery.refusedDown = downTargetChange(hit, original: original, probe: probe, window: window)
+                    if inPlace {
+                        delivery.refusedDown = downTargetChange(hit, original: original, probe: probe, window: window)
+                    } else {
+                        let refusal: [String: Any] = ["reason": "The tagged Down reached AppKit outside the verified window point.",
+                            "observedWindow": observedWindow, "expectedWindow": number,
+                            "observedPoint": [location.x, location.y], "expectedPoint": [point.x, point.y]]
+                        delivery.refusedDown = refusal
+                    }
                     poster.observedDown()
                     return delivery.refusedDown == nil
                 }
                 if type == .leftMouseUp {
-                    if !pressed { delivery.up = true }
-                    return delivery.refusedDown == nil
+                    if delivery.refusedDown != nil { return false }
+                    if inPlace && !pressed { delivery.up = true }
+                    return true
                 }
                 return true
             }
@@ -2903,7 +2911,9 @@ enum NativeAcceptancePointer {
                   state["error"] == nil, delivery.down else {
                 throw GateBlocked("The native pointer transaction lacks a verified OS button lifecycle.")
             }
-            if delivery.refusedDown != nil { throw GateBlocked("The verified control moved before AppKit dispatched the Down.") }
+            if let refusal = delivery.refusedDown {
+                throw GateBlocked(refusal["reason"] as? String ?? "AppKit refused the tagged Down.")
+            }
             try record(evidence("delivered"))
         } catch {
             try record(evidence("failed: " + String(describing: error)))
