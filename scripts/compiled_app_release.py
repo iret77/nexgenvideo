@@ -187,11 +187,11 @@ def source_directory_identity(directory, root, expected=None):
 
 
 SOURCE_PAIR_CARRIER = {
-    'runID': 44324570507, 'jobID': 134896236966, 'artifactID': 14443044737,
-    'sourceSHA': '22c81c1d13e2d99c9320adb457a17b8cabb2b4cf',
-    'artifactName': 'NexGenVideo-1.8.0-artifact-only', 'bytes': 3629920088,
-    'sha256': 'c9bfcc5d21fb745c7ce4ba605a1557bac21ff59e5ffa353261ee7977d5f56edf',
-    'receiptSHA256': 'f05214557a56bdcf712b60ce91abbdeff57e9b58ba613032ada41cfd1e3bf38b',
+    'runID': 45592715632, 'jobID': 139176198377, 'artifactID': 15020633018,
+    'sourceSHA': 'aa5b177c30dbb78133b3d7600ca764ce585a7d61',
+    'artifactName': 'NexGenVideo-1.8.0-artifact-only', 'bytes': 3628896149,
+    'sha256': '041cfbcb76712c868a03dcdd79a075bf273e702f09cfba318ef9919221231997',
+    'receiptSHA256': '01eb8ce88529a52e439957bc050443d53faede949f145c5106327161a9863a15',
 }
 
 
