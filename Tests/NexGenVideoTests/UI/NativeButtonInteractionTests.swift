@@ -2916,65 +2916,77 @@ extension NativePointerInteractionTests {
         #expect(restarted.observe(sample([], at: target), at: 0.6) == .settled)
     }
 
+    @MainActor private final class ClosingWindow: NSWindow {
+        // Reports what AppKit reports for a dismissed sheet that is still on screen.
+        override var isSheet: Bool { true }
+    }
+
     private func verifyTransientWindowsSettleBeforeInput() async throws {
         verifyInputSettlingDecisions()
         let fixture = try await Fixture("transient-windows")
         defer { fixture.close() }
         try await fixture.ready(unobscured: ["Undo"])
         let window = fixture.window, driver = fixture.driver
-        let sheetCapture = Capture()
-        let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 360),
-                             styleMask: [.titled], backing: .buffered, defer: false)
-        sheet.isReleasedWhenClosed = false
-        sheet.contentView = Hosting(rootView: Controls(capture: sheetCapture))
-        defer {
-            if window.attachedSheet === sheet { window.endSheet(sheet) }
-            sheet.orderOut(nil)
-        }
         func pointer(_ id: String) throws -> [String: Any] {
             try #require(driver.interactions.last { $0["kind"] as? String == "pointer" && $0["id"] as? String == id })
         }
-
-        window.beginSheet(sheet, completionHandler: nil)
-        let presentingBounds = nativePointerCGBounds(sheet)
-        try await driver.click("pointer.Undo", in: sheet)
-        try await driver.wait("presenting sheet delivered Undo") { sheetCapture.count("Undo") == 1 }
-        let presented = try pointer("pointer.Undo")
-        let presentedInput = try #require(presented["nativeInput"] as? [String: Any])
-        let presentedSettle = try #require(presented["settle"] as? [String: Any])
-        let settledBounds = try #require(nativePointerCGBounds(sheet))
-        try #require(presentingBounds != settledBounds)
-        let bound = try #require((presentedInput["preDownGuard"] as? [String: Any])?["originalTarget"] as? [String: Any])
-        #expect(presentedInput["status"] as? String == "delivered" && presentedInput["window"] as? Int == sheet.windowNumber)
-        #expect(bound["windowBounds"] as? [CGFloat] == [settledBounds.minX, settledBounds.minY, settledBounds.width, settledBounds.height])
-        #expect(presentedSettle["verdict"] as? String == "settled" && (presentedSettle["changes"] as? Int ?? 0) > 0)
-
-        let parentPoint = try fixture.point("Undo")
-        try #require(NSWindow.windowNumber(at: parentPoint, belowWindowWithWindowNumber: 0) == sheet.windowNumber)
-        window.endSheet(sheet)
-        try #require(NSWindow.windowNumber(at: parentPoint, belowWindowWithWindowNumber: 0) == sheet.windowNumber)
-        #expect(sheet.isSheet && sheet.sheetParent?.attachedSheet !== sheet)
-        let location = NSEvent.mouseLocation
-        let movements = abs(location.x - parentPoint.x) < 0.5 && abs(location.y - parentPoint.y) < 0.5 ? 2 : 1
-        try await driver.click("pointer.Undo", in: window)
-        try await driver.wait("parent Undo after the sheet left") { fixture.capture.count("Undo") == 1 }
-        try delivered("Undo", in: fixture, movements: movements)
-        #expect(sheetCapture.count("Undo") == 1)
-        let dismissedSettle = try #require(try pointer("pointer.Undo")["settle"] as? [String: Any])
-        let transitions = try #require(dismissedSettle["transitions"] as? [[String: Any]])
-        #expect(dismissedSettle["verdict"] as? String == "settled")
-        #expect(transitions.contains { $0["leavingWindow"] as? Int == sheet.windowNumber })
-        let dismissed = try pointer("pointer.Undo")
-
-        // A closed sheet that comes back over the point never leaves; the wait must end covered and refuse input.
-        try await driver.wait("dismissed sheet left the screen") { nativePointerCGBounds(sheet) == nil }
-        sheet.setFrame(window.frame, display: false)
-        sheet.order(.above, relativeTo: window.windowNumber)
-        defer { sheet.orderOut(nil) }
-        try await driver.wait("closed sheet back over Undo") {
-            window.isKeyWindow && NSWindow.windowNumber(at: parentPoint, belowWindowWithWindowNumber: 0) == sheet.windowNumber
+        func movements() throws -> Int {
+            let target = try fixture.point("Undo"), location = NSEvent.mouseLocation
+            return abs(location.x - target.x) < 0.5 && abs(location.y - target.y) < 0.5 ? 2 : 1
         }
-        let detached = sheet.isSheet && sheet.sheetParent?.attachedSheet !== sheet
+        func downUptime(_ entry: [String: Any]) -> Double? {
+            ((entry["nativeInput"] as? [String: Any])?["posted"] as? [[String: Any]])?
+                .first { $0["type"] as? UInt32 == CGEventType.leftMouseDown.rawValue }?["postedUptime"] as? Double
+        }
+
+        // The target window moves for a known time; input must bind only after it stopped.
+        try await fixture.moveAway()
+        let origin = window.frame.origin
+        let moving = Task { @MainActor in
+            for step in 1...25 {
+                window.setFrameOrigin(NSPoint(x: origin.x + CGFloat(step), y: origin.y))
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            return ProcessInfo.processInfo.systemUptime
+        }
+        var expected = try movements()
+        try await driver.click("pointer.Undo", in: window)
+        let stopped = await moving.value
+        try await driver.wait("Undo after the window stopped") { fixture.capture.count("Undo") == 1 }
+        try delivered("Undo", in: fixture, movements: expected)
+        let moved = try pointer("pointer.Undo")
+        let finalBounds = try #require(nativePointerCGBounds(window))
+        let bound = try #require(((moved["nativeInput"] as? [String: Any])?["preDownGuard"] as? [String: Any])?["originalTarget"] as? [String: Any])
+        #expect(bound["windowBounds"] as? [CGFloat] == [finalBounds.minX, finalBounds.minY, finalBounds.width, finalBounds.height])
+        #expect((downUptime(moved) ?? 0) > stopped)
+        #expect(((moved["settle"] as? [String: Any])?["changes"] as? Int ?? 0) > 0)
+
+        // An app window that is closing covers the point for a known time; input must wait until it is gone.
+        let cover = ClosingWindow(contentRect: window.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        cover.isReleasedWhenClosed = false
+        cover.backgroundColor = .windowBackgroundColor
+        cover.order(.above, relativeTo: window.windowNumber)
+        defer { cover.close() }
+        let undo = try fixture.point("Undo")
+        try await driver.wait("closing window over Undo") { nativePointerOverlayPresented(cover, above: window, at: undo, receiver: cover) }
+        let leaving = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(800))
+            cover.orderOut(nil)
+            return ProcessInfo.processInfo.systemUptime
+        }
+        expected = try movements()
+        try await driver.click("pointer.Undo", in: window)
+        let left = await leaving.value
+        try await driver.wait("Undo after the closing window left") { fixture.capture.count("Undo") == 2 }
+        try delivered("Undo", in: fixture, movements: expected)
+        let waited = try pointer("pointer.Undo")
+        let waitedSettle = try #require(waited["settle"] as? [String: Any])
+        #expect((downUptime(waited) ?? 0) > left)
+        #expect((waitedSettle["transitions"] as? [[String: Any]])?.contains { $0["leavingWindow"] as? Int == cover.windowNumber } == true)
+
+        // A closing window that never leaves must end the bounded wait covered and refuse input.
+        cover.order(.above, relativeTo: window.windowNumber)
+        try await driver.wait("lingering closing window over Undo") { nativePointerOverlayPresented(cover, above: window, at: undo, receiver: cover) }
         driver.settleLimit = 1
         defer { driver.settleLimit = NativeInputSettling.limitSeconds }
         do {
@@ -2984,17 +2996,43 @@ extension NativePointerInteractionTests {
             #expect((error as? GateBlocked)?.message == "The original native window is covered at the pointer target.")
         }
         let lingering = try #require(try pointer("pointer.Undo")["settle"] as? [String: Any])
-        #expect(lingering["verdict"] as? String == "covered")
-        if detached {
-            #expect(lingering["lastWait"] as? String == NativeInputSettling.leavingCover)
-            #expect((lingering["waitedSeconds"] as? Double ?? 0) >= 1)
-        }
-        #expect(fixture.capture.count("Undo") == 1)
-        sheet.orderOut(nil)
+        #expect(lingering["verdict"] as? String == "covered" && lingering["lastWait"] as? String == NativeInputSettling.leavingCover)
+        #expect((lingering["waitedSeconds"] as? Double ?? 0) >= 1)
+        #expect(fixture.capture.count("Undo") == 2)
+        cover.orderOut(nil)
         driver.settleLimit = NativeInputSettling.limitSeconds
+
+        // A real sheet is delivered at its final bounds; AppKit's dismissal state is checked only when it is observed.
+        let sheetCapture = Capture()
+        let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 360),
+                             styleMask: [.titled], backing: .buffered, defer: false)
+        sheet.isReleasedWhenClosed = false
+        sheet.contentView = Hosting(rootView: Controls(capture: sheetCapture))
+        defer {
+            if window.attachedSheet === sheet { window.endSheet(sheet) }
+            sheet.orderOut(nil)
+        }
+        window.beginSheet(sheet, completionHandler: nil)
+        try await driver.click("pointer.Undo", in: sheet)
+        try await driver.wait("sheet delivered Undo") { sheetCapture.count("Undo") == 1 }
+        let presented = try pointer("pointer.Undo")
+        let sheetBounds = try #require(nativePointerCGBounds(sheet))
+        let sheetTarget = try #require(((presented["nativeInput"] as? [String: Any])?["preDownGuard"] as? [String: Any])?["originalTarget"] as? [String: Any])
+        #expect((presented["nativeInput"] as? [String: Any])?["window"] as? Int == sheet.windowNumber)
+        #expect(sheetTarget["windowBounds"] as? [CGFloat] == [sheetBounds.minX, sheetBounds.minY, sheetBounds.width, sheetBounds.height])
+        let sheetPoint = NSPoint(x: sheetBounds.midX, y: (NSScreen.screens.first?.frame.maxY ?? 0) - sheetBounds.midY)
+        window.endSheet(sheet)
+        let observedLeaving = NSWindow.windowNumber(at: sheetPoint, belowWindowWithWindowNumber: 0) == sheet.windowNumber
+        if observedLeaving { #expect(sheet.isSheet && sheet.sheetParent?.attachedSheet !== sheet) }
+        expected = try movements()
+        try await driver.click("pointer.Undo", in: window)
+        try await driver.wait("parent Undo after the sheet closed") { fixture.capture.count("Undo") == 3 }
+        try delivered("Undo", in: fixture, movements: expected)
+        #expect(sheetCapture.count("Undo") == 1)
+
         try await verifySegmentPointIsSettledAndUncovered(fixture)
-        try fixture.record("transient-windows", ["presented": presented, "dismissed": dismissed,
-            "lingeringDetachedSheet": detached, "lingering": try pointer("pointer.Undo")])
+        try fixture.record("transient-windows", ["moved": moved, "waited": waited, "presented": presented,
+            "observedLeavingSheet": observedLeaving, "afterSheet": try pointer("pointer.Undo")])
     }
 
     @MainActor private final class SegmentModel: ObservableObject {
