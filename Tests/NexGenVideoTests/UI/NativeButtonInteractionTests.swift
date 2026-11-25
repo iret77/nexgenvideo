@@ -2953,6 +2953,7 @@ extension NativePointerInteractionTests {
         try #require(NSWindow.windowNumber(at: parentPoint, belowWindowWithWindowNumber: 0) == sheet.windowNumber)
         window.endSheet(sheet)
         try #require(NSWindow.windowNumber(at: parentPoint, belowWindowWithWindowNumber: 0) == sheet.windowNumber)
+        #expect(sheet.isSheet && sheet.sheetParent?.attachedSheet !== sheet)
         let location = NSEvent.mouseLocation
         let movements = abs(location.x - parentPoint.x) < 0.5 && abs(location.y - parentPoint.y) < 0.5 ? 2 : 1
         try await driver.click("pointer.Undo", in: window)
@@ -2962,9 +2963,100 @@ extension NativePointerInteractionTests {
         let dismissedSettle = try #require(try pointer("pointer.Undo")["settle"] as? [String: Any])
         let transitions = try #require(dismissedSettle["transitions"] as? [[String: Any]])
         #expect(dismissedSettle["verdict"] as? String == "settled")
-        #expect(transitions.contains { $0["leavingWindow"] as? Int == sheet.windowNumber
-            || ($0["windows"] as? [Int])?.contains(sheet.windowNumber) == true })
-        try fixture.record("transient-windows", ["presented": presented, "dismissed": try pointer("pointer.Undo")])
+        #expect(transitions.contains { $0["leavingWindow"] as? Int == sheet.windowNumber })
+        let dismissed = try pointer("pointer.Undo")
+
+        // A closed sheet that comes back over the point never leaves; the wait must end covered and refuse input.
+        try await driver.wait("dismissed sheet left the screen") { nativePointerCGBounds(sheet) == nil }
+        sheet.setFrame(window.frame, display: false)
+        sheet.order(.above, relativeTo: window.windowNumber)
+        defer { sheet.orderOut(nil) }
+        try await driver.wait("closed sheet back over Undo") {
+            window.isKeyWindow && NSWindow.windowNumber(at: parentPoint, belowWindowWithWindowNumber: 0) == sheet.windowNumber
+        }
+        let detached = sheet.isSheet && sheet.sheetParent?.attachedSheet !== sheet
+        driver.settleLimit = 1
+        defer { driver.settleLimit = NativeInputSettling.limitSeconds }
+        do {
+            try await driver.click("pointer.Undo", in: window)
+            Issue.record("A closing window that never left accepted a click through to the original window.")
+        } catch {
+            #expect((error as? GateBlocked)?.message == "The original native window is covered at the pointer target.")
+        }
+        let lingering = try #require(try pointer("pointer.Undo")["settle"] as? [String: Any])
+        #expect(lingering["verdict"] as? String == "covered")
+        if detached {
+            #expect(lingering["lastWait"] as? String == NativeInputSettling.leavingCover)
+            #expect((lingering["waitedSeconds"] as? Double ?? 0) >= 1)
+        }
+        #expect(fixture.capture.count("Undo") == 1)
+        sheet.orderOut(nil)
+        driver.settleLimit = NativeInputSettling.limitSeconds
+        try await verifySegmentPointIsSettledAndUncovered(fixture)
+        try fixture.record("transient-windows", ["presented": presented, "dismissed": dismissed,
+            "lingeringDetachedSheet": detached, "lingering": try pointer("pointer.Undo")])
+    }
+
+    @MainActor private final class SegmentModel: ObservableObject {
+        @Published var mode = "Clay"
+    }
+
+    @MainActor private struct SegmentChoice: View {
+        @ObservedObject var model: SegmentModel
+
+        var body: some View {
+            VStack {
+                Picker("Mode", selection: $model.mode) {
+                    Text("Clay").tag("Clay")
+                    Text("Render").tag("Render")
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .background {
+                    AppRelaunchClickProbe(identifier: "segment.mode", acceptanceState: true, acceptanceText: model.mode)
+                        .allowsHitTesting(false)
+                }
+                Spacer()
+            }
+            .padding(AppTheme.Spacing.md)
+            .interfaceStyle()
+        }
+    }
+
+    private func verifySegmentPointIsSettledAndUncovered(_ fixture: Fixture) async throws {
+        let window = fixture.window, driver = fixture.driver, model = SegmentModel()
+        window.contentView = NSHostingView(rootView: SegmentChoice(model: model))
+        try await driver.waitForPresentation(of: window, control: "segment.mode")
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        let controls = descendants(try #require(window.contentView)).compactMap { $0 as? NSSegmentedControl }
+        let control = try #require(controls.count == 1 ? controls.first : nil)
+        let screenFrame = window.convertToScreen(control.convert(control.bounds, to: nil))
+        // Only the Render segment is covered; the control centre stays exposed.
+        let cover = NSWindow(contentRect: NSRect(x: screenFrame.minX + screenFrame.width * 0.6, y: screenFrame.minY - 4,
+                                                 width: screenFrame.width * 0.4 + 4, height: screenFrame.height + 8),
+                             styleMask: .borderless, backing: .buffered, defer: false)
+        cover.isReleasedWhenClosed = false
+        cover.backgroundColor = .windowBackgroundColor
+        cover.order(.above, relativeTo: window.windowNumber)
+        defer { cover.close() }
+        let render = NSPoint(x: screenFrame.minX + screenFrame.width * 0.75, y: screenFrame.midY)
+        let centre = NSPoint(x: screenFrame.midX, y: screenFrame.midY)
+        try await driver.wait("Render segment covered") {
+            window.isKeyWindow && NSWindow.windowNumber(at: render, belowWindowWithWindowNumber: 0) == cover.windowNumber
+                && NSWindow.windowNumber(at: centre, belowWindowWithWindowNumber: 0) == window.windowNumber
+        }
+        do {
+            try await driver.segment("segment.mode", title: "Render", titles: ["Clay", "Render"], in: window)
+            Issue.record("A covered segment received input.")
+        } catch {
+            #expect((error as? GateBlocked)?.message == "The actual segment cannot receive pointer input: Render")
+        }
+        #expect(model.mode == "Clay" && control.selectedSegment == 0)
+        cover.orderOut(nil)
+        try await driver.segment("segment.mode", title: "Render", titles: ["Clay", "Render"], in: window)
+        #expect(model.mode == "Render")
+        let pointer = try #require(driver.interactions.last { $0["kind"] as? String == "pointer" && $0["id"] as? String == "segment.mode" })
+        #expect((pointer["segmentSettle"] as? [String: Any])?["verdict"] as? String == "settled")
     }
 
     @MainActor private final class ReflowModel: ObservableObject {
@@ -3028,6 +3120,33 @@ extension NativePointerInteractionTests {
         #expect(settle["verdict"] as? String == "settled" && reveals.count == 1)
         #expect(((reveals.first?["sample"] as? [String: Any])?["clipped"] as? Bool) == true)
         #expect(clip.bounds.contains(field.convert(field.bounds, to: clip)))
+
+        // A layout that never stops changing must exhaust the bounded wait and refuse input.
+        driver.settleLimit = 1
+        defer { driver.settleLimit = NativeInputSettling.limitSeconds }
+        model.viewport = 200
+        try await driver.waitForPresentation(of: window, control: "reflow.field")
+        let churn = Task { @MainActor in
+            var step = 0
+            while !Task.isCancelled {
+                model.viewport = 190 + CGFloat(step % 20) / 2
+                step += 1
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+        }
+        defer { churn.cancel() }
+        let began = ProcessInfo.processInfo.systemUptime, start = driver.interactions.count
+        do {
+            try await driver.click("reflow.field", in: window)
+            Issue.record("A target with changing geometry received input.")
+        } catch {
+            #expect((error as? GateBlocked)?.message == "The native input target did not settle: reflow.field")
+        }
+        #expect(ProcessInfo.processInfo.systemUptime - began >= 1)
+        let attempt = driver.interactions.dropFirst(start)
+        let unsettled = try #require(attempt.last { $0["label"] as? String == "native input target did not settle" })
+        #expect(((unsettled["evidence"] as? [String: Any])?["changes"] as? Int ?? 0) > 3)
+        #expect(!attempt.contains { $0["kind"] as? String == "pointer" })
     }
 }
 

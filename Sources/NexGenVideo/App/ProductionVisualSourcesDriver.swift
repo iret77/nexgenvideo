@@ -19,6 +19,7 @@ final class ProductionVisualSourcesDriver {
     private(set) var stage = "start"
     private var latestField: [String: Any] = [:]
     private var accessibilityFailure: String?
+    var settleLimit = NativeInputSettling.limitSeconds
 
     init(window: NSWindow, output: URL, name: String) {
         self.window = window; self.output = output; self.name = name
@@ -112,7 +113,7 @@ final class ProductionVisualSourcesDriver {
         try persist()
         try prepare()
         let began = ProcessInfo.processInfo.systemUptime
-        var deadline = began + NativeInputSettling.limitSeconds
+        var deadline = began + settleLimit
         var settling = NativeInputSettling()
         var reveals: [[String: Any]] = []
         var sample = settleSample(id, in: target, fraction: fraction, at: point)
@@ -560,6 +561,7 @@ final class ProductionVisualSourcesDriver {
                 try record("text field presentation", fields: ["id": id, "target": presentation.evidence, "settle": settled])
             } else {
                 try record("text field presentation failed", fields: ["id": id, "lastObservation": presentation.evidence, "settle": settled])
+                throw GateBlocked("Native visual sources: text field presentation " + id + " (" + (settled["verdict"] as? String ?? "") + "); " + diagnostic())
             }
             fieldPresentation = presentation
         }
@@ -1361,15 +1363,26 @@ final class ProductionVisualSourcesDriver {
         }
         let fraction = NSPoint(x: (selected.midX - view.bounds.minX) / view.bounds.width,
                                y: (selected.midY - view.bounds.minY) / view.bounds.height)
-        guard state(id, in: target) == true, fullyVisible(control, root: root),
-              let hit = root.hitTest(root.convert(view.convert(NSPoint(x: selected.midX, y: selected.midY), to: root), to: root.superview)),
-              hit === control || hit.isDescendant(of: control),
-              WorkspaceUIAcceptance.click(identifier: id, in: target, fraction: fraction) == nil else {
-            throw GateBlocked("The actual segment cannot receive pointer input: " + title)
+        // The segment, not the control centre, is where the user would press.
+        let segmentSettle = try await settle(id, in: target, fraction: fraction)
+        let segmentPoint = view.convert(NSPoint(x: selected.midX, y: selected.midY), to: nil)
+        let hit = try await refused(segmentSettle, id) { () throws -> NSView in
+            guard probe(id, in: target) === view, view.convert(view.bounds, to: root) == frame else {
+                throw GateBlocked("The actual segment moved while it settled: " + title)
+            }
+            guard state(id, in: target) == true, fullyVisible(control, root: root),
+                  NSWindow.windowNumber(at: target.convertPoint(toScreen: segmentPoint), belowWindowWithWindowNumber: 0) == target.windowNumber,
+                  let segmentHit = root.hitTest(root.convert(root.convert(segmentPoint, from: nil), to: root.superview)),
+                  segmentHit === control || segmentHit.isDescendant(of: control),
+                  WorkspaceUIAcceptance.click(identifier: id, in: target, fraction: fraction) == nil else {
+                throw GateBlocked("The actual segment cannot receive pointer input: " + title)
+            }
+            return segmentHit
         }
-        let point = view.convert(NSPoint(x: selected.midX, y: selected.midY), to: root)
+        let point = root.convert(segmentPoint, from: nil)
         interactions.append(["kind": "pointer", "id": id, "window": target.windowNumber,
-            "frame": rect(frame), "point": [point.x, point.y], "hitClass": String(describing: type(of: hit)), "settle": settled])
+            "frame": rect(frame), "point": [point.x, point.y], "hitClass": String(describing: type(of: hit)), "settle": settled,
+            "segmentSettle": segmentSettle])
         try persist()
         try await wait("native segment selected " + title) {
             control.selectedSegment == segmentIndex && self.text(id, in: target) == (expected ?? title)
