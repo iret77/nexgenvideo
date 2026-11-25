@@ -580,6 +580,8 @@ final class SpatialSceneSession {
         snapshot = loaded?.snapshot
         snapshotRevision = UUID()
         if let loaded { frame = loaded.snapshot.frame }
+        if selectedObject == nil { selectedObjectID = nil }
+        if selectedCamera == nil { selectedCameraID = nil }
         cameraPreview = nil
     }
 

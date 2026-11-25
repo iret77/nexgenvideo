@@ -530,6 +530,8 @@ enum AppTheme {
         static let previewMinHeight: CGFloat = 320
         static let reviewPlayerMaxHeight: CGFloat = 320
         static let storyboardSketchThumbnailMaxHeight: CGFloat = 240
+        static let spatialPosePreviewMaxHeight: CGFloat = 320
+        static let inputPreviewMaxHeight: CGFloat = 320
         static let scrollPreviewViewportFraction: CGFloat = 0.6
         static let takeReviewWidth: CGFloat = 640
         static let takeReviewMaxHeight: CGFloat = 760

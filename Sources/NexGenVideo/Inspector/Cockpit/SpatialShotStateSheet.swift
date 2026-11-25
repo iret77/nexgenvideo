@@ -52,111 +52,101 @@ struct SpatialShotStateSheet: View {
     private var canConfirm: Bool { active && timeline != nil && selected?.matches(context?.scene) == true && camera != nil && !pendingTransform }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            Text("Spatial shot state · Shot \(number)")
-                .interfaceFont(size: AppTheme.Typography.title, weight: AppTheme.FontWeight.semibold)
-            ScrollView {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                    if loading { ProgressView("Reading verified locations…") }
-                    Picker("Location", selection: $sceneID) {
-                        Text("Choose location").tag(UUID?.none)
-                        ForEach(scenes) { Text($0.name).tag(Optional($0.id)) }
-                    }.disabled(!canChooseLocation)
-                        .reviewAcceptanceProbe("shot-planning.spatial.locations", state: listReady, text: scenes.map(\.selectionIdentity).joined(separator: "\n"))
-                        .reviewAcceptanceProbe("shot-planning.spatial.location", state: canChooseLocation, text: sceneID?.uuidString ?? "")
-                    Picker("Camera", selection: $cameraID) {
-                        Text("Choose camera").tag(String?.none)
-                        ForEach(context?.scene.snapshot.cameras ?? []) { Text($0.name).tag(Optional($0.id)) }
-                    }.disabled(!canChooseCamera)
-                        .reviewAcceptanceProbe("shot-planning.spatial.cameras", text: context?.scene.snapshot.cameras.map(\.id).joined(separator: "\n"))
-                        .reviewAcceptanceProbe("shot-planning.spatial.camera", state: canChooseCamera, text: cameraID ?? "")
-                    if let context, let camera {
-                        SpatialShotPosePreview(snapshot: context.scene.snapshot,
-                            pose: pose ?? scenePose(context, camera: camera), camera: camera, selectedObjectID: objectID)
-                            .frame(minHeight: AppTheme.Layout.previewMinHeight)
-                            .reviewAcceptanceProbe("shot-planning.spatial.preview", text: String(frame))
-                        if let timeline {
-                            if timeline.frameCount > 1 {
-                                Slider(value: Binding(get: { Double(frame) }, set: { frame = Int($0.rounded()) }),
-                                    in: 0...Double(timeline.frameCount - 1), step: 1)
-                                    .disabled(!active || pendingTransform)
-                                    .reviewAcceptanceProbe("shot-planning.spatial.scrubber", state: active && !pendingTransform, text: String(frame))
-                            }
-                            Stepper("Frame \(frame + 1) of \(timeline.frameCount)", value: $frame, in: 0...(timeline.frameCount - 1))
-                                .disabled(!active || pendingTransform)
-                                .reviewAcceptanceProbe("shot-planning.spatial.frame", state: active && !pendingTransform, text: String(frame))
-                            Text("\(timeline.keyframes.count) keyframes · \(timeline.keyframes.keys.sorted().prefix(8).map { String($0 + 1) }.joined(separator: ", "))")
-                                .lineLimit(2).foregroundStyle(AppTheme.Text.secondaryColor)
-                                .reviewAcceptanceProbe("shot-planning.spatial.keyframes", text: timeline.keyframes.keys.sorted().map(String.init).joined(separator: ","))
-                            Picker("Object", selection: $objectID) {
-                                Text("Choose object").tag(String?.none)
-                                ForEach(context.scene.snapshot.objects) { Text($0.name).tag(Optional($0.id)) }
-                            }.disabled(!active || pendingTransform)
-                                .reviewAcceptanceProbe("shot-planning.spatial.object", state: active && !pendingTransform, text: objectID ?? "")
-                            if poseEdit.transformEditable {
-                                vectors("Position", $poseEdit.position)
-                                vectors("Rotation (degrees)", $poseEdit.rotation)
-                                vectors("Scale", $poseEdit.scale)
-                            }
-                            if let message = poseEdit.failure { Text(message).foregroundStyle(AppTheme.Status.warningColor) }
-                            TextField("Camera vertical field of view (degrees)", value: $poseEdit.fieldOfView, format: .number)
-                                .disabled(!active)
-                                .reviewAcceptanceProbe("shot-planning.spatial.fov", state: active, text: String(poseEdit.fieldOfView))
-                            HStack {
-                                Button("Set keyframe") { setKeyframe() }.buttonStyle(InlineActionButtonStyle())
-                                    .disabled(!active || !poseEdit.canSetKeyframe)
-                                    .reviewAcceptanceProbe("shot-planning.spatial.set", state: active && poseEdit.canSetKeyframe)
-                                Button("Remove keyframe") { removeKeyframe() }.buttonStyle(InlineActionButtonStyle())
-                                    .disabled(!active || frame == 0 || frame == timeline.frameCount - 1 || timeline.keyframes[frame] == nil || pendingTransform)
-                                    .reviewAcceptanceProbe("shot-planning.spatial.remove", state: active && frame > 0 && frame < timeline.frameCount - 1 && timeline.keyframes[frame] != nil && !pendingTransform)
-                            }
-                            Text("Position and scale interpolate linearly; rotation follows the shortest quaternion path. Each frame keeps every object and the selected camera.")
-                                .foregroundStyle(AppTheme.Text.secondaryColor)
-                            if timeline.keyframes.count > 2 {
-                                Button("Keep only start and end keyframes…") { reducingKeyframes = true }
-                                    .buttonStyle(InlineActionButtonStyle()).disabled(!active || pendingTransform)
-                            }
-                            if pendingTransform {
-                                Text("Set the keyframe or discard the transform edits before changing frame or object.").foregroundStyle(AppTheme.Status.warningColor)
-                                Button("Discard transform edits") { updateInspector() }.buttonStyle(InlineActionButtonStyle()).disabled(!active)
-                                    .reviewAcceptanceProbe("shot-planning.spatial.discard", state: active)
-                            }
-                            Button("Choose another location or camera…") { resetting = true }.buttonStyle(InlineActionButtonStyle()).disabled(!active)
-                        } else {
-                            Text("Saved location pose at source frame \(context.scene.snapshot.frame). Confirm this starting pose, then set the shot's camera and object keyframes.")
-                                .foregroundStyle(AppTheme.Text.secondaryColor)
-                            Button("Use this pose throughout the shot") { seed(context, camera: camera) }
-                                .buttonStyle(InlineActionButtonStyle()).disabled(!active)
-                                .reviewAcceptanceProbe("shot-planning.spatial.initialize", state: active)
-                        }
+        SpatialShotStateLayout(number: number) {
+            if loading { ProgressView("Reading verified locations…") }
+            Picker("Location", selection: $sceneID) {
+                Text("Choose location").tag(UUID?.none)
+                ForEach(scenes) { Text($0.name).tag(Optional($0.id)) }
+            }.disabled(!canChooseLocation)
+                .reviewAcceptanceProbe("shot-planning.spatial.locations", state: listReady, text: scenes.map(\.selectionIdentity).joined(separator: "\n"))
+                .reviewAcceptanceProbe("shot-planning.spatial.location", state: canChooseLocation, text: sceneID?.uuidString ?? "")
+            Picker("Camera", selection: $cameraID) {
+                Text("Choose camera").tag(String?.none)
+                ForEach(context?.scene.snapshot.cameras ?? []) { Text($0.name).tag(Optional($0.id)) }
+            }.disabled(!canChooseCamera)
+                .reviewAcceptanceProbe("shot-planning.spatial.cameras", text: context?.scene.snapshot.cameras.map(\.id).joined(separator: "\n"))
+                .reviewAcceptanceProbe("shot-planning.spatial.camera", state: canChooseCamera, text: cameraID ?? "")
+            if let context, let camera {
+                SpatialShotPosePreview(snapshot: context.scene.snapshot,
+                    pose: pose ?? scenePose(context, camera: camera), camera: camera, selectedObjectID: objectID)
+                    .reviewAcceptanceProbe("shot-planning.spatial.preview", text: String(frame))
+                if let timeline {
+                    if timeline.frameCount > 1 {
+                        Slider(value: Binding(get: { Double(frame) }, set: { frame = Int($0.rounded()) }),
+                            in: 0...Double(timeline.frameCount - 1), step: 1)
+                            .disabled(!active || pendingTransform)
+                            .reviewAcceptanceProbe("shot-planning.spatial.scrubber", state: active && !pendingTransform, text: String(frame))
                     }
-                    if listReady && scenes.isEmpty {
-                        Text("Create a location and camera in Production Design first.").foregroundStyle(AppTheme.Text.secondaryColor)
+                    Stepper("Frame \(frame + 1) of \(timeline.frameCount)", value: $frame, in: 0...(timeline.frameCount - 1))
+                        .disabled(!active || pendingTransform)
+                        .reviewAcceptanceProbe("shot-planning.spatial.frame", state: active && !pendingTransform, text: String(frame))
+                    Text("\(timeline.keyframes.count) keyframes · \(timeline.keyframes.keys.sorted().prefix(8).map { String($0 + 1) }.joined(separator: ", "))")
+                        .lineLimit(2).foregroundStyle(AppTheme.Text.secondaryColor)
+                        .reviewAcceptanceProbe("shot-planning.spatial.keyframes", text: timeline.keyframes.keys.sorted().map(String.init).joined(separator: ","))
+                    Picker("Object", selection: $objectID) {
+                        Text("Choose object").tag(String?.none)
+                        ForEach(context.scene.snapshot.objects) { Text($0.name).tag(Optional($0.id)) }
+                    }.disabled(!active || pendingTransform)
+                        .reviewAcceptanceProbe("shot-planning.spatial.object", state: active && !pendingTransform, text: objectID ?? "")
+                    if poseEdit.transformEditable {
+                        vectors("Position", $poseEdit.position)
+                        vectors("Rotation (degrees)", $poseEdit.rotation)
+                        vectors("Scale", $poseEdit.scale)
                     }
-                    if let failure {
-                        Text(failure).foregroundStyle(AppTheme.Status.errorColor).textSelection(.enabled)
-                            .reviewAcceptanceProbe("shot-planning.spatial.failure", text: failure)
-                        if loadedGeneration == nil {
-                            Button("Read locations again") { listAttempt += 1 }
-                                .buttonStyle(InlineActionButtonStyle()).disabled(listLoading || saving)
-                        } else {
-                            Button("Reload saved shot state…") { reloadingState = true }
-                                .buttonStyle(InlineActionButtonStyle()).disabled(!active)
-                        }
+                    if let message = poseEdit.failure { Text(message).foregroundStyle(AppTheme.Status.warningColor) }
+                    TextField("Camera vertical field of view (degrees)", value: $poseEdit.fieldOfView, format: .number)
+                        .disabled(!active)
+                        .reviewAcceptanceProbe("shot-planning.spatial.fov", state: active, text: String(poseEdit.fieldOfView))
+                    HStack {
+                        Button("Set keyframe") { setKeyframe() }.buttonStyle(InlineActionButtonStyle())
+                            .disabled(!active || !poseEdit.canSetKeyframe)
+                            .reviewAcceptanceProbe("shot-planning.spatial.set", state: active && poseEdit.canSetKeyframe)
+                        Button("Remove keyframe") { removeKeyframe() }.buttonStyle(InlineActionButtonStyle())
+                            .disabled(!active || frame == 0 || frame == timeline.frameCount - 1 || timeline.keyframes[frame] == nil || pendingTransform)
+                            .reviewAcceptanceProbe("shot-planning.spatial.remove", state: active && frame > 0 && frame < timeline.frameCount - 1 && timeline.keyframes[frame] != nil && !pendingTransform)
                     }
+                    Text("Position and scale interpolate linearly; rotation follows the shortest quaternion path. Each frame keeps every object and the selected camera.")
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                    if timeline.keyframes.count > 2 {
+                        Button("Keep only start and end keyframes…") { reducingKeyframes = true }
+                            .buttonStyle(InlineActionButtonStyle()).disabled(!active || pendingTransform)
+                    }
+                    if pendingTransform {
+                        Text("Set the keyframe or discard the transform edits before changing frame or object.").foregroundStyle(AppTheme.Status.warningColor)
+                        Button("Discard transform edits") { updateInspector() }.buttonStyle(InlineActionButtonStyle()).disabled(!active)
+                            .reviewAcceptanceProbe("shot-planning.spatial.discard", state: active)
+                    }
+                    Button("Choose another location or camera…") { resetting = true }.buttonStyle(InlineActionButtonStyle()).disabled(!active)
+                } else {
+                    Text("Saved location pose at source frame \(context.scene.snapshot.frame). Confirm this starting pose, then set the shot's camera and object keyframes.")
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                    Button("Use this pose throughout the shot") { seed(context, camera: camera) }
+                        .buttonStyle(InlineActionButtonStyle()).disabled(!active)
+                        .reviewAcceptanceProbe("shot-planning.spatial.initialize", state: active)
                 }
             }
-            HStack {
-                Button("Cancel") { dismiss() }.buttonStyle(InlineActionButtonStyle()).keyboardShortcut(.cancelAction).disabled(saving)
-                    .reviewAcceptanceProbe("shot-planning.spatial.cancel", state: !saving)
-                Spacer()
-                if saving { ProgressView().controlSize(.small) }
-                Button("Confirm shot state") { save() }.buttonStyle(.capsule(.prominent, size: .regular))
-                    .disabled(!canConfirm).reviewAcceptanceProbe("shot-planning.spatial.confirm", state: canConfirm)
+            if listReady && scenes.isEmpty {
+                Text("Create a location and camera in Production Design first.").foregroundStyle(AppTheme.Text.secondaryColor)
             }
+            if let failure {
+                Text(failure).foregroundStyle(AppTheme.Status.errorColor).textSelection(.enabled)
+                    .reviewAcceptanceProbe("shot-planning.spatial.failure", text: failure)
+                if loadedGeneration == nil {
+                    Button("Read locations again") { listAttempt += 1 }
+                        .buttonStyle(InlineActionButtonStyle()).disabled(listLoading || saving)
+                } else {
+                    Button("Reload saved shot state…") { reloadingState = true }
+                        .buttonStyle(InlineActionButtonStyle()).disabled(!active)
+                }
+            }
+        } actions: {
+            Button("Cancel") { dismiss() }.buttonStyle(InlineActionButtonStyle()).keyboardShortcut(.cancelAction).disabled(saving)
+                .reviewAcceptanceProbe("shot-planning.spatial.cancel", state: !saving)
+            Spacer()
+            if saving { ProgressView().controlSize(.small) }
+            Button("Confirm shot state") { save() }.buttonStyle(.capsule(.prominent, size: .regular))
+                .disabled(!canConfirm).reviewAcceptanceProbe("shot-planning.spatial.confirm", state: canConfirm)
         }
-        .padding(AppTheme.Spacing.lg).interfaceFont(size: AppTheme.Typography.ui)
-        .frame(width: AppTheme.Layout.productionDecisionReviewWidth, height: AppTheme.Layout.productionDecisionReviewHeight)
         .reviewAcceptanceProbe("shot-planning.spatial.sheet", text: shotID)
         .task(id: listAttempt) { await loadLocations() }
         .task(id: "\(sceneID?.uuidString ?? "none"):\(reloadToken)") { await loadScene() }
@@ -306,6 +296,38 @@ struct SpatialShotStateSheet: View {
     }
 }
 
+struct SpatialShotStateLayout<Content: View, Actions: View>: View {
+    let number: Int
+    let content: Content
+    let actions: Actions
+
+    init(number: Int, @ViewBuilder content: () -> Content, @ViewBuilder actions: () -> Actions) {
+        self.number = number
+        self.content = content()
+        self.actions = actions()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            Text("Spatial shot state · Shot \(number)")
+                .interfaceFont(size: AppTheme.Typography.title, weight: AppTheme.FontWeight.semibold)
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) { content }
+            }
+            HStack { actions }
+        }
+        .padding(AppTheme.Spacing.lg).interfaceFont(size: AppTheme.Typography.ui)
+        .frame(width: AppTheme.Layout.productionDecisionReviewWidth, height: AppTheme.Layout.productionDecisionReviewHeight)
+    }
+}
+
+extension View {
+    func spatialPosePreviewFrame(aspect: CGFloat) -> some View {
+        aspectRatio(aspect, contentMode: .fit)
+            .scrollViewportFittedHeight(AppTheme.Layout.spatialPosePreviewMaxHeight)
+    }
+}
+
 private struct SpatialShotPosePreview: View {
     let snapshot: BpySpatialSnapshot
     let pose: SpatialClayStateFrame
@@ -321,7 +343,7 @@ private struct SpatialShotPosePreview: View {
         }.onChange(of: pose) { _, _ in update() }
             .onChange(of: selectedObjectID) { _, _ in update() }
             .onChange(of: camera) { _, _ in update() }
-            .aspectRatio(CGFloat(camera.width) / CGFloat(camera.height), contentMode: .fit)
+            .spatialPosePreviewFrame(aspect: CGFloat(camera.width) / CGFloat(camera.height))
             .overlay(alignment: .bottomLeading) {
                 if let failure { Text(failure).foregroundStyle(AppTheme.Status.errorColor).padding(AppTheme.Spacing.md) }
             }

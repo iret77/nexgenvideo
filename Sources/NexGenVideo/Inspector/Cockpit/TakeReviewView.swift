@@ -66,7 +66,7 @@ struct TakeReviewView: View {
                 if let snapshot {
                     VideoPlayer(player: player).frame(minHeight: AppTheme.Layout.previewMinHeight)
                         .reviewAcceptanceProbe("take.preview.player")
-                    TakeRangeReviewView(snapshot: snapshot, wholeTakePlayer: player, canWrite: canWrite).id(snapshot.take.id)
+                    TakeRangeReviewView(snapshot: snapshot, wholeTakePlayer: player, canWrite: canWrite, fitsScrollViewport: false).id(snapshot.take.id)
                     TakeRepairView(snapshot: snapshot, canWrite: canWrite).id(snapshot.take.id)
                     DisclosureGroup("Submitted direction and image references") {
                         ScrollView {

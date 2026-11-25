@@ -41,7 +41,7 @@ struct ProductionDesignMaterialsView: View {
                             Text(reference.title).fontWeight(AppTheme.FontWeight.semibold)
                             Button { preview = reference } label: {
                                 Image(reference.image, scale: 1, label: Text(reference.title)).resizable().aspectRatio(contentMode: .fit)
-                                    .frame(maxHeight: AppTheme.Layout.previewMinHeight)
+                                    .scrollViewportFittedHeight(AppTheme.Layout.inputPreviewMaxHeight)
                             }.buttonStyle(.plain).accessibilityLabel("Open \(reference.title)")
                             if !reference.note.isEmpty { Text(reference.note).textSelection(.enabled) }
                         }

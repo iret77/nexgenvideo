@@ -1465,5 +1465,43 @@ class RetainedKeyAcceptanceTests(unittest.TestCase):
                 self.verify(codes)
 
 
+class FileDialogClientLaunchTests(unittest.TestCase):
+    SOURCE = Path(__file__).resolve().parent / 'file-dialog-ui/Tests/FileDialogTests.swift'
+
+    @staticmethod
+    def wait_closures(source):
+        spans, start = [], 0
+        while (start := source.find('try wait(', start)) >= 0:
+            depth = 0
+            for index in range(source.index('(', start), len(source)):
+                depth += {'(': 1, ')': -1}.get(source[index], 0)
+                if depth == 0:
+                    break
+            body = source.index('{', index)
+            depth = 0
+            for end in range(body, len(source)):
+                depth += {'{': 1, '}': -1}.get(source[end], 0)
+                if depth == 0:
+                    break
+            spans.append((body, end))
+            start = end
+        return spans
+
+    def test_supervised_app_lookup_waits_for_its_registration(self):
+        source = self.SOURCE.read_text()
+        lookups = [i for i in range(len(source)) if source.startswith('NSRunningApplication(processIdentifier:', i)]
+        self.assertTrue(lookups, 'The client no longer resolves the supervised PID')
+        closures = self.wait_closures(source)
+        for lookup in lookups:
+            owners = [span for span in closures if span[0] < lookup < span[1]]
+            self.assertEqual(len(owners), 1, 'The PID-bound application lookup must wait for LaunchServices registration')
+        body = source[owners[0][0]:owners[0][1]]
+        for check in ('kill(pid, 0) == 0', 'isTarget()', 'candidate.bundleIdentifier == identifier',
+                      'candidate.bundleURL.map({ canonical($0).path }) == canonical(fixture.app).path'):
+            self.assertIn(check, body)
+        self.assertLess(source.index('FileManager.default.fileExists(atPath: pidFile.path)'), owners[0][0])
+        self.assertLess(owners[0][1], source.index('target.activate('))
+
+
 if __name__ == "__main__":
     unittest.main()
