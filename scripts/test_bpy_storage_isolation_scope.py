@@ -282,7 +282,7 @@ class StorageIsolationWorkflowTests(unittest.TestCase):
         self.assertEqual(source.count("            and " + STORAGE_PREDICATE + "\n"), 1)
         self.assertEqual(persisted_filter().count("            | " + STORAGE_PREDICATE + ")\n"), 1)
 
-    def test_scope_is_an_explicit_input_passed_only_by_the_ci_batch_bpy_followup(self):
+    def test_scope_is_passed_only_by_the_diagnostic_ci_callers(self):
         workflow = WORKFLOW.read_text()
         self.assertIn("      selftest_scope:\n        type: string\n        default: ''\n", workflow)
         script = run_script(NATIVE)
@@ -300,7 +300,8 @@ esac""", script)
                 if "uses: ./.github/workflows/bpy-runtime-acceptance.yml" in job:
                     callers[(path.name, job.split(":", 1)[0].strip())] = re.findall(r"selftest_scope: (.+)", job)
         self.assertEqual(callers.pop(("ci-batch.yml", "bpy-runtime-followup")), ["storage-isolation"])
-        self.assertTrue(callers)
+        self.assertEqual(callers.pop(("ci.yml", "bpy-runtime")), ["storage-isolation"])
+        self.assertEqual({name for name, _ in callers}, {"release.yml", "diagnostic-acceptance.yml"})
         self.assertTrue(all(scopes == [] for scopes in callers.values()), callers)
 
     def test_every_kept_runtime_and_media_check_runs_in_every_scope(self):
