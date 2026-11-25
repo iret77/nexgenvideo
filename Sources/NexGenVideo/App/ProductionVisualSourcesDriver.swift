@@ -2970,6 +2970,9 @@ enum NativeAcceptancePointer {
             if let refusal = delivery.refusedDown {
                 throw GateBlocked(refusal["reason"] as? String ?? "AppKit refused the tagged Down.")
             }
+            // The OS releases the button before AppKit dispatches the Up to the local monitor.
+            let upDeadline = ProcessInfo.processInfo.systemUptime + 0.5
+            while !delivery.up && ProcessInfo.processInfo.systemUptime < upDeadline { await pause() }
             try record(evidence("delivered"))
         } catch {
             try record(evidence("failed: " + String(describing: error)))
