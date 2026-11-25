@@ -3195,3 +3195,47 @@ extension NativePointerInteractionTests {
     guard matches.count == 1, let raw = matches[0][kCGWindowBounds as String] as? [String: Any] else { return nil }
     return CGRect(dictionaryRepresentation: raw as CFDictionary)
 }
+
+extension NativePointerInteractionTests {
+    @MainActor private final class LateReflow {
+        var moved: NSRect?
+    }
+
+    @Test func aControlMovedAfterThePreDownGuardNeverReceivesTheDown() async throws {
+        let fixture = try await Fixture("moved-after-guard")
+        defer { fixture.close() }
+        try await fixture.ready()
+        try await fixture.moveAway()
+        let window = fixture.window, root = try #require(window.contentView)
+        let probe = try #require(fixture.probe("Card"))
+        let scroll = try #require(probe.enclosingScrollView)
+        let callbacks = fixture.capture.callbacks.count
+        let reflow = LateReflow()
+        // Reproduces a host reflow that lands after the guard passed and before AppKit dispatches the press.
+        do {
+            try await fixture.driver.click("pointer.Card", in: window, preDown: {
+                let clip = scroll.contentView
+                clip.scroll(to: NSPoint(x: clip.bounds.minX, y: clip.bounds.minY + probe.bounds.height * 2))
+                scroll.reflectScrolledClipView(clip)
+                reflow.moved = probe.convert(probe.bounds, to: root)
+                return true
+            })
+            Issue.record("A control that moved after the pre-Down guard let its old point receive the press.")
+        } catch {
+            #expect((error as? GateBlocked)?.message == "The verified control moved before AppKit dispatched the Down.")
+        }
+        let input = try fixture.input("Card")
+        let refusal = try #require(input["downTargetRefusal"] as? [String: Any])
+        let original = try #require((input["preDownGuard"] as? [String: Any])?["originalTarget"] as? [String: Any])
+        let moved = try #require(reflow.moved)
+        #expect((refusal["comparisons"] as? [String: Bool])?["probeFrame"] == false)
+        #expect(refusal["originalProbeFrame"] as? [CGFloat] == original["probeFrame"] as? [CGFloat])
+        #expect(refusal["probeFrame"] as? [CGFloat] == [moved.minX, moved.minY, moved.width, moved.height])
+        #expect(input["ownedDownPosted"] as? Bool == true && input["localMonitorDownObserved"] as? Bool == true)
+        #expect((input["status"] as? String)?.hasPrefix("failed:") == true)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(fixture.capture.callbacks.count == callbacks)
+        #expect(!CGEventSource.buttonState(.combinedSessionState, button: .left))
+        try fixture.record("moved-after-guard", ["input": input, "callbacks": fixture.capture.callbacks])
+    }
+}

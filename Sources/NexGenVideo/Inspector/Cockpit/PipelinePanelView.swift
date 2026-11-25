@@ -129,6 +129,7 @@ struct PipelinePanelView: View {
     @State private var readinessToken = 0
     @State private var readinessTask: Task<Void, Never>?
     @State private var readinessRefreshQueued = false
+    @State private var readinessRevision: Int?
     @State private var approvalPhase: String?
     @State private var approvalReadiness = NativeGateApprovalReadiness.blocked(
         "The pipeline state is unavailable."
@@ -465,6 +466,11 @@ struct PipelinePanelView: View {
         }
         .padding(AppTheme.Spacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            // Readiness re-checks change the dock's height and reflow the workspace above it.
+            acceptanceProbe("dock.readiness", enabled: readinessTask == nil && mutationReadiness.isReady && runningPhase == nil
+                && readinessRevision == editor.engineStateRevision, text: readinessRevision.map(String.init))
+        }
         .background(AppTheme.Background.raisedColor)
     }
 
@@ -1043,6 +1049,7 @@ struct PipelinePanelView: View {
 
     private func refreshApprovalReadiness() {
         readinessToken += 1
+        readinessRevision = nil
         guard case .loaded(let data) = state,
               let data,
               editor.workingRoot != nil
@@ -1065,6 +1072,7 @@ struct PipelinePanelView: View {
                 guard !Task.isCancelled else { break }
                 let token = readinessToken
                 let currentPhase = approvalPhase
+                let revision = editor.engineStateRevision
                 guard let currentDir = editor.workingRoot else { break }
                 let readiness = await NativeGateWriter.controlReadiness(
                     projectDir: currentDir,
@@ -1080,6 +1088,7 @@ struct PipelinePanelView: View {
                 else { continue }
                 mutationReadiness = PhaseControlReadiness(readiness)
                 approvalReadiness = readiness.approval
+                readinessRevision = revision
             } while readinessRefreshQueued
             readinessTask = nil
         }

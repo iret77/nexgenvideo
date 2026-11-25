@@ -22,6 +22,7 @@ struct SpatialSceneWorkspaceView: View {
     @State private var failure: String?
     @State private var runtimePresentation: BpyRuntimePresentation?
     @State private var pendingRevision: Int?
+    @State private var listedRevision: Int?
     @State private var retry = UUID()
     @State private var openingID: UUID?
 
@@ -45,8 +46,10 @@ struct SpatialSceneWorkspaceView: View {
                     .task(id: SceneRefresh(session: ObjectIdentifier(session), revision: pendingRevision, busy: session.busy)) {
                         guard let revision = pendingRevision, !session.busy else { return }
                         let finished = await session.refreshLocationsIfChanged()
-                        if finished, !Task.isCancelled, pendingRevision == revision { pendingRevision = nil }
+                        if finished, !Task.isCancelled, pendingRevision == revision { pendingRevision = nil; listedRevision = revision }
                     }
+                    .reviewAcceptanceProbe("spatial.workspace", state: editingEnabled && pendingRevision == nil && !session.busy,
+                                           text: listedRevision.map(String.init))
             } else if let failure {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                     Text(failure).foregroundStyle(AppTheme.Status.errorColor)
@@ -66,6 +69,7 @@ struct SpatialSceneWorkspaceView: View {
         .onDisappear {
             openingID = nil
             pendingRevision = nil
+            listedRevision = nil
             session?.cancel()
             if let runtimePresentation { BpyRuntimeHost.shared.releasePresentation(runtimePresentation) }
             runtimePresentation = nil
@@ -76,7 +80,7 @@ struct SpatialSceneWorkspaceView: View {
     @MainActor private func open() async {
         let request = UUID()
         openingID = request
-        session?.cancel(); session = nil; sessionHome = nil; failure = nil; pendingRevision = nil
+        session?.cancel(); session = nil; sessionHome = nil; failure = nil; pendingRevision = nil; listedRevision = nil
         if let runtimePresentation { BpyRuntimeHost.shared.releasePresentation(runtimePresentation) }
         runtimePresentation = nil
         guard let home = editor.workingRoot, let root = DataRootResolver.dataRoot(of: home),
@@ -108,6 +112,7 @@ struct SpatialSceneWorkspaceView: View {
             let value = SpatialSceneSession(pipelineRoot: root, runtime: runtime, authority: authority)
             sessionHome = home
             session = value
+            listedRevision = editor.engineStateRevision
             runtimePresentation = presentation
             retained = true
         } catch is CancellationError {
