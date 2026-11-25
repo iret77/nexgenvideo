@@ -8,12 +8,18 @@ import re
 from uuid import UUID
 
 
-def validate(directory):
+SCOPES = ("storage-isolation",)
+
+
+def validate(directory, scope=None):
     directory = Path(directory)
     result = json.loads((directory / "result.json").read_bytes())
     if result.get("schema") != "nexgenvideo/bpy-runtime-acceptance/2" \
             or result.get("untrustedExitEvidenceFile") != "native-untrusted-exits.json":
         raise ValueError("worker evidence identity")
+    if scope not in (None, *SCOPES) or result.get("scope") != scope \
+            or (scope is not None and "productionSpatial" in result):
+        raise ValueError("worker evidence scope")
     data = (directory / "native-untrusted-exits.json").read_bytes()
     if hashlib.sha256(data).hexdigest() != result.get("untrustedExitEvidenceSHA256"):
         raise ValueError("worker evidence bytes")
@@ -280,7 +286,8 @@ def validate(directory):
                 raise ValueError("healthy retry live release authorization")
         jobs.add(job)
     validate_reaped_recovery(directory, result, host_pid, processes, executions)
-    validate_spatial_cancellation(directory, result)
+    if scope is None:
+        validate_spatial_cancellation(directory, result)
     return {"schema": "nexgenvideo/bpy-worker-evidence-validation/5", "untrustedExits": [71, 72],
             "memoryPolicy": "system-pressure-v1", "genuinePressureTransitionsProven": False}
 
@@ -763,8 +770,9 @@ def owned_child(response, host_pid, processes):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("directory", type=Path)
+    parser.add_argument("--scope", choices=SCOPES)
     args = parser.parse_args()
     try:
-        print(json.dumps(validate(args.directory), sort_keys=True))
+        print(json.dumps(validate(args.directory, args.scope), sort_keys=True))
     except (ValueError, KeyError, TypeError, OSError) as error:
         parser.exit(1, f"worker evidence rejected: {error}\n")
