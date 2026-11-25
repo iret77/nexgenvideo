@@ -316,22 +316,40 @@ class WorkerEvidenceTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "committed location identity"): validate(self.directory)
                 self.commit_cancellation = original
 
+    def scoped(self, change=None):
+        self.write()
+        result = json.loads((self.directory / "result.json").read_text())
+        result["scope"] = "storage-isolation"
+        if change:
+            change(result)
+        (self.directory / "result.json").write_text(json.dumps(result))
+        return result
+
     def test_storage_isolation_scope_is_explicit_on_both_sides(self):
-        self.write(); validate(self.directory)
-        scoped = {key: value for key, value in self.result.items() if key != "productionSpatial"}
-        scoped["scope"] = "storage-isolation"
-        (self.directory / "result.json").write_text(json.dumps(scoped))
+        scoped = self.scoped()
         validate(self.directory, "storage-isolation")
-        for result, scope in ((scoped, None), (self.result, "storage-isolation"), (scoped, "scene-history"),
-                              ({**scoped, "productionSpatial": self.result["productionSpatial"]}, "storage-isolation"),
+        unscoped = {key: value for key, value in scoped.items() if key != "scope"}
+        for result, scope in ((scoped, None), (unscoped, "storage-isolation"), (scoped, "scene-history"),
                               ({**scoped, "scope": "scene-history"}, "storage-isolation")):
-            with self.subTest(scope=scope, recorded=result.get("scope"), production="productionSpatial" in result):
+            with self.subTest(scope=scope, recorded=result.get("scope")):
                 (self.directory / "result.json").write_text(json.dumps(result))
                 with self.assertRaisesRegex(ValueError, "worker evidence scope"): validate(self.directory, scope)
-        weakened = {**scoped, "memoryPolicy": {**scoped["memoryPolicy"], "maximumRequestedBytesPerProbe": 1}}
-        (self.directory / "result.json").write_text(json.dumps(weakened))
-        with self.assertRaisesRegex(ValueError, "independent memory policy controls"):
-            validate(self.directory, "storage-isolation")
+
+    def test_storage_isolation_scope_keeps_every_worker_check(self):
+        def exits(result): result["untrustedExitEvidenceSHA256"] = "0" * 64
+        def memory(result): result["memoryPolicy"]["maximumRequestedBytesPerProbe"] = 1
+        def reaped(result): result["reapedRecovery"]["sha256"] = "0" * 64
+        def cancellation(result): result["productionSpatial"]["hashCancellation"]["sha256"] = "0" * 64
+        def missing(result): del result["productionSpatial"]
+        for change, message in ((exits, "worker evidence bytes"), (memory, "independent memory policy controls"),
+                                (reaped, "reaped"), (cancellation, "spatial cancellation evidence bytes"),
+                                (missing, "spatial cancellation evidence identity")):
+            with self.subTest(change=change.__name__):
+                self.scoped(change)
+                with self.assertRaisesRegex(ValueError, message): validate(self.directory, "storage-isolation")
+        self.scoped()
+        (self.directory / "native-reaped-recovery.json").write_text("{}")
+        with self.assertRaises((ValueError, KeyError)): validate(self.directory, "storage-isolation")
 
     def test_spatial_cancellation_files_are_bound_to_their_exact_bytes(self):
         for key in ("postCommitCancellation", "hashCancellation"):
