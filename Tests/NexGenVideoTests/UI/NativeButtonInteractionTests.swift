@@ -3302,7 +3302,7 @@ struct NativeDisclosureInteractionTests {
         let driver = ProductionVisualSourcesDriver(window: window, output: folder, name: "disclosure")
         try await driver.wait("disclosure fixture active") { NSApp.isActive && window.isKeyWindow }
         try await toggleTwice(driver: driver, in: window)
-        window.beginSheet(sheet)
+        window.beginSheet(sheet, completionHandler: nil)
         sheet.contentView?.layoutSubtreeIfNeeded()
         try await driver.wait("disclosure sheet active") { sheet.sheetParent === window && sheet.isKeyWindow }
         try await toggleTwice(driver: driver, in: sheet)
