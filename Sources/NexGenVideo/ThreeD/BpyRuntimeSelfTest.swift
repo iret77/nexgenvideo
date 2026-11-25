@@ -123,6 +123,8 @@ enum BpyRuntimeSelfTest {
                 switch ProcessInfo.processInfo.environment["NGV_SELFTEST_BPY_SCOPE"] {
                 case nil:
                     pendingResult = try await run(output: output)
+                case "storage-isolation":
+                    pendingResult = try await run(output: output, scope: "storage-isolation")
                 case "scene-history":
                     pendingResult = try await runSceneHistory(output: output)
                 case "scene-editing":
@@ -514,6 +516,7 @@ enum BpyRuntimeSelfTest {
             let marker: String = switch result["scope"] as? String {
             case "scene-editing": "SELFTEST_BPY_EDITING_OK\n"
             case "scene-history": "SELFTEST_BPY_HISTORY_OK\n"
+            case "storage-isolation": "SELFTEST_BPY_STORAGE_ISOLATION_OK\n"
             default: "SELFTEST_BPY_OK\n"
             }
             FileHandle.standardOutput.write(Data(marker.utf8))
@@ -639,7 +642,18 @@ enum BpyRuntimeSelfTest {
             "nativeSpatialStoryboardUI": spatialStoryboard, "nativeBibleUI": bibleUI]
     }
 
-    private static func run(output: URL) async throws -> [String: Any] {
+    private static func run(output: URL, scope: String? = nil) async throws -> [String: Any] {
+        let stages = output.appendingPathComponent("stages", isDirectory: true)
+        func persist(_ stage: String, _ value: [String: Any]) throws {
+            guard let scope else { return }
+            try FileManager.default.createDirectory(at: stages, withIntermediateDirectories: true)
+            let record: [String: Any] = [
+                "schema": "nexgenvideo/bpy-stage-evidence/1", "scope": scope, "stage": stage, "hostPID": getpid(),
+                "sourceSHA": Bundle.main.object(forInfoDictionaryKey: "NGVSourceCommit") as? String ?? "", "value": value,
+            ]
+            try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
+                .write(to: stages.appendingPathComponent(stage + ".json"), options: .withoutOverwriting)
+        }
         let environment = ProcessInfo.processInfo.environment
         let deniedPaths = try deniedPathList(environment)
         let positiveControls = try deniedPaths.map {
@@ -762,6 +776,14 @@ enum BpyRuntimeSelfTest {
         guard sessionA.isAvailable else {
             throw BpyRuntimeError.invalidOutput("The visible location editor lost its runtime after operation completion.")
         }
+        try persist("two-slot-lifecycle", [
+            "python": readyA.runtime?.pythonVersion ?? "", "bpy": readyA.runtime?.bpyVersion ?? "",
+            "probeA": readyA.runtime?.processIdentifier ?? -1, "probeB": readyB.runtime?.processIdentifier ?? -1,
+            "serviceA": readyA.runtime?.serviceProcessIdentifier ?? -1, "serviceB": readyB.runtime?.serviceProcessIdentifier ?? -1,
+            "coldStartSeconds": coldStartSeconds, "serviceColdStartSeconds": readyA.metrics["cold_start_seconds"] ?? -1,
+            "closeBeforeOpenReleased": true, "failedOpenReleased": true, "threeRealDocuments": true,
+            "thirdDocumentInitiallyDenied": true, "operationPresentationLifetime": true, "overlappingPresentations": true,
+        ])
 
         let warmID = UUID()
         let warmRequest: [String: Any] = [
@@ -839,6 +861,10 @@ enum BpyRuntimeSelfTest {
         _ = try sessionA.confirm(jobID: firstID, revision: "revision-a")
         var protocolEvidence = try sessionA.nativeProtocolProbe(confirmedJobID: firstID)
         try protocolEvidence.write(to: output.appendingPathComponent("native-protocol-evidence.json"))
+        try persist("trusted-verification", [
+            "warmJobSeconds": warmJobSeconds, "hostJobSeconds": hostJobSeconds, "jobMetrics": first.response.metrics,
+            "trustedVerification": verification, "deniedPositiveControls": positiveControls,
+        ])
 
         let duplicate = try sessionA.runJob(
             id: firstID,
@@ -1194,10 +1220,17 @@ enum BpyRuntimeSelfTest {
         try assertRecovered(checkpointProbe, label: "fork checkpoint save/reload")
         _ = try sessionA.cancel(jobID: checkpointProbeID)
         checkpointProbe.release()
+        try persist("job-isolation", [
+            "duplicateJoined": duplicate.response.joinedExistingJob, "changedDuplicateRejected": true,
+            "forgedResultState": forged.response.state?.rawValue ?? "", "cancelState": cancelledStatus.state?.rawValue ?? "",
+            "transportTimeoutRecovered": afterTransport.response.state == .awaitingConfirmation,
+            "droppedReplyEvidenceSHA256": FileDigest.sha256(of: droppedReply),
+        ])
 
         let memoryPolicyEvidence = try BpyMemoryRuntimeAcceptance.run(
             output: output, session: sessionA, counterpart: sessionB, expectedRevision: "revision-e"
         )
+        try persist("memory-policy", ["memoryPolicyVersion": "system-pressure-v1", "memoryPolicy": memoryPolicyEvidence])
         var untrustedExitEvidence: [[String: Any]] = []
         for code in [Int32(71), Int32(72)] {
             let source = """
@@ -1370,6 +1403,18 @@ enum BpyRuntimeSelfTest {
             )
         )
         try assertRecovered(afterServiceKill, label: "service-kill")
+        try persist("service-recovery", [
+            "untrustedExitEvidenceFile": "native-untrusted-exits.json",
+            "untrustedExitEvidenceSHA256": FileDigest.sha256(of: untrustedExitBytes),
+            "crashState": crashed.response.state?.rawValue ?? "",
+            "supervisorIdentityWriteFailureState": identityWriteFailure.response.state?.rawValue ?? "",
+            "supervisorIdentityWriteFailureRecovered": true,
+            "supervisorIdentityCaptureFailureState": identityCaptureFailure.response.state?.rawValue ?? "",
+            "supervisorIdentityCaptureFailureRecovered": true,
+            "serviceRecoveryRevision": reopened.confirmedRevision ?? "", "serviceDeathBeforeReleaseRecovered": true,
+            "parentDeathJobFailedClosed": true, "parentDeathExecObserved": true, "parentDeathWorkerExitObserved": true,
+            "execveOrphanReaped": true,
+        ])
 
         let originalSlot = sessionA.serviceName
         let closingOperation = try await BpyRuntimeHost.shared.acquireOperation(document: projectA, documentID: documentA)
@@ -1394,8 +1439,11 @@ enum BpyRuntimeSelfTest {
         }
         try waitUntilReleased(operationOnly.session)
         BpyRuntimeHost.shared.register(document: projectC, documentID: documentC)
-        let physicalStorage = try verifyPhysicalStorage(serviceName: originalSlot)
+        try persist("slot-release", ["operationDocumentClose": true, "operationLastRelease": true])
+        let physicalStorage = try verifyPhysicalStorage(serviceName: originalSlot, attempts: scope == nil ? nil : stages)
+        try persist("physical-storage", ["physicalStorage": physicalStorage])
         let spatialAuthoring = try await SpatialSceneRuntimeAcceptance.run(serviceName: originalSlot, output: output)
+        try persist("spatial-authoring", ["spatialAuthoring": spatialAuthoring])
 
         let constrained = BpyRuntimeSession(
             documentID: "acceptance-resource-limits",
@@ -1777,6 +1825,23 @@ enum BpyRuntimeSelfTest {
         guard ownershipBefore.0.isDisjoint(with: Set(ownershipAfter.1.inUseStorageIDs)) else {
             throw BpyRuntimeError.invalidOutput("The closed resource-limit session retained service storage ownership.")
         }
+        try persist("resource-limits", [
+            "containerSiblingWriteDenied": true, "supervisorSignalDenied": true, "supervisorSignalRecovered": true,
+            "structuralLimitState": structuralLimit.response.state?.rawValue ?? "",
+            "renderOnlyGeometryState": renderOnlyGeometry.response.state?.rawValue ?? "",
+            "secondarySceneGeometryState": secondarySceneGeometry.response.state?.rawValue ?? "",
+            "prefixedUserGeometryState": prefixedUserGeometry.response.state?.rawValue ?? "",
+            "zeroEffectiveResolutionState": zeroEffectiveResolution.response.state?.rawValue ?? "",
+            "noEnabledViewLayerState": noEnabledViewLayer.response.state?.rawValue ?? "",
+            "storageLimitState": storageLimit.response.state?.rawValue ?? "",
+            "aggregateByteLimitState": aggregateBytes.response.state?.rawValue ?? "",
+            "unlinkedStorageLimitState": unlinkedStorage.response.state?.rawValue ?? "",
+            "renameChurnStorageLimitState": renameChurnStorage.response.state?.rawValue ?? "",
+            "healthyResourceChurnState": healthyChurn.response.state?.rawValue ?? "",
+            "resourceScanErrorState": scanError.response.state?.rawValue ?? "",
+            "resourceSupervisorRecovered": true, "immutableCleanupFlagApplied": immutableApplied,
+            "immutableCleanupFlagDenied": immutableDenied, "closedSessionStorageOwnershipReleased": true,
+        ])
 
         guard let reusedSession = BpyRuntimeHost.shared.session(for: projectC),
               reusedSession.serviceName == originalSlot else {
@@ -1785,15 +1850,22 @@ enum BpyRuntimeSelfTest {
         _ = try reusedSession.ready()
         projectC.close()
         try waitUntilReleased(reusedSession)
+        try persist("slot-reuse", ["slotReusedAfterClose": true])
 
         let unavailableSensor = try await Task.detached {
             try BpyMemoryRuntimeAcceptance.unavailableSensor(output: output, serviceName: originalSlot)
         }.value
+        try persist("unavailable-sensor", ["unavailableSensor": unavailableSensor])
         let reapedRecovery = try await Task.detached {
             try BpyReapedRecoveryAcceptance.run(output: output, serviceName: originalSlot)
         }.value
-        let productionSpatial = try await ProductionSpatialAcceptance.run(output: output)
+        try persist("reaped-recovery", ["reapedRecovery": reapedRecovery])
+        var productionSpatial: [String: Any]?
+        if scope == nil {
+            productionSpatial = try await ProductionSpatialAcceptance.run(output: output)
+        }
         let storageRecovery = try await BpyStorageRecoveryAcceptance.run(output: output)
+        try persist("storage-recovery", ["storageRecovery": storageRecovery])
 
         terminationOperation = try await BpyRuntimeHost.shared.acquireOperation(document: projectB, documentID: documentB)
         BpyRuntimeHost.shared.releasePresentation(presentationB)
@@ -1808,7 +1880,7 @@ enum BpyRuntimeSelfTest {
         }
         try waitUntilRunning(sessionB, jobID: shutdownJobID)
 
-        return [
+        var acceptance: [String: Any] = [
             "schema": "nexgenvideo/bpy-runtime-acceptance/2",
             "python": readyA.runtime?.pythonVersion ?? "",
             "bpy": readyA.runtime?.bpyVersion ?? "",
@@ -1844,7 +1916,6 @@ enum BpyRuntimeSelfTest {
             "storageLimitState": storageLimit.response.state?.rawValue ?? "",
             "physicalStorage": physicalStorage,
             "spatialAuthoring": spatialAuthoring,
-            "productionSpatial": productionSpatial,
             "storageRecovery": storageRecovery,
             "aggregateByteLimitState": aggregateBytes.response.state?.rawValue ?? "",
             "unlinkedStorageLimitState": unlinkedStorage.response.state?.rawValue ?? "",
@@ -1882,9 +1953,12 @@ enum BpyRuntimeSelfTest {
             "operationLastRelease": true,
             "appTerminationJobStarted": true,
         ]
+        if let productionSpatial { acceptance["productionSpatial"] = productionSpatial }
+        if let scope { acceptance["scope"] = scope }
+        return acceptance
     }
 
-    private static func verifyPhysicalStorage(serviceName: String) throws -> [[String: Any]] {
+    private static func verifyPhysicalStorage(serviceName: String, attempts: URL? = nil) throws -> [[String: Any]] {
         let session = BpyRuntimeSession(
             documentID: "acceptance-physical-storage",
             limits: .init(inputBytes: 16 * 1_024 * 1_024, outputBytes: 8 * 1_024 * 1_024,
@@ -1898,6 +1972,14 @@ enum BpyRuntimeSelfTest {
             let jobID = UUID()
             let result = try session.runJob(id: jobID, expectedRevision: nil,
                                             source: "ngv_storage_probe_mode = '\(mode)'\n" + script)
+            if let attempts {
+                try FileManager.default.createDirectory(at: attempts, withIntermediateDirectories: true)
+                try JSONEncoder().encode(result.response).write(
+                    to: attempts.appendingPathComponent("physical-storage-\(mode)-response.json"), options: .withoutOverwriting)
+                if let url = result.stagedOutputs["storage-proof.json"] {
+                    try FileManager.default.copyItem(at: url, to: attempts.appendingPathComponent("physical-storage-\(mode)-proof.json"))
+                }
+            }
             guard result.response.state == .awaitingConfirmation,
                   let url = result.stagedOutputs["storage-proof.json"],
                   let value = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any],
