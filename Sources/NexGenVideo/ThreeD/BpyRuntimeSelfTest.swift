@@ -1860,10 +1860,8 @@ enum BpyRuntimeSelfTest {
             try BpyReapedRecoveryAcceptance.run(output: output, serviceName: originalSlot)
         }.value
         try persist("reaped-recovery", ["reapedRecovery": reapedRecovery])
-        var productionSpatial: [String: Any]?
-        if scope == nil {
-            productionSpatial = try await ProductionSpatialAcceptance.run(output: output)
-        }
+        let productionSpatial = try await ProductionSpatialAcceptance.run(output: output, storageIsolation: scope != nil)
+        try persist("production-spatial", ["productionSpatial": productionSpatial])
         let storageRecovery = try await BpyStorageRecoveryAcceptance.run(output: output)
         try persist("storage-recovery", ["storageRecovery": storageRecovery])
 
@@ -1916,6 +1914,7 @@ enum BpyRuntimeSelfTest {
             "storageLimitState": storageLimit.response.state?.rawValue ?? "",
             "physicalStorage": physicalStorage,
             "spatialAuthoring": spatialAuthoring,
+            "productionSpatial": productionSpatial,
             "storageRecovery": storageRecovery,
             "aggregateByteLimitState": aggregateBytes.response.state?.rawValue ?? "",
             "unlinkedStorageLimitState": unlinkedStorage.response.state?.rawValue ?? "",
@@ -1953,7 +1952,6 @@ enum BpyRuntimeSelfTest {
             "operationLastRelease": true,
             "appTerminationJobStarted": true,
         ]
-        if let productionSpatial { acceptance["productionSpatial"] = productionSpatial }
         if let scope { acceptance["scope"] = scope }
         return acceptance
     }

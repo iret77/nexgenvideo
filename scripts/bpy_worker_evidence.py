@@ -17,8 +17,7 @@ def validate(directory, scope=None):
     if result.get("schema") != "nexgenvideo/bpy-runtime-acceptance/2" \
             or result.get("untrustedExitEvidenceFile") != "native-untrusted-exits.json":
         raise ValueError("worker evidence identity")
-    if scope not in (None, *SCOPES) or result.get("scope") != scope \
-            or (scope is not None and "productionSpatial" in result):
+    if scope not in (None, *SCOPES) or result.get("scope") != scope:
         raise ValueError("worker evidence scope")
     data = (directory / "native-untrusted-exits.json").read_bytes()
     if hashlib.sha256(data).hexdigest() != result.get("untrustedExitEvidenceSHA256"):
@@ -286,8 +285,7 @@ def validate(directory, scope=None):
                 raise ValueError("healthy retry live release authorization")
         jobs.add(job)
     validate_reaped_recovery(directory, result, host_pid, processes, executions)
-    if scope is None:
-        validate_spatial_cancellation(directory, result)
+    validate_spatial_cancellation(directory, result)
     return {"schema": "nexgenvideo/bpy-worker-evidence-validation/5", "untrustedExits": [71, 72],
             "memoryPolicy": "system-pressure-v1", "genuinePressureTransitionsProven": False}
 
