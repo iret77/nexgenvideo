@@ -52,10 +52,10 @@ class FakeTools:
             return (0, 'The validate action worked!') if arguments[3] in self.stapled else (65, 'no ticket')
         if arguments[:2] == ['spctl', '--status']:
             return 0, 'assessments enabled' if self.enabled else 'assessments disabled'
-        if arguments[:4] == ['sudo', '-n', 'spctl', '--global-enable']:
+        if arguments[:4] == ['sudo', '-n', '/usr/sbin/spctl', '--global-enable']:
             self.enabled = self.enableable
             return (0, '') if self.enableable else (1, 'not permitted')
-        if arguments[:4] == ['sudo', '-n', 'spctl', '--master-enable']:
+        if arguments[:4] == ['sudo', '-n', '/usr/sbin/spctl', '--master-enable']:
             return 1, 'not permitted'
         if arguments[0] == 'spctl':
             if not self.enabled:
@@ -194,7 +194,7 @@ class NotarizationProofTests(unittest.TestCase):
             app, pack, uploaded, dmg, state, tools, environment = self.fixture(root)
             with patch.object(proof_module, 'run', side_effect=tools):
                 self.assertTrue(proof_module.assess(app))
-                self.assertIn(['sudo', '-n', 'spctl', '--global-enable'], tools.calls)
+                self.assertIn(['sudo', '-n', '/usr/sbin/spctl', '--global-enable'], tools.calls)
                 tools.enabled, tools.enableable = False, False
                 with self.assertRaisesRegex(ValueError, 'cannot be enabled'):
                     proof_module.assess(app)

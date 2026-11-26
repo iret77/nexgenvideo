@@ -67,21 +67,21 @@ class OfflineNetwork:
         self.log, self.work, self.token = log, work, None
 
     def __enter__(self):
-        code, text = run(['sudo', '-n', 'pfctl', '-E'], self.log)
+        code, text = run(['sudo', '-n', '/sbin/pfctl', '-E'], self.log)
         if code != 0:
             raise InfrastructureError('Cannot enable pf on the runner VM')
         self.token = token_from(text)
-        code, text = run(['sudo', '-n', 'pfctl', '-sr'], self.log)
+        code, text = run(['sudo', '-n', '/sbin/pfctl', '-sr'], self.log)
         if code != 0 or 'anchor "com.apple/*"' not in text:
-            if run(['sudo', '-n', 'pfctl', '-f', '/etc/pf.conf'], self.log)[0] != 0:
+            if run(['sudo', '-n', '/sbin/pfctl', '-f', '/etc/pf.conf'], self.log)[0] != 0:
                 raise InfrastructureError('Cannot load the system pf ruleset that evaluates com.apple anchors')
         path = self.work / 'offline.pf'
         path.write_text(rules())
-        if run(['sudo', '-n', 'pfctl', '-a', ANCHOR, '-f', path], self.log)[0] != 0:
+        if run(['sudo', '-n', '/sbin/pfctl', '-a', ANCHOR, '-f', path], self.log)[0] != 0:
             raise InfrastructureError('Cannot load the offline pf anchor')
         for network in APPLE_V4 + APPLE_V6:
-            run(['sudo', '-n', 'pfctl', '-k', '0.0.0.0/0' if ':' not in network else '::/0', '-k', network], self.log)
-            run(['sudo', '-n', 'pfctl', '-k', network], self.log)
+            run(['sudo', '-n', '/sbin/pfctl', '-k', '0.0.0.0/0' if ':' not in network else '::/0', '-k', network], self.log)
+            run(['sudo', '-n', '/sbin/pfctl', '-k', network], self.log)
         return self
 
     def __exit__(self, *_):
@@ -89,9 +89,9 @@ class OfflineNetwork:
 
 
 def restore(log, token=None):
-    run(['sudo', '-n', 'pfctl', '-a', ANCHOR, '-F', 'all'], log)
+    run(['sudo', '-n', '/sbin/pfctl', '-a', ANCHOR, '-F', 'all'], log)
     if token:
-        run(['sudo', '-n', 'pfctl', '-X', token], log)
+        run(['sudo', '-n', '/sbin/pfctl', '-X', token], log)
     for attempt in range(6):
         if run(['curl', '-sS', '-o', '/dev/null', '--max-time', '20', RESTORE_PROBE], log)[0] == 0:
             return True
@@ -115,7 +115,7 @@ def enable_gatekeeper(log):
     if 'assessments enabled' in text:
         return text.strip()
     for flag in ('--global-enable', '--master-enable'):
-        if run(['sudo', '-n', 'spctl', flag], log)[0] == 0:
+        if run(['sudo', '-n', '/usr/sbin/spctl', flag], log)[0] == 0:
             break
     code, text = run(['spctl', '--status'], log)
     if 'assessments enabled' not in text:

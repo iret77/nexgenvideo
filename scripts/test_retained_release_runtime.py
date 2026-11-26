@@ -281,7 +281,7 @@ class RetainedReleaseRuntimeTests(unittest.TestCase):
         self.assertEqual(validate(tools, proof), identity)
         self.assertEqual(proof['appNotarization']['cdhash'], APP_HASH)
         self.assertFalse(proof['appNotarization']['stapledApp'])
-        self.assertIn(['sudo', '-n', 'spctl', '--global-enable'], tools.calls)
+        self.assertIn(['sudo', '-n', '/usr/sbin/spctl', '--global-enable'], tools.calls)
         for name in ('other-hash', 'gatekeeper-off', 'unstapled-legacy', 'other-archive'):
             with self.subTest(name), self.assertRaises(ValueError):
                 tools = FakeTools(self.root, {'NexGenVideo.app': '7' * 40 if name == 'other-hash' else APP_HASH})
