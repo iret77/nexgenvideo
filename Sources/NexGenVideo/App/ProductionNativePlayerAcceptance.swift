@@ -69,7 +69,9 @@ enum ProductionNativePlayerAcceptance {
             let enabled = element.isAccessibilityEnabled()
             observed.append(["role": role, "class": String(describing: type(of: element)), "label": label, "title": title,
                              "enabled": enabled, "screenFrame": [frame.minX, frame.minY, frame.width, frame.height]])
-            if role == NSAccessibility.Role.button.rawValue, enabled, [label, title].contains("Play"),
+            // macOS 27 AVKit exposes Play as a toggle labelled "play".
+            let playable = [NSAccessibility.Role.button.rawValue, NSAccessibility.Role.checkBox.rawValue].contains(role)
+            if playable, enabled, [label, title].contains(where: { $0.lowercased() == "play" }),
                frame.width > 0, frame.height > 0, player.insetBy(dx: -1, dy: -1).contains(frame) { matches.append(frame) }
             pending += (element.accessibilityChildren() ?? []).compactMap { $0 as? any NSAccessibilityProtocol }
         }
