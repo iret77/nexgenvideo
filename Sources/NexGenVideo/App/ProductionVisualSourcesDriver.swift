@@ -1366,6 +1366,25 @@ final class ProductionVisualSourcesDriver {
         try await wait("picker binding " + id) { self.text(id, in: target) == expected }
     }
 
+    // An adaptive choice shows segments when they fit and a pop-up menu otherwise.
+    func choice(_ id: String, title: String, titles: [String], in target: NSWindow) async throws {
+        try await reveal(id, in: target)
+        guard let view = probe(id, in: target), let root = target.contentView else {
+            throw GateBlocked("The native choice control is unavailable: " + id)
+        }
+        let frame = view.convert(view.bounds, to: root)
+        let segmented = views(root).contains { candidate in
+            guard let control = candidate as? NSSegmentedControl, !control.isHiddenOrHasHiddenAncestor else { return false }
+            return frame.insetBy(dx: -1, dy: -1).contains(control.convert(control.bounds, to: root))
+        }
+        if segmented {
+            try await segment(id, title: title, titles: titles, in: target)
+        } else {
+            try await picker(id, title: title, expected: title, in: target)
+        }
+        try record("adaptive choice", fields: ["id": id, "title": title, "style": segmented ? "segmented" : "menu"])
+    }
+
     func segment(_ id: String, title: String, titles: [String], expected: String? = nil, in target: NSWindow) async throws {
         try await reveal(id, in: target)
         let settled = try await settle(id, in: target)

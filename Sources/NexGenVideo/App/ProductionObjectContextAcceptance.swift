@@ -108,7 +108,7 @@ enum ProductionObjectContextAcceptance {
                 }.value
                 try await productionShot()
                 try await driver.click("pipeline.overview.select.bible", in: window, enabled: false)
-                try await driver.segment("bible.section", title: "Characters", titles: BiblePanelView.Section.allCases.map(\.rawValue), in: window)
+                try await driver.choice("bible.section", title: "Characters", titles: BiblePanelView.Section.allCases.map(\.rawValue), in: window)
                 try await driver.click("bible.entity.select.character." + performer.id, in: window)
                 try await driver.wait("actual used character Inspector") { editor.inspectedObject == .entity(performer) && editor.inspectorPanelVisible }
                 let usageProbe = "inspector.usage.shot." + link.shotID

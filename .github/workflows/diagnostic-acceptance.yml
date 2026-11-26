@@ -1706,7 +1706,7 @@ jobs:
           BINDING="$RUNNER_TEMP/qualified-candidate/harness.json"
           jq -e '.candidateKind == "signed-release"' "$BINDING" >/dev/null
           if jq -e '.mountedInternalImage' "$BINDING" >/dev/null; then
-            [ "$(python3 scripts/external-gui/acceptance.py tree-sha256 --app NexGenVideo.app)" = "$(jq -r '.mountedInternalImage.mountedAppTreeSHA256' "$BINDING")" ]
+            [ "$(python3 scripts/external-gui/acceptance.py tree-sha256 --app NexGenVideo.app)" = "$(jq -r '.mountedInternalImage.diagnosticAppTreeSHA256 // .mountedInternalImage.mountedAppTreeSHA256' "$BINDING")" ]
           fi
           [ "$(/usr/libexec/PlistBuddy -c 'Print :NGVSourceCommit' NexGenVideo.app/Contents/Info.plist)" = "$CANDIDATE_SOURCE" ]
           codesign --verify --strict --verbose=2 NexGenVideo.app

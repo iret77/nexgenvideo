@@ -102,6 +102,10 @@ on:
         description: Successful PR source checks for this exact merge tree
         type: string
         default: ''
+      notarize_app_separately:
+        description: "Fallback: notarize and staple the app before the DMG (two Apple submissions)"
+        type: boolean
+        default: false
   # `workflow_dispatch` is the ONLY trigger. Nothing a commit, a merge, or a PR touches may start a
   # signed build — not the bundling scripts, not the pack manifests, not this file. A build happens
   # when a human asks for one, never as a side effect of changing code. Do not add `push:` or
@@ -118,6 +122,8 @@ jobs:
     timeout-minutes: 75
     outputs:
       publication-resumed: ${{ steps.publication-state.outputs.resumed }}
+      pipeline: ${{ steps.pipeline.outputs.pipeline }}
+      expected-build: ${{ steps.expected-build.outputs.build }}
       restored-build-run: ${{ steps.prior-notary.outputs.build_run_id }}
       product-source-sha: ${{ steps.retained-product.outputs.product_source_sha || github.sha }}
     permissions:
@@ -189,11 +195,46 @@ jobs:
             exit 1
           fi
 
+      - name: Select the candidate pipeline
+        id: pipeline
+        env:
+          COMPILED_APP_TARGETS: ${{ inputs.compiled_app_targets_json }}
+          RETAINED_PRODUCT_SOURCE: ${{ inputs.retained_product_source_sha }}
+          RELEASE_TEST_RUN: ${{ inputs.completed_release_tests_run_id }}
+          RELEASE_ENGINE_RUN: ${{ inputs.completed_engine_tests_run_id }}
+          COMPILER_CHECKPOINT_RUN: ${{ inputs.compiler_checkpoint_run_id }}
+          SIGNED_BUILD_RUN: ${{ inputs.signed_build_run_id }}
+          NOTARY_PROGRESS_RUN: ${{ inputs.notary_progress_run_id }}
+          NOTARIZE_APP_SEPARATELY: ${{ inputs.notarize_app_separately }}
+        run: |
+          set -euo pipefail
+          if [ -z "${COMPILED_APP_TARGETS}${RETAINED_PRODUCT_SOURCE}${RELEASE_TEST_RUN}${RELEASE_ENGINE_RUN}${COMPILER_CHECKPOINT_RUN}${SIGNED_BUILD_RUN}${NOTARY_PROGRESS_RUN}" ]; then
+            PIPELINE=parallel
+          else
+            PIPELINE=legacy
+            if [ "$NOTARIZE_APP_SEPARATELY" = true ]; then
+              echo "::error::notarize_app_separately applies only to a freshly built candidate"
+              exit 1
+            fi
+          fi
+          echo "pipeline=$PIPELINE" >> "$GITHUB_OUTPUT"
+          echo "Candidate pipeline: $PIPELINE"
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - uses: ./.github/actions/setup-macos-source
+      - name: Derive the expected build number from the source tree
+        id: expected-build
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import plistlib
+          from pathlib import Path
+          current = int(plistlib.loads(Path('Sources/NexGenVideo/Resources/Info.plist').read_bytes())['CFBundleVersion'])
+          print(f'build={current + 1}')
+          PY
+
       - name: Validate every retained product selector before publication or runner allocation
         run: python3 scripts/retained_packaging.py validate-inputs
 
@@ -587,12 +628,12 @@ jobs:
       contents: read
       actions: read
     needs: release-gate
-    if: ${{ needs.release-gate.outputs.publication-resumed != 'true' && inputs.signed_build_run_id == '' && inputs.notary_progress_run_id == '' && inputs.compiled_app_targets_json == '' }}
+    if: ${{ needs.release-gate.outputs.publication-resumed != 'true' && needs.release-gate.outputs.pipeline != 'parallel' && inputs.signed_build_run_id == '' && inputs.notary_progress_run_id == '' && inputs.compiled_app_targets_json == '' }}
     uses: ./.github/workflows/bpy-qualified-source.yml
 
   release-build:
     needs: [release-gate, bpy-source]
-    if: ${{ !cancelled() && needs.release-gate.result == 'success' && (inputs.compiled_app_targets_json != '' || needs.bpy-source.result == 'success') && needs.release-gate.outputs.publication-resumed != 'true' && inputs.signed_build_run_id == '' && inputs.notary_progress_run_id == '' }}
+    if: ${{ !cancelled() && needs.release-gate.result == 'success' && needs.release-gate.outputs.pipeline != 'parallel' && (inputs.compiled_app_targets_json != '' || needs.bpy-source.result == 'success') && needs.release-gate.outputs.publication-resumed != 'true' && inputs.signed_build_run_id == '' && inputs.notary_progress_run_id == '' }}
     runs-on: macrunner
     timeout-minutes: 120
     permissions:
@@ -1136,12 +1177,202 @@ jobs:
         if: always()
         run: security delete-keychain "${SIGN_KEYCHAIN:-}" 2>/dev/null || true
 
+  release-tests:
+    needs: release-gate
+    if: ${{ !cancelled() && needs.release-gate.result == 'success' && needs.release-gate.outputs.pipeline == 'parallel' && needs.release-gate.outputs.publication-resumed != 'true' }}
+    # Native tests run on the second macrunner VM while the release job signs and notarizes.
+    runs-on: macrunner
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-native-test-python
+      - uses: ./.github/actions/setup-xcode-27
+
+      - name: Build file dialog XCTest
+        uses: ./.github/actions/file-dialog-products
+        with:
+          mode: build
+
+      - uses: ./.github/actions/cache-swiftpm-dependencies
+
+      - name: Bind original ONNX package and binary transports
+        if: inputs.internal_image_only
+        run: python3 scripts/prepare_release_onnx.py
+
+      - name: Resolve the locked release dependencies
+        if: inputs.internal_image_only
+        timeout-minutes: 10
+        run: |
+          swift package --cache-path "$NGV_SWIFTPM_CACHE_PATH" --scratch-path "$RUNNER_TEMP/release-tests" --force-resolved-versions resolve
+          git diff --exit-code -- Package.swift Package.resolved
+
+      - name: Bump version
+        env:
+          REL_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          echo "$REL_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::version must be X.Y.Z"; exit 1; }
+          PLIST="Sources/NexGenVideo/Resources/Info.plist"
+          CUR="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST")"
+          NEW=$((CUR + 1))
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $REL_VERSION" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW" "$PLIST"
+          CHANGED_PATHS="$(git diff --no-renames --name-only | LC_ALL=C sort)"
+          [ "$CHANGED_PATHS" = "$PLIST" ] \
+            || { echo "::error::Release build mutated tracked files beyond $PLIST"; exit 1; }
+          echo "BUILD_NUMBER=$NEW" >> "$GITHUB_ENV"
+
+      - name: Record release compiler configuration
+        run: |
+          swift --version
+          xcodebuild -version
+          sw_vers
+          sysctl -n hw.memsize hw.logicalcpu
+          echo "Release SwiftPM scheduler jobs: 1"
+
+      - name: Prepare the job-local temporary test home
+        run: mkdir -p "$RUNNER_TEMP/nexgenvideo-test-home"
+
+      - name: Record native test product paths before compilation
+        run: |
+          python3 scripts/release_checkpoint.py native-test-products --phase plan \
+            --root "$RUNNER_TEMP/release-test-product-checkpoints" --scratch-path "$RUNNER_TEMP/release-tests" \
+            --cache-path "$NGV_SWIFTPM_CACHE_PATH"
+
+      - name: Build the exact release test configuration
+        # Testable release objects stay isolated from the production bundle build.
+        run: swift build --jobs 1 --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release --scratch-path "$RUNNER_TEMP/release-tests" --build-tests -Xswiftc -enable-testing
+
+      - name: Verify release build did not mutate tracked source
+        run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+
+      - name: Checkpoint successful native compiler products before staging
+        run: |
+          python3 scripts/release_checkpoint.py native-test-products --phase compiler \
+            --root "$RUNNER_TEMP/release-test-product-checkpoints" --scratch-path "$RUNNER_TEMP/release-tests" \
+            --cache-path "$NGV_SWIFTPM_CACHE_PATH"
+
+      - name: Upload native compiler products before staging
+        id: native_compiler_products
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-test-compiler-products-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-test-product-checkpoints/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Confirm compiler product upload before staging
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHECKPOINT_ID: ${{ steps.native_compiler_products.outputs.artifact-id }}
+          CHECKPOINT_DIGEST: ${{ steps.native_compiler_products.outputs.artifact-digest }}
+        run: |
+          python3 scripts/release_checkpoint.py confirm-native-test-products \
+            --root "$RUNNER_TEMP/release-test-product-checkpoints" \
+            --artifact-id "$CHECKPOINT_ID" --artifact-digest "$CHECKPOINT_DIGEST"
+
+      - name: Stage release test runtime inputs
+        run: scripts/stage_test_runtime.sh release "$RUNNER_TEMP/release-tests"
+
+      - name: Retain staged runtime products before native tests
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
+        run: |
+          python3 scripts/release_checkpoint.py native-test-products --phase runtime \
+            --root "$RUNNER_TEMP/release-test-product-checkpoints" --scratch-path "$RUNNER_TEMP/release-tests" \
+            --cache-path "$NGV_SWIFTPM_CACHE_PATH"
+
+      - name: Upload staged runtime products before native tests
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-test-runtime-products-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/release-test-product-checkpoints/runtime-*
+            ${{ runner.temp }}/release-test-product-checkpoints/compiler-upload.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Test the exact release configuration
+        shell: bash
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
+        run: |
+          set -euo pipefail
+          export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
+          python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH" \
+            -c release --scratch-path "$RUNNER_TEMP/release-tests" --swiftc-flag=-enable-testing \
+            --serialize-app-tests \
+            --evidence "$RUNNER_TEMP/release-test-evidence" 2>&1 | tee release-test.log
+          python3 scripts/verify_swift_test_output.py --log release-test.log --swift-testing-runs 2 --xctest-runs 2
+
+      - name: Record every available native product after success or failure
+        if: always()
+        run: |
+          python3 scripts/release_checkpoint.py native-test-products --phase available \
+            --root "$RUNNER_TEMP/release-test-product-checkpoints" --scratch-path "$RUNNER_TEMP/release-tests" \
+            --cache-path "$NGV_SWIFTPM_CACHE_PATH"
+
+      - name: Preserve native checkpoint records after success or failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-test-product-evidence-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/release-test-product-checkpoints/*.json
+            ${{ runner.temp }}/native-test-python.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Preserve every available native product after failure
+        if: always() && (failure() || cancelled()) && env.NGV_RELEASE_TEST_PRODUCTS_ROOT != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-test-partial-products-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ env.NGV_RELEASE_TEST_PRODUCTS_ROOT }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload release test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-test-evidence
+          path: |
+            ${{ runner.temp }}/release-test-evidence
+            release-test.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Verify release tests did not mutate tracked source
+        run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+
+      - name: Retain the Release test result for the candidate seal
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-tests-result
+          path: ${{ runner.temp }}/release-test-evidence/suite.json
+          if-no-files-found: error
+          retention-days: 14
+
 
   release:
     env:
       GH_TOKEN: ${{ github.token }}
+      NGV_PARALLEL_CANDIDATE: ${{ needs.release-gate.outputs.pipeline == 'parallel' }}
     needs: [release-gate, release-build]
-    if: ${{ !cancelled() && needs.release-gate.result == 'success' && needs.release-gate.outputs.publication-resumed != 'true' && (needs.release-build.result == 'success' || (needs.release-build.result == 'skipped' && (inputs.signed_build_run_id != '' || inputs.notary_progress_run_id != ''))) }}
+    if: ${{ !cancelled() && needs.release-gate.result == 'success' && needs.release-gate.outputs.publication-resumed != 'true' && (needs.release-build.result == 'success' || (needs.release-build.result == 'skipped' && (inputs.signed_build_run_id != '' || inputs.notary_progress_run_id != '' || needs.release-gate.outputs.pipeline == 'parallel'))) }}
     # Xcode 27 is required to compile, sign, notarize, staple, and package the app.
     runs-on: macrunner
     timeout-minutes: 240
@@ -1175,6 +1406,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/retained_packaging.py bind --root "$RUNNER_TEMP/retained-packaging"
 
+      - name: Prove Gatekeeper can be enforced before the build
+        run: python3 -I -c "import sys; sys.path.insert(0, 'scripts'); import notarization_proof; notarization_proof.gatekeeper_enabled()"
+
       - name: Resolve version + mode
         env:
           ARTIFACT_ONLY: ${{ inputs.artifact_only }}
@@ -1201,6 +1435,28 @@ jobs:
           fi
           echo "NOTARY_STATE_DIR=$RUNNER_TEMP/release-notary-state" >> "$GITHUB_ENV"
           echo "Building $V (dry=${{ inputs.dry_run }})"
+
+      - name: Start the single qualified bpy source acquisition
+        if: env.NGV_PARALLEL_CANDIDATE == 'true'
+        run: |
+          set -euo pipefail
+          ACQUISITION="$RUNNER_TEMP/bpy-source-acquisition"
+          mkdir -p "$ACQUISITION"
+          # Download and validation overlap the app build; the signed record waits for their result.
+          nohup bash -c 'python3 scripts/consume_bpy_distributable_source.py --output-directory .build/bpy-source \
+            --source-sha "$GITHUB_SHA" > "$1/log" 2>&1; echo "$?" > "$1/status"' _ "$ACQUISITION" \
+            > /dev/null 2>&1 < /dev/null &
+          echo "$!" > "$ACQUISITION/pid"
+
+      - name: Select the notarization mode
+        if: env.NGV_PARALLEL_CANDIDATE == 'true'
+        env:
+          NOTARIZE_APP_SEPARATELY: ${{ inputs.notarize_app_separately }}
+        run: |
+          set -euo pipefail
+          if [ "$NOTARIZE_APP_SEPARATELY" = true ]; then MODE=app-and-dmg; else MODE=dmg-only; fi
+          echo "NGV_NOTARY_MODE=$MODE" >> "$GITHUB_ENV"
+          echo "Notarization mode: $MODE"
 
       - name: Import Developer ID cert into a temporary keychain
         env:
@@ -1233,6 +1489,105 @@ jobs:
             || { echo "::error::Release build mutated tracked files beyond $PLIST"; exit 1; }
           echo "BUILD_NUMBER=$NEW" >> "$GITHUB_ENV"
 
+      - uses: ./.github/actions/cache-swiftpm-dependencies
+        if: env.NGV_PARALLEL_CANDIDATE == 'true'
+
+      - name: Bind original ONNX package and binary transports
+        if: env.NGV_PARALLEL_CANDIDATE == 'true' && inputs.internal_image_only
+        run: python3 scripts/prepare_release_onnx.py
+
+      - name: Resolve the locked release dependencies
+        if: env.NGV_PARALLEL_CANDIDATE == 'true' && inputs.internal_image_only
+        timeout-minutes: 10
+        run: |
+          swift package --cache-path "$NGV_SWIFTPM_CACHE_PATH" --force-resolved-versions resolve
+          git diff --exit-code -- Package.swift Package.resolved
+
+      - name: Record release compiler configuration
+        if: env.NGV_PARALLEL_CANDIDATE == 'true'
+        run: |
+          swift --version
+          xcodebuild -version
+          sw_vers
+          sysctl -n hw.memsize hw.logicalcpu
+          echo "Release SwiftPM scheduler jobs: 1"
+
+      - name: Stage the exact distributable bpy runtime
+        if: env.NGV_PARALLEL_CANDIDATE == 'true'
+        run: scripts/stage_bpy_runtime.sh .build/bpy-runtime
+
+      - name: Build and sign app
+        if: env.NGV_PARALLEL_CANDIDATE == 'true'
+        run: |
+          scripts/bundle.sh release --sign
+          scripts/verify_bpy_bundle.sh .build/NexGenVideo.app --distribution
+
+      - name: Verify app bundling did not mutate tracked source
+        if: env.NGV_PARALLEL_CANDIDATE == 'true'
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.compiled_app_targets_json != '' }}" = "true" ]; then
+            CHANGES="$(git status --porcelain --untracked-files=no)"
+            [ -z "$CHANGES" ] || { printf '%s\n' "$CHANGES"; exit 1; }
+          else
+            scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+          fi
+
+      - name: Assemble format packs (.ngvpack + catalog entry)
+        if: env.NGV_PARALLEL_CANDIDATE == 'true'
+        run: |
+          set -euo pipefail
+          scripts/assemble_ngvpack.sh plugins/musicvideo.json release .build/plugins "${SIGN_IDENTITY:-}"
+          ls -la .build/plugins
+
+      - name: Verify the qualified bpy corresponding source
+        if: env.NGV_PARALLEL_CANDIDATE == 'true'
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          ACQUISITION="$RUNNER_TEMP/bpy-source-acquisition"
+          until [ -s "$ACQUISITION/status" ]; do
+            kill -0 "$(cat "$ACQUISITION/pid")" 2>/dev/null || [ -s "$ACQUISITION/status" ] \
+              || { cat "$ACQUISITION/log"; echo "::error::bpy source acquisition ended without a result"; exit 1; }
+            sleep 10
+          done
+          cat "$ACQUISITION/log"
+          [ "$(cat "$ACQUISITION/status")" = 0 ] \
+            || { echo "::error::Qualified bpy source acquisition failed"; exit 1; }
+          python3 scripts/verify_bpy_distributable_source.py \
+            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar \
+            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json
+
+      - name: Record signed build before notarization
+        if: env.NGV_PARALLEL_CANDIDATE == 'true'
+        env:
+          RELEASE_TESTS_SEALED: 'true'
+        run: python3 scripts/release_checkpoint.py create --root "$RUNNER_TEMP/release-signed-input"
+
+      - name: Retain signed build input
+        if: env.NGV_PARALLEL_CANDIDATE == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-signed-input-${{ github.sha }}
+          path: ${{ runner.temp }}/release-signed-input/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Retain signed build proof
+        if: env.NGV_PARALLEL_CANDIDATE == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-signed-input-${{ github.sha }}-proof
+          path: ${{ runner.temp }}/release-signed-input/manifest.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Adopt the recorded signed build
+        id: adopt-signed
+        if: env.NGV_PARALLEL_CANDIDATE == 'true'
+        run: python3 scripts/release_checkpoint.py adopt --root "$RUNNER_TEMP/release-signed-input"
+
       - name: Bind saved notarization
         if: inputs.notary_progress_run_id != ''
         env:
@@ -1248,6 +1603,7 @@ jobs:
           [ -z "$CHANGES" ] || { printf '%s\n' "$CHANGES"; exit 1; }
 
       - name: Bind signed build input
+        if: env.NGV_PARALLEL_CANDIDATE != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           SIGNED_BUILD_RUN: ${{ needs.release-gate.outputs.restored-build-run || inputs.signed_build_run_id || github.run_id }}
@@ -1256,6 +1612,7 @@ jobs:
 
       - name: Restore exact signed build
         id: signed-input
+        if: env.NGV_PARALLEL_CANDIDATE != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/release_checkpoint.py restore --root "$RUNNER_TEMP/release-signed-binding"
@@ -1299,6 +1656,7 @@ jobs:
         run: python3 scripts/release_checkpoint.py restore-notary --root "$RUNNER_TEMP/release-notary-binding"
 
       - uses: ./.github/actions/prepare-bpy-source
+        if: env.NGV_PARALLEL_CANDIDATE != 'true'
         with:
           directory: .build/bpy-source
           receipt: .build/bpy-source/bpy-source-receipt.json
@@ -1454,14 +1812,14 @@ jobs:
           fi
 
       - name: Prepare App notarization intent
-        if: steps.restore-notary.outputs.dmg_present != 'true' && env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true'
+        if: steps.restore-notary.outputs.dmg_present != 'true' && env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true' && env.NGV_NOTARY_MODE != 'dmg-only'
         env:
           NOTARY_PREPARE_ONLY: 'true'
           NOTARY_INTENT_ROOT: ${{ runner.temp }}/notary-app-intent
         run: scripts/notarize.sh .build/NexGenVideo.zip
 
       - name: Retain App notarization intent before upload
-        if: steps.restore-notary.outputs.dmg_present != 'true' && env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true'
+        if: steps.restore-notary.outputs.dmg_present != 'true' && env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true' && env.NGV_NOTARY_MODE != 'dmg-only'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-app-notary-intent-${{ needs.release-gate.outputs.product-source-sha }}
@@ -1471,7 +1829,7 @@ jobs:
 
       - name: Submit App notarization exactly once
         id: submit-app
-        if: steps.restore-notary.outputs.dmg_present != 'true' && env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true'
+        if: steps.restore-notary.outputs.dmg_present != 'true' && env.NGV_COMPONENT_NOTARY_CONTINUATION != 'true' && env.NGV_NOTARY_MODE != 'dmg-only'
         env:
           NOTARY_SUBMIT_ONLY: 'true'
           NOTARY_INTENT_ROOT: ${{ runner.temp }}/notary-app-intent
@@ -1487,7 +1845,7 @@ jobs:
           retention-days: 7
 
       - name: Notarize and staple app
-        if: steps.restore-notary.outputs.dmg_present != 'true'
+        if: steps.restore-notary.outputs.dmg_present != 'true' && env.NGV_NOTARY_MODE != 'dmg-only'
         timeout-minutes: 70
         run: scripts/bundle.sh release --notarize-app
 
@@ -1560,7 +1918,7 @@ jobs:
         run: scripts/bundle.sh release --notarize-dmg
 
       - name: Retain notarization submissions
-        if: always() && steps.signed-input.outcome == 'success'
+        if: always() && (steps.signed-input.outcome == 'success' || steps.adopt-signed.outcome == 'success')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-notary-state-${{ needs.release-gate.outputs.product-source-sha }}
@@ -1585,6 +1943,43 @@ jobs:
           path: ${{ runner.temp }}/release-notary-state/status-observations
           if-no-files-found: ignore
           retention-days: 90
+
+      - name: Prove the DMG ticket covers the exact app and pack
+        if: inputs.retained_product_source_sha == '' && inputs.compiled_app_targets_json == ''
+        run: |
+          python3 scripts/notarization_proof.py record --dmg .build/NexGenVideo.dmg \
+            --uploaded-dmg "$RUNNER_TEMP/release-dmg-input/NexGenVideo.dmg" --app .build/NexGenVideo.app \
+            --pack .build/plugins/musicvideo.ngvpack --state "$NOTARY_STATE_DIR" --mode "$NGV_NOTARY_MODE" \
+            --output .build/notarization-proof.json --apple-log .build/notarization-dmg-log.json
+
+      - name: Assess and launch the stapled DMG app offline
+        id: offline-gatekeeper
+        if: inputs.retained_product_source_sha == '' && inputs.compiled_app_targets_json == ''
+        timeout-minutes: 15
+        run: |
+          python3 scripts/offline_gatekeeper.py check --dmg .build/NexGenVideo.dmg --proof .build/notarization-proof.json \
+            --evidence .build/offline-gatekeeper.json --home "$RUNNER_TEMP/nexgenvideo-test-home"
+
+      - name: Restore outbound network after the offline check
+        if: always() && steps.offline-gatekeeper.outcome != 'skipped'
+        timeout-minutes: 5
+        run: python3 scripts/offline_gatekeeper.py restore
+
+      - name: Retain offline Gatekeeper evidence
+        if: always() && steps.offline-gatekeeper.outcome != 'skipped'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-offline-gatekeeper-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: .build/offline-gatekeeper.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Staple the DMG ticket to the runtime app copy
+        if: env.NGV_NOTARY_MODE == 'dmg-only'
+        run: |
+          set -euo pipefail
+          xcrun stapler staple .build/NexGenVideo.app
+          xcrun stapler validate .build/NexGenVideo.app
 
       - name: Verify the exact DMG users install
         env:
@@ -1631,8 +2026,16 @@ jobs:
           trap - EXIT
           codesign --verify --strict --verbose=2 "$INSTALL_APP"
           codesign --verify --strict --verbose=2 "$INSTALL_APP/Contents/Frameworks/libNexGenEngine.dylib"
-          xcrun stapler validate "$INSTALL_APP"
-          spctl -a -vvv -t exec "$INSTALL_APP"
+          if [ -f .build/notarization-proof.json ]; then
+            python3 scripts/notarization_proof.py verify-installed --app "$INSTALL_APP" \
+              --dmg .build/NexGenVideo.dmg --proof .build/notarization-proof.json
+            NGV_RELEASE_DIAGNOSTIC_APP_TREE_SHA256="$(python3 scripts/notarization_proof.py verify-diagnostic \
+              --installed "$INSTALL_APP" --diagnostic .build/NexGenVideo.app --proof .build/notarization-proof.json)"
+          else
+            xcrun stapler validate "$INSTALL_APP"
+            NGV_RELEASE_DIAGNOSTIC_APP_TREE_SHA256="$(python3 scripts/external-gui/acceptance.py tree-sha256 --app .build/NexGenVideo.app)"
+          fi
+          python3 scripts/notarization_proof.py assess --app "$INSTALL_APP"
           scripts/verify_app_slice.sh "$INSTALL_APP"
           scripts/verify_bpy_bundle.sh "$INSTALL_APP" --distribution
           INSTALLED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INSTALL_APP/Contents/Info.plist")"
@@ -1691,8 +2094,26 @@ jobs:
             echo "NGV_RELEASE_PACK_TREE_SHA256=$NGV_RELEASE_PACK_TREE_SHA256"
             echo "NGV_RELEASE_PACK_ZIP=$PACK_ZIP"
             echo "NGV_RELEASE_PACK_ZIP_SHA256=$NGV_RELEASE_PACK_ZIP_SHA256"
+            echo "NGV_RELEASE_DIAGNOSTIC_APP_TREE_SHA256=$NGV_RELEASE_DIAGNOSTIC_APP_TREE_SHA256"
+            echo "NGV_CHECKED_PRODUCT_SOURCE=$NGV_CHECKED_PRODUCT_SOURCE"
           } >> "$GITHUB_ENV"
           echo "OK: mounted DMG layout, copied app, Gatekeeper assessment, and quarantined pack load"
+
+      - name: Check the installed image against fixed release expectations
+        if: inputs.retained_product_source_sha == '' && inputs.compiled_app_targets_json == ''
+        env:
+          HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          EXPECTED_BUILD: ${{ needs.release-gate.outputs.expected-build }}
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_release_image.py --app "$NGV_RELEASE_INSTALL_CHECK/NexGenVideo.app" \
+            --pack "$NGV_RELEASE_PACK_BUNDLE" --dmg .build/NexGenVideo.dmg --proof .build/notarization-proof.json \
+            --diagnostic-app .build/NexGenVideo.app --evidence .build/release-image-check.json \
+            --log .build/release-image-check.log --home "$HOME" \
+            --version "$EXPECTED_VERSION" --build "$EXPECTED_BUILD" --source-sha "$NGV_CHECKED_PRODUCT_SOURCE" \
+            --dmg-sha256 "$(jq -r .dmgSHA256 .build/notarization-proof.json)"
 
       - name: Verify DMG checks did not mutate tracked source
         run: |
@@ -1749,6 +2170,7 @@ jobs:
           runtime_input = root / 'workspace-ui-input.json'
           runtime_input.write_text(json.dumps(receipt, sort_keys=True) + '\n')
           proof = {'schema': 'nexgenvideo/release-workspace-producer/1',
+                   'diagnosticAppTreeSHA256': os.environ['NGV_RELEASE_DIAGNOSTIC_APP_TREE_SHA256'],
                    'sourceSHA': product, 'runID': os.environ['GITHUB_RUN_ID'],
                    'runAttempt': os.environ['GITHUB_RUN_ATTEMPT'],
                    'dmgSHA256': sha256(dmg), 'mountedAppTreeSHA256': app['treeSHA256'],
@@ -1761,6 +2183,12 @@ jobs:
           if provenance is not None:
               proof.update(schema='nexgenvideo/release-workspace-producer/2', producerSourceSHA=os.environ['GITHUB_SHA'],
                            packagingProvenanceSHA256=provenance)
+          notarization = pathlib.Path('.build/notarization-proof.json')
+          if notarization.is_file():
+              from notarization_proof import load, summary
+              proof['notarization'] = summary(load(notarization))
+              if proof['notarization']['dmgSHA256'] != proof['dmgSHA256']:
+                  raise SystemExit('Notarization proof differs from the transferred DMG')
           pathlib.Path('.build/release-workspace-producer.json').write_text(json.dumps(proof, indent=2) + '\n')
           PY
       - name: Retain complete packaging provenance
@@ -1803,7 +2231,9 @@ jobs:
         id: journey-artifact
         with:
           name: release-user-journey-input
-          path: .build/NexGenVideo.dmg
+          path: |
+            .build/NexGenVideo.dmg
+            .build/notarization-proof.json
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -1992,7 +2422,6 @@ jobs:
           for pattern in (
               "plugins/*.ngvpack.zip",
               "plugins/*.entry.json",
-              "bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar",
               "bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json",
           ):
               matches = sorted(root.glob(pattern))
@@ -2013,6 +2442,12 @@ jobs:
                   digest = hashlib.file_digest(handle, "sha256").hexdigest()
               if digest != entry["sha256"]:
                   raise SystemExit(f"pack entry checksum mismatch: {path}")
+          source_pair = json.loads((root / "bpy-source/bpy-source-receipt.json").read_text())["publicSourceAsset"]
+          archive = root / "bpy-source" / source_pair["filename"]
+          with archive.open("rb") as handle:
+              if (archive.stat().st_size != source_pair["size"]
+                      or hashlib.file_digest(handle, "sha256").hexdigest() != source_pair["sha256"]):
+                  raise SystemExit("corresponding source differs from its pinned public asset")
           producer = json.loads((root / "release-workspace-producer.json").read_text())
           dmg = next(asset for asset in assets if asset["path"] == "NexGenVideo.dmg")
           if dmg["sha256"] != producer["dmgSHA256"]:
@@ -2027,6 +2462,7 @@ jobs:
               "pluginCatalogURL": os.environ["PLUGIN_CATALOG_URL"],
               "published": False,
               "assets": assets,
+              "correspondingSource": source_pair,
           }
           if os.environ.get('RETAINED_PACKAGING_ROOT'):
               receipt.update(schema='nexgenvideo/artifact-only-candidate/2', producerSourceSHA=os.environ['GITHUB_SHA'],
@@ -2047,7 +2483,6 @@ jobs:
             .build/artifact-only-candidate.json
             .build/release-workspace-producer.json
             .build/bpy-source/bpy-source-receipt.json
-            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar
             .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json
           if-no-files-found: error
           retention-days: 7
@@ -2075,6 +2510,30 @@ jobs:
             .build/bpy-source/bpy-source-receipt.json
           retention-days: 90
           if-no-files-found: error
+
+      - name: Collect the candidate binding for the seal
+        run: |
+          set -euo pipefail
+          BINDING="$RUNNER_TEMP/release-candidate-binding"
+          mkdir "$BINDING"
+          if [ -f "$RUNNER_TEMP/release-signed-binding/binding.json" ]; then
+            jq '.manifest' "$RUNNER_TEMP/release-signed-binding/binding.json" > "$BINDING/manifest.json"
+          else
+            cp "$RUNNER_TEMP/release-signed-input/manifest.json" "$BINDING/manifest.json"
+          fi
+          cp .build/release-workspace-producer.json "$BINDING/"
+          for EVIDENCE in notarization-proof.json offline-gatekeeper.json release-image-check.json; do
+            if [ -f ".build/$EVIDENCE" ]; then cp ".build/$EVIDENCE" "$BINDING/"; fi
+          done
+          ls -la "$BINDING"
+
+      - name: Retain the candidate binding for the seal
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-candidate-binding
+          path: ${{ runner.temp }}/release-candidate-binding/
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Stage draft GitHub release
         if: ${{ inputs.artifact_only == false && env.REL_DRY == 'false' }}
@@ -2118,9 +2577,31 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
+  candidate-seal:
+    needs: [release-gate, release-tests, release]
+    if: ${{ !cancelled() && needs.release-gate.result == 'success' && needs.release.result == 'success' && (needs.release-tests.result == 'success' || (needs.release-tests.result == 'skipped' && needs.release-gate.outputs.pipeline != 'parallel')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Seal the signed product with its native Release tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/candidate_seal.py --output "$RUNNER_TEMP/candidate-seal"
+      - name: Retain the candidate seal
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-candidate-seal
+          path: ${{ runner.temp }}/candidate-seal/release-candidate-seal.json
+          if-no-files-found: error
+          retention-days: 90
+
   diagnostic-acceptance:
-    needs: release
-    if: ${{ inputs.internal_image_only == false && !cancelled() && needs.release.result == 'success' }}
+    needs: [release, candidate-seal]
+    if: ${{ inputs.internal_image_only == false && !cancelled() && needs.release.result == 'success' && needs.candidate-seal.result == 'success' }}
     runs-on: macrunner
     timeout-minutes: 30
     permissions:
@@ -2221,8 +2702,8 @@ jobs:
       contents: read
       actions: read
       pull-requests: read
-    needs: release
-    if: ${{ inputs.internal_image_only == false && !cancelled() && needs.release.result == 'success' }}
+    needs: [release, candidate-seal]
+    if: ${{ inputs.internal_image_only == false && !cancelled() && needs.release.result == 'success' && needs.candidate-seal.result == 'success' }}
     uses: ./.github/workflows/bpy-runtime-acceptance.yml
     with:
       packaging_producer_source_sha: ${{ needs.release.outputs.packaging_producer_source_sha }}
@@ -2237,8 +2718,8 @@ jobs:
       distribution: true
 
   external-user-acceptance:
-    needs: release
-    if: ${{ inputs.internal_image_only == false && !cancelled() && needs.release.result == 'success' }}
+    needs: [release, candidate-seal]
+    if: ${{ inputs.internal_image_only == false && !cancelled() && needs.release.result == 'success' && needs.candidate-seal.result == 'success' }}
     permissions:
       contents: read
       actions: read
@@ -2302,7 +2783,7 @@ jobs:
       NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
 
   private-audio-pending:
-    needs: [release-gate, release]
+    needs: [release-gate, release, candidate-seal]
     if: ${{ always() && inputs.defer_private_audio && inputs.artifact_only && inputs.dry_run && needs.release-gate.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 3
@@ -2313,6 +2794,7 @@ jobs:
       - name: Bind the pending private audio scope to its actual candidate
         env:
           RELEASE_RESULT: ${{ needs.release.result }}
+          SEAL_RESULT: ${{ needs.candidate-seal.result }}
           VERIFIED_PR_RUN: ${{ inputs.verified_pr_run_id }}
           PRODUCT_SOURCE: ${{ needs.release.outputs.product_source_sha }}
           RUNTIME_ARTIFACT: ${{ needs.release.outputs.workspace_artifact_id }}
@@ -2329,7 +2811,7 @@ jobs:
           sha = lambda value, size: bool(re.fullmatch('[a-f0-9]{' + str(size) + '}', value))
           source = os.environ['GITHUB_SHA']
           assert sha(source, 40) and positive(os.environ['GITHUB_RUN_ID']) and positive(os.environ['GITHUB_RUN_ATTEMPT'])
-          ready = os.environ['RELEASE_RESULT'] == 'success'
+          ready = os.environ['RELEASE_RESULT'] == 'success' and os.environ['SEAL_RESULT'] == 'success'
           selected = {name: os.environ.get(name, '') for name in ('PRODUCT_SOURCE', 'RUNTIME_ARTIFACT', 'RUNTIME_DIGEST', 'DMG_DIGEST', 'PACKAGING_SOURCE', 'PACKAGING_ARTIFACT', 'PACKAGING_DIGEST')}
           for name in ('RUNTIME_DIGEST', 'PACKAGING_DIGEST'):
               selected[name] = selected[name].removeprefix('sha256:')
@@ -2368,9 +2850,9 @@ jobs:
           exit 1
 
   acceptance-pending:
-    needs: release
-    if: ${{ !cancelled() && inputs.internal_image_only && needs.release.result == 'success' }}
-    runs-on: macrunner
+    needs: [release, candidate-seal]
+    if: ${{ !cancelled() && inputs.internal_image_only && needs.release.result == 'success' && needs.candidate-seal.result == 'success' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Keep the internal image pending runtime and GUI acceptance
@@ -2382,8 +2864,8 @@ jobs:
           exit 1
 
   publish:
-    needs: [release-gate, release, diagnostic-acceptance, bpy-runtime, external-user-acceptance]
-    if: ${{ !cancelled() && inputs.artifact_only == false && inputs.dry_run == false && needs.release-gate.outputs.publication-resumed != 'true' && needs.release-gate.result == 'success' && needs.release.result == 'success' && needs.diagnostic-acceptance.result == 'success' && needs.bpy-runtime.result == 'success' && needs.external-user-acceptance.result == 'success' }}
+    needs: [release-gate, release, candidate-seal, diagnostic-acceptance, bpy-runtime, external-user-acceptance]
+    if: ${{ !cancelled() && inputs.artifact_only == false && inputs.dry_run == false && needs.release-gate.outputs.publication-resumed != 'true' && needs.release-gate.result == 'success' && needs.release.result == 'success' && needs.candidate-seal.result == 'success' && needs.diagnostic-acceptance.result == 'success' && needs.bpy-runtime.result == 'success' && needs.external-user-acceptance.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     permissions:

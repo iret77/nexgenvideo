@@ -23,6 +23,7 @@ from scene_history_hierarchy import scoped_files, scoped_success
 from production_spatial_ui_evidence import validate_cases
 from spatial_evaluated_geometry_evidence import verify as verify_geometry
 from release_checkpoint import internal_image_evidence
+import notarization_proof
 from verified_pr_source_checks import prepare
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'external-gui'))
@@ -470,9 +471,10 @@ def main():
     require(metadata(installed, product) == original['app']
             and command(['lipo','-archs', str(installed / 'Contents/MacOS/NexGenVideo')]) == 'arm64', 'Installed app changed')
     invoke('codesign', '--verify', '--deep', '--strict', installed)
-    invoke('xcrun', 'stapler', 'validate', installed)
+    ticket = original.get('notarization')
+    notarization = notarization_proof.verify_installed(installed, dmg, None if ticket is None else notarization_proof.validate_any(ticket), log)
     proof = dict(harness=harness, producer=producer, product=product, artifact=item['id'], artifactDigest=item['digest'],
-                 innerSHA256=expected, app=original['app'], packTreeSHA256=original['packTreeSHA256'],
+                 innerSHA256=expected, app=original['app'], packTreeSHA256=original['packTreeSHA256'], notarization=notarization,
                  macOS=command(['sw_vers', '-productVersion']), architecture=platform.machine())
     write(evidence / 'input.json', proof)
     scope = inputs['candidate_kind'].removeprefix('signed-')

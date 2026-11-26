@@ -57,7 +57,7 @@ class NativeTestPythonWorkflowTests(unittest.TestCase):
                                 self.assertNotIn("GITHUB_PATH", content)
                                 self.assertNotIn("actions/setup-python", content)
         self.assertEqual(callers, {
-            ("ci.yml", "build_test"), ("release.yml", "release-build"),
+            ("ci.yml", "build_test"), ("release.yml", "release-build"), ("release.yml", "release-tests"),
             ("workspace-ui-acceptance.yml", "build"), ("codex-app-server-acceptance.yml", "acceptance"),
             ("diagnostic-acceptance.yml", "ci-app-test"),
             ("diagnostic-acceptance.yml", "ci-app-retained-replay"),

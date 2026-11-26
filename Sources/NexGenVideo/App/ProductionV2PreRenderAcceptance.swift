@@ -23,7 +23,7 @@ enum ProductionV2PreRenderAcceptance {
         assets.append(["path": reference.path, "modality": "image", "allowed_use_ids": [CoreReferenceSemanticJobIDV1.styleReference]])
         try await ProductionPlanningAcceptanceFixture.run("prepare_production_assets", args: ["assets": assets], in: context)
         try await ProductionV2PlanningAcceptance.selectPhase("bible", context: context, driver: driver)
-        try await driver.segment("bible.section", title: "Shot references", titles: BiblePanelView.Section.allCases.map(\.rawValue), in: window)
+        try await driver.choice("bible.section", title: "Shot references", titles: BiblePanelView.Section.allCases.map(\.rawValue), in: window)
         let snapshot = try await Task.detached { try PipelineShotPlanningPromotionStore.readSnapshot(dataRoot: root) }.value
         if requiresNativeLook {
             guard let shot = snapshot.draft.shots.first,

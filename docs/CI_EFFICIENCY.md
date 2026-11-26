@@ -185,12 +185,31 @@ UUID journal. Missing or context-only evidence stops resubmission. Prepared loca
 `.intent` files remain separate from authenticated UUID journals, so preparation
 does not make the retained-product validator reject the first real submission.
 
-The release workflow separates `release-build` from `release`, both on macrunner.
-The builder runs full Release tests in their isolated scratch directory, then builds
-and signs the production app and pack. Before any Apple wait, it retains the exact
-App ZIP, pack, four symbol bundles and bpy receipt with a source-bound manifest.
-The packaging job restores these bytes and retains its signed DMG before submitting
-it. The payload-bound Apple submission journal uploads immediately after the final
+A freshly built candidate uses both macrunner VMs at once. `release-tests` builds
+the test configuration and runs the full Release suite in its isolated scratch
+directory. In parallel, `release` acquires and validates the qualified bpy source
+once while it builds and signs the production app and pack, retains the exact App
+ZIP, pack, four symbol bundles and bpy receipt with a source-bound manifest, and
+packages them. Its manifest names the separately sealed tests instead of embedding
+them. The Ubuntu `candidate-seal` job accepts the candidate only when both jobs passed
+for the same source; acceptance, pending markers and publication require the seal.
+Selected continuation and retained-product modes keep the earlier `release-build`
+then `release` sequence with embedded test evidence.
+
+Only the DMG is submitted to Apple; Apple issues tickets for the DMG and every
+nested code object. The Apple log must list the cdhash of the app, the pack and each
+own binary before the workflow staples the app runtime copy. Before any online
+assessment, the disposable VM copies the quarantined app and pack out of the DMG,
+then blocks outbound connections with a pf anchor for about a minute: it proves that
+Apple and GitHub are unreachable and that Gatekeeper rejects an unnotarized control,
+then assesses the quarantined DMG and app and launches the pack self-test. A failure
+names the fallback input `notarize_app_separately`, which restores the separate App
+submission and staple. Every Gatekeeper assessment first enables assessments, which
+macrunner images ship disabled, and rejects an override verdict.
+A scripted image check then compares the installed copy with fixed expectations:
+arm64-only own binaries, macOS 26.0 floor, version, build, source, team, hardened
+runtime, tickets, Gatekeeper assessments and a quarantined pack load.
+The payload-bound Apple submission journal uploads immediately after the final
 Apple step, or after any earlier step failure, before installed-DMG verification
 and the remaining large artifact transfers.
 Normal installed-DMG, pack loading, diagnostic, bpy and external-user checks remain

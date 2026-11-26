@@ -122,15 +122,22 @@ struct BiblePanelView: View {
     }
 
     private var sectionPicker: some View {
-        Picker("", selection: $section) {
-            ForEach(Section.allCases.filter { $0 != .references || editor.usesProductionPlanningV2 }, id: \.self) { Text($0.rawValue).tag($0) }
+        // Six equal-width segments exceed the center column at the minimum window size.
+        ViewThatFits(in: .horizontal) {
+            sectionChoices.pickerStyle(.segmented)
+            sectionChoices.pickerStyle(.menu)
         }
-        .pickerStyle(.segmented)
-        .reviewAcceptanceProbe("bible.section", text: section.rawValue)
-        .labelsHidden()
         .padding(.horizontal, AppTheme.Spacing.lg)
         .padding(.top, AppTheme.Spacing.md)
         .padding(.bottom, AppTheme.Spacing.sm)
+    }
+
+    private var sectionChoices: some View {
+        Picker("", selection: $section) {
+            ForEach(Section.allCases.filter { $0 != .references || editor.usesProductionPlanningV2 }, id: \.self) { Text($0.rawValue).tag($0) }
+        }
+        .reviewAcceptanceProbe("bible.section", text: section.rawValue)
+        .labelsHidden()
     }
 
     // MARK: - Entity list

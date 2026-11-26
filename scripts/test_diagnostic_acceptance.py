@@ -982,6 +982,23 @@ class SignedBpyCandidateTests(unittest.TestCase):
             with self.subTest(run_status=status):
                 self.check()
 
+    def test_sealed_release_graph_requires_its_passed_seal_in_the_same_attempt(self):
+        seal = dict(name="candidate-seal", conclusion="success", status="completed", run_id=12,
+                    head_sha=self.source, run_attempt=2)
+        self.jobs = dict(total_count=2, jobs=[*self.jobs["jobs"], seal])
+        self.check()
+        for field, value in (("conclusion", "skipped"), ("conclusion", "failure"), ("status", "in_progress"),
+                             ("run_attempt", 1), ("head_sha", "c" * 40)):
+            with self.subTest(field=field, value=value), self.assertRaisesRegex(ValueError, "seal"):
+                original = seal[field]; seal[field] = value
+                try:
+                    self.check()
+                finally:
+                    seal[field] = original
+        self.jobs = dict(total_count=3, jobs=[*self.jobs["jobs"], dict(seal)])
+        with self.assertRaisesRegex(ValueError, "seal"):
+            self.check()
+
     def test_desktop_retention_has_a_distinct_role_and_keeps_producer_attempt_guards(self):
         self.artifact['name'] = 'workspace-ui-app'
         self.jobs['jobs'][0]['labels'] = ['macrunner']
