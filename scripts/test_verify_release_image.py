@@ -123,15 +123,26 @@ class ReleaseImageTests(unittest.TestCase):
                 result = self.check(root, *arguments)
                 self.assertFalse(result['passed'])
                 self.assertTrue(result['failures'])
-        for name in ('team', 'launch', 'uncovered-own'):
+        for name in ('team', 'launch', 'uncovered-own', 'unstapled-dmg'):
             with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 app, pack, dmg, tools, proof, expected = self.fixture(root)
                 if name == 'team': tools.team = 'OTHERTEAM1'
                 if name == 'uncovered-own':
                     tools.hashes['MacOS/musicvideo'] = '6' * 40
+                if name == 'unstapled-dmg':
+                    tools.stapled.discard(str(dmg))
+                if name in ('unstapled-dmg', 'team'):
+                    with self.assertRaises(ValueError):
+                        self.check(root, app, pack, dmg, tools, proof, expected)
+                    continue
                 result = self.check(root, app, pack, dmg, tools, proof, expected, launched=name != 'launch')
                 self.assertFalse(result['passed'])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app, pack, dmg, tools, proof, expected = self.fixture(root)
+            self.check(root, app, pack, dmg, tools, proof, expected)
+            self.assertFalse(any(call[0] == 'spctl' for call in tools.calls))
 
     def test_dmg_must_match_the_independently_bound_hash(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -139,14 +150,6 @@ class ReleaseImageTests(unittest.TestCase):
             app, pack, dmg, tools, proof, expected = self.fixture(root)
             expected['dmgSHA256'] = '0' * 64
             with self.assertRaisesRegex(ValueError, 'notarized DMG'):
-                self.check(root, app, pack, dmg, tools, proof, expected)
-
-    def test_disabled_gatekeeper_cannot_satisfy_the_assessment(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            app, pack, dmg, tools, proof, expected = self.fixture(root)
-            tools.assessment = 'accepted\nsource=Notarized Developer ID\noverride=security disabled\n'
-            with self.assertRaisesRegex(ValueError, 'disabled'):
                 self.check(root, app, pack, dmg, tools, proof, expected)
 
 

@@ -197,18 +197,18 @@ Selected continuation and retained-product modes keep the earlier `release-build
 then `release` sequence with embedded test evidence.
 
 Only the DMG is submitted to Apple; Apple issues tickets for the DMG and every
-nested code object. The Apple log must list the cdhash of the app, the pack and each
-own binary before the workflow staples the app runtime copy. Before any online
-assessment, the disposable VM copies the quarantined app and pack out of the DMG,
-then blocks outbound connections with a pf anchor for about a minute: it proves that
-Apple and GitHub are unreachable and that Gatekeeper rejects an unnotarized control,
-then assesses the quarantined DMG and app and launches the pack self-test. A failure
-names the fallback input `notarize_app_separately`, which restores the separate App
-submission and staple. Every Gatekeeper assessment first enables assessments, which
-macrunner images ship disabled, and rejects an override verdict.
+nested code object ("only notarize the outermost container"). The workflow staples
+the DMG and requires its Apple log to list the cdhash of the app, the pack and each
+own binary before it staples the app runtime copy. App copies taken out of the DMG
+are accepted only with the stapled DMG, their cdhash in that ticket, a valid
+`codesign --verify --deep --strict` signature of team VG5X6JCLGF with the hardened
+runtime, and the existing tree and archive bindings. Gatekeeper verdicts are no
+criterion: on macrunner `spctl` either overrides every verdict (assessments disabled)
+or rejects every Developer ID signature (assessments enabled). The fallback input
+`notarize_app_separately` restores the separate App submission and staple.
 A scripted image check then compares the installed copy with fixed expectations:
 arm64-only own binaries, macOS 26.0 floor, version, build, source, team, hardened
-runtime, tickets, Gatekeeper assessments and a quarantined pack load.
+runtime, tickets and a quarantined pack load.
 The payload-bound Apple submission journal uploads immediately after the final
 Apple step, or after any earlier step failure, before installed-DMG verification
 and the remaining large artifact transfers.

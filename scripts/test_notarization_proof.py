@@ -32,12 +32,11 @@ def sample_proof(dmg_sha256='d' * 64, mode='dmg-only'):
 
 
 class FakeTools:
-    """Answer codesign, stapler, spctl and notarytool like macOS for one exact DMG submission."""
+    """Answer codesign, stapler and notarytool like macOS for one exact DMG submission; spctl is never a criterion."""
 
     def __init__(self, root, hashes, log=None):
         self.root, self.hashes, self.log, self.calls = root, hashes, log, []
-        self.stapled, self.assessment = set(), 'accepted\nsource=Notarized Developer ID\n'
-        self.enabled, self.enableable = False, True
+        self.stapled, self.team, self.flags, self.invalid = set(), 'VG5X6JCLGF', '0x10000(runtime)', set()
 
     def __call__(self, arguments, log=None, timeout=120):
         arguments = [str(item) for item in arguments]
@@ -46,21 +45,13 @@ class FakeTools:
             path = arguments[-1]
             for suffix, value in self.hashes.items():
                 if path.endswith(suffix):
-                    return 0, 'Executable=x\nflags=0x10000(runtime)\nCDHash=' + value + '\nTeamIdentifier=VG5X6JCLGF\n'
+                    return 0, ('Executable=x\nflags=' + self.flags + '\nCDHash=' + value
+                               + '\nTeamIdentifier=' + self.team + '\n')
             return 1, 'not signed'
+        if arguments[:3] == ['codesign', '--verify', '--deep']:
+            return (1, 'invalid signature') if arguments[-1] in self.invalid else (0, 'valid on disk')
         if arguments[:3] == ['xcrun', 'stapler', 'validate']:
             return (0, 'The validate action worked!') if arguments[3] in self.stapled else (65, 'no ticket')
-        if arguments[:2] == ['spctl', '--status']:
-            return 0, 'assessments enabled' if self.enabled else 'assessments disabled'
-        if arguments[:4] == ['sudo', '-n', '/usr/sbin/spctl', '--global-enable']:
-            self.enabled = self.enableable
-            return (0, '') if self.enableable else (1, 'not permitted')
-        if arguments[:4] == ['sudo', '-n', '/usr/sbin/spctl', '--master-enable']:
-            return 1, 'not permitted'
-        if arguments[0] == 'spctl':
-            if not self.enabled:
-                return 0, self.assessment + 'override=security disabled\n'
-            return 0, self.assessment
         if arguments[:3] == ['xcrun', 'notarytool', 'log']:
             Path(arguments[-1]).write_text(json.dumps(self.log))
             return 0, ''
@@ -135,7 +126,7 @@ class NotarizationProofTests(unittest.TestCase):
                         self.record(root, tools, environment, app, pack, uploaded, dmg, state)
                 self.assertFalse((root / 'proof.json').exists())
 
-    def test_installed_dmg_only_copy_requires_ticket_coverage_and_notarized_assessment(self):
+    def test_installed_dmg_only_copy_requires_ticket_coverage_and_the_stapled_dmg(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             app, pack, uploaded, dmg, state, tools, environment = self.fixture(root)
@@ -148,10 +139,10 @@ class NotarizationProofTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'notarize_app_separately'):
                     proof_module.verify_installed(app, dmg, proof)
                 tools.hashes['NexGenVideo.app'] = APP_HASH
-                tools.assessment = 'accepted\nsource=Unnotarized Developer ID\n'
-                with self.assertRaisesRegex(ValueError, 'notarized'):
+                tools.stapled.discard(str(dmg))
+                with self.assertRaisesRegex(ValueError, 'stapler'):
                     proof_module.verify_installed(app, dmg, proof)
-                tools.assessment = 'accepted\nsource=Notarized Developer ID\n'
+                tools.stapled.add(str(dmg))
                 dmg.write_bytes(b'another dmg')
                 with self.assertRaisesRegex(ValueError, 'another DMG'):
                     proof_module.verify_installed(app, dmg, proof)
@@ -188,20 +179,24 @@ class NotarizationProofTests(unittest.TestCase):
                 self.assertEqual(proof_module.verify_installed(app, dmg, None), {'mode': 'app-and-dmg', 'stapledApp': True})
                 self.assertTrue(proof_module.verify_installed(app, dmg, proof)['stapledApp'])
 
-    def test_assessment_enables_gatekeeper_and_rejects_an_override(self):
+    def test_copy_requires_a_valid_release_team_signature_and_covered_pack(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             app, pack, uploaded, dmg, state, tools, environment = self.fixture(root)
+            proof = self.record(root, tools, environment, app, pack, uploaded, dmg, state)
+            compact = proof_module.summary(proof)
             with patch.object(proof_module, 'run', side_effect=tools):
-                self.assertTrue(proof_module.assess(app))
-                self.assertIn(['sudo', '-n', '/usr/sbin/spctl', '--global-enable'], tools.calls)
-                tools.enabled, tools.enableable = False, False
-                with self.assertRaisesRegex(ValueError, 'cannot be enabled'):
-                    proof_module.assess(app)
-                tools.enabled = True
-                tools.assessment += 'override=security disabled\n'
-                with self.assertRaisesRegex(ValueError, 'disabled'):
-                    proof_module.assess(app)
+                self.assertEqual(proof_module.verify_copy(app, compact, pack=pack)['packCDHash'], PACK_HASH)
+                self.assertFalse(any(call[0] == 'spctl' for call in tools.calls))
+                for name in ('team', 'runtime', 'invalid', 'pack'):
+                    with self.subTest(name), self.assertRaises(ValueError):
+                        failing = FakeTools(root, dict(tools.hashes))
+                        if name == 'team': failing.team = 'OTHERTEAM1'
+                        if name == 'runtime': failing.flags = '0x0(none)'
+                        if name == 'invalid': failing.invalid.add(str(app))
+                        if name == 'pack': failing.hashes['musicvideo.ngvpack'] = '6' * 40
+                        with patch.object(proof_module, 'run', side_effect=failing):
+                            proof_module.verify_copy(app, compact, pack=pack)
 
     def test_validate_rejects_uncovered_or_inconsistent_records(self):
         proof_module.validate(sample_proof())
