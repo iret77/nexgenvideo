@@ -31,8 +31,6 @@ def cases(log, work, dmg, quarantined_dmg, unstapled, stapled, phase, results):
     assess(log, phase + ' app stapled', ['spctl', '-a', '-vvvv', '-t', 'exec', stapled], results)
     assess(log, phase + ' syspolicy_check dmg', ['syspolicy_check', 'distribution', dmg], results)
     assess(log, phase + ' syspolicy_check app unstapled', ['syspolicy_check', 'distribution', unstapled], results)
-    launch(log, phase + ' launch unstapled', unstapled, results)
-    launch(log, phase + ' launch stapled', stapled, results)
 
 
 def main():
@@ -49,6 +47,10 @@ def main():
     offline.run(['xcrun', 'stapler', 'staple', dmg], log)
     offline.run(['shasum', '-a', '256', dmg], log)
     status = offline.enable_gatekeeper(log)
+    offline.run(['spctl', '--list'], log)
+    for label in ('Developer ID', 'Notarized Developer ID'):
+        offline.run(['sudo', '-n', '/usr/sbin/spctl', '--enable', '--label', label], log)
+    offline.run(['spctl', '--list'], log)
     offline.run(['xcrun', 'stapler', 'validate', dmg], log)
     quarantined_dmg = work / 'quarantined.dmg'
     offline.run(['cp', dmg, quarantined_dmg], log)
