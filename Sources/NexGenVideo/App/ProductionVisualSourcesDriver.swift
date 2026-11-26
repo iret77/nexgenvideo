@@ -2345,7 +2345,7 @@ enum NativeAcceptancePointer {
             // AVKit's player view reports AXUnknown while containing its native transport controls.
             guard let currentRole = actualRole,
                   roles.contains(currentRole.rawValue) || surfaces.contains(currentRole.rawValue)
-                    || (currentRole.rawValue == kAXUnknownRole && current is AVPlayerView) else {
+                    || (currentRole.rawValue == kAXUnknownRole && current is AVPlayerView && control != nil) else {
                 throw GateBlocked("The pointer accessibility ancestry has an unknown role.")
             }
             if roles.contains(currentRole.rawValue) {
