@@ -180,7 +180,7 @@ enum ProductionVisualSourcesAcceptance {
             do {
                 try await requireViewport(window, driver: driver)
                 context.editor.setWorkspaceFocus(.production); context.editor.revealCockpit(.bible)
-                try await driver.segment("bible.section", title: "Locations",
+                try await driver.choice("bible.section", title: "Locations",
                     titles: ["Characters", "Ensembles", "Props", "Locations", "Look", "Shot references"], in: window)
                 try await driver.wait("Bible locations section") { driver.text("bible.section", in: window) == "Locations" }
                 func open() async throws -> NSWindow {

@@ -41,7 +41,7 @@ enum LedgerAttributeOwnerAcceptance {
         do {
             await editor.refreshEngineState()
             try await ProductionV2PlanningAcceptance.selectPhase("bible", context: context, driver: driver)
-            try await driver.segment("bible.section", title: "Locations", titles: ["Characters", "Ensembles", "Props", "Locations", "Look", "Shot references"], in: window)
+            try await driver.choice("bible.section", title: "Locations", titles: ["Characters", "Ensembles", "Props", "Locations", "Look", "Shot references"], in: window)
             try await driver.click("bible.entity.select.location." + identity, in: window)
             try await driver.wait("actual entity Inspector selected") { editor.inspectedObject == .entity(.init(kind: .location, id: identity)) }
             let before = try await snapshot(root)
@@ -211,7 +211,7 @@ enum LedgerAttributeOwnerAcceptance {
                 dataRoot: reopenedRoot, executor: ToolExecutor(editor: reopened.editorViewModel))
             try await reopened.editorViewModel.refreshEngineState()
             try await ProductionV2PlanningAcceptance.selectPhase("bible", context: reopenedContext, driver: driver)
-            try await driver.segment("bible.section", title: "Locations", titles: ["Characters", "Ensembles", "Props", "Locations", "Look", "Shot references"], in: reopenedWindow)
+            try await driver.choice("bible.section", title: "Locations", titles: ["Characters", "Ensembles", "Props", "Locations", "Look", "Shot references"], in: reopenedWindow)
             try await driver.click("bible.entity.select.location." + identity, in: reopenedWindow)
             guard let reopenedAttribute = reopenedValue.0.objects[address]?[ledgerKey] else { throw failed("The reopened Ledger attribute is missing.") }
             try await showDetails(expected: reopenedAttribute, address: address, key: ledgerKey, window: reopenedWindow, driver: driver)

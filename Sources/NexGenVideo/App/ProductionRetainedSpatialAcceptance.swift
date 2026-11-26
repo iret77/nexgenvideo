@@ -178,7 +178,7 @@ enum ProductionRetainedSpatialAcceptance {
             let driver = ProductionVisualSourcesDriver(window: window, output: output, name: "native-panorama-\(Int(scale * 100))")
             do {
                 try await ProductionV2PlanningAcceptance.selectPhase("bible", context: context, driver: driver)
-                try await driver.segment("bible.section", title: "Locations", titles: ["Characters", "Ensembles", "Props", "Locations", "Look", "Shot references"], in: window)
+                try await driver.choice("bible.section", title: "Locations", titles: ["Characters", "Ensembles", "Props", "Locations", "Look", "Shot references"], in: window)
                 let before = try await readBible(root)
                 try JSONEncoder().encode(before).write(to: output.appendingPathComponent("native-panorama-\(Int(scale * 100))-bible-before.json"), options: .atomic)
                 let appearance = try await Task.detached {

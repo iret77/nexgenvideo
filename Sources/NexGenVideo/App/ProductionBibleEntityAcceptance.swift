@@ -53,7 +53,7 @@ enum ProductionBibleEntityAcceptance {
         for (section, kind, id, view) in [("Characters", BibleEntityKind.character, performerID, "front"),
                                          ("Ensembles", .ensemble, ensembleID, "group_wide"),
                                          ("Props", .prop, propID, "front")] {
-            try await driver.segment("bible.section", title: section, titles: BiblePanelView.Section.allCases.map(\.rawValue), in: window)
+            try await driver.choice("bible.section", title: section, titles: BiblePanelView.Section.allCases.map(\.rawValue), in: window)
             if editor.inspectorPanelVisible { try await AppNativeMenuAcceptance.choose(["View", "Inspector"], in: window, driver: driver) }
             try await driver.wait("Inspector hidden before typed selection") { !editor.inspectorPanelVisible }
             guard let sheet = assigned[id] else { throw failed("The typed sheet has no canonical assignment.") }
@@ -81,7 +81,7 @@ enum ProductionBibleEntityAcceptance {
             entities.append(["retainedImage": retainedImage, "kind": kind.rawValue, "id": id, "view": view, "path": sheet.path, "sha256": sheet.sha256,
                 "previewID": editor.activePreviewTab.id, "inspectorOpenedFromHidden": true])
         }
-        try await driver.segment("bible.section", title: "Look", titles: BiblePanelView.Section.allCases.map(\.rawValue), in: window)
+        try await driver.choice("bible.section", title: "Look", titles: BiblePanelView.Section.allCases.map(\.rawValue), in: window)
         if editor.inspectorPanelVisible { try await AppNativeMenuAcceptance.choose(["View", "Inspector"], in: window, driver: driver) }
         try await driver.wait("Inspector hidden before Look selection") { !editor.inspectorPanelVisible }
         try await driver.click("bible.look.select", in: window)
