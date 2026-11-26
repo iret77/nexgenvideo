@@ -1406,6 +1406,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/retained_packaging.py bind --root "$RUNNER_TEMP/retained-packaging"
 
+      - name: Prove Gatekeeper can be enforced before the build
+        run: python3 -I -c "import sys; sys.path.insert(0, 'scripts'); import notarization_proof; notarization_proof.gatekeeper_enabled()"
+
       - name: Resolve version + mode
         env:
           ARTIFACT_ONLY: ${{ inputs.artifact_only }}
