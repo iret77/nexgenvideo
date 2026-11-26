@@ -41,7 +41,12 @@ def main():
     log, results = [], []
     work = output / 'work'
     work.mkdir()
-    dmg = source / 'NexGenVideo.dmg'
+    found = sorted(source.rglob('*.dmg'))
+    offline.run(['ls', '-laR', source], log)
+    dmg = work / 'NexGenVideo.dmg'
+    offline.run(['cp', found[0], dmg], log)
+    offline.run(['shasum', '-a', '256', dmg], log)
+    offline.run(['xcrun', 'stapler', 'staple', dmg], log)
     offline.run(['shasum', '-a', '256', dmg], log)
     status = offline.enable_gatekeeper(log)
     offline.run(['xcrun', 'stapler', 'validate', dmg], log)
