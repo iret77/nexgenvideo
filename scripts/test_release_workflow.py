@@ -43,9 +43,9 @@ def reusable_permission_violations(workflows):
     return failures
 
 
-def named_release_steps(text):
+def named_release_steps(text, jobs=("release-build", "release")):
     result = []
-    for name in ("release-build", "release"):
+    for name in jobs:
         header = "\n  " + name + ":\n"
         release = text[text.index(header) + len(header) :]
         release = re.split(r"(?m)^  [A-Za-z0-9_-]+:\n", release, maxsplit=1)[0]
@@ -68,8 +68,9 @@ def matching_shell_lines(step, prefix):
     return [line.strip() for line in step.splitlines() if line.strip().startswith(prefix)]
 
 
-def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs_results=None, ancestry_success=True, compiled_targets="", component_continuation=False, cohort_pack_reuse=False, defer_private_audio=False, internal_image_only=False):
+def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs_results=None, ancestry_success=True, compiled_targets="", component_continuation=False, cohort_pack_reuse=False, defer_private_audio=False, internal_image_only=False, two_submissions=False):
     expression = str(condition or "true").removeprefix("${{").removesuffix("}}").strip()
+    legacy = bool(compiled_targets or component_continuation or cohort_pack_reuse)
     if not ancestry_success and not re.search(r"\b(?:always|cancelled|success|failure)\(\)", expression):
         return False
     values = {
@@ -95,7 +96,17 @@ def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs
         "inputs.signed_build_run_id": "",
         "inputs.completed_release_tests_run_id": "",
         "inputs.notary_progress_run_id": "",
+        "inputs.retained_product_source_sha": "",
+        "inputs.notarize_app_separately": two_submissions,
+        "needs.release-gate.outputs.pipeline": "legacy" if legacy else "parallel",
+        "needs.release-tests.result": "skipped" if legacy else "success",
+        "needs.candidate-seal.result": "success",
+        "env.NGV_PARALLEL_CANDIDATE": str(not legacy).lower(),
+        "env.NGV_NOTARY_MODE": "app-and-dmg" if legacy or two_submissions else "dmg-only",
         "steps.restore-notary.outputs.dmg_present": "",
+        "steps.offline-gatekeeper.outcome": "success",
+        "steps.signed-input.outcome": "skipped" if not legacy else "success",
+        "steps.adopt-signed.outcome": "success" if not legacy else "skipped",
     }
     values.update({f"needs.{name}.result": result for name, result in (needs_results or {}).items()})
     expression = re.sub(r"\b(?:inputs|env|needs|steps)\.[\w.-]+",
@@ -321,7 +332,7 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
             with self.subTest(runtimeProduced=ready), tempfile.TemporaryDirectory() as directory:
                 env = {'GITHUB_SHA': 'a' * 40, 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1',
                     'RUNNER_TEMP': directory, 'RELEASE_RESULT': 'success' if ready else 'failure',
-                    'VERIFIED_PR_RUN': '789',
+                    'SEAL_RESULT': 'success' if ready else 'skipped', 'VERIFIED_PR_RUN': '789',
                     'PRODUCT_SOURCE': 'b' * 40 if ready else '', 'RUNTIME_ARTIFACT': '456' if ready else '',
                     'RUNTIME_DIGEST': 'sha256:' + 'c' * 64 if ready else '', 'DMG_DIGEST': 'd' * 64 if ready else ''}
                 with patch.dict(os.environ, env, clear=True):exec(compile(code, '<pending scope writer>', 'exec'), {})
@@ -340,7 +351,7 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
                 else:self.assertIsNone(actual['runtimeInputs'])
         with tempfile.TemporaryDirectory() as directory:
             bad = {'GITHUB_SHA': 'a' * 40, 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1',
-                'RUNNER_TEMP': directory, 'RELEASE_RESULT': 'success', 'PRODUCT_SOURCE': 'b' * 40,
+                'RUNNER_TEMP': directory, 'RELEASE_RESULT': 'success', 'SEAL_RESULT': 'success', 'PRODUCT_SOURCE': 'b' * 40,
                 'RUNTIME_ARTIFACT': '456', 'RUNTIME_DIGEST': 'mutable-tag', 'DMG_DIGEST': 'd' * 64}
             with patch.dict(os.environ, bad, clear=True), self.assertRaises(AssertionError):
                 exec(compile(code, '<pending scope writer>', 'exec'), {})
@@ -387,6 +398,79 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
         changed = copy.deepcopy(self.workflow())
         changed["jobs"]["publish"].pop("if")
         self.assertTrue(active_publication_steps(changed, True, True))
+
+    def test_parallel_candidate_tests_beside_packaging_and_seals_both(self):
+        workflow = self.workflow()
+        jobs = workflow["jobs"]
+        self.assertEqual(jobs["release-tests"]["needs"], "release-gate")
+        self.assertEqual(jobs["release-tests"]["runs-on"], "macrunner")
+        self.assertEqual(jobs["release"]["needs"], ["release-gate", "release-build"])
+        self.assertTrue(condition_enabled(jobs["release"]["if"], True, True, needs_results={"release-build": "skipped"}))
+        self.assertFalse(condition_enabled(jobs["release-build"]["if"], True, True))
+        seal = jobs["candidate-seal"]
+        self.assertEqual(seal["runs-on"], "ubuntu-24.04")
+        self.assertEqual(seal["needs"], ["release-gate", "release-tests", "release"])
+        self.assertTrue(condition_enabled(seal["if"], True, True))
+        for failed in ("release-tests", "release", "release-gate"):
+            for result in ("failure", "cancelled", "skipped"):
+                with self.subTest(failed=failed, result=result):
+                    self.assertFalse(condition_enabled(seal["if"], True, True, needs_results={failed: result}))
+        self.assertTrue(condition_enabled(seal["if"], True, True, compiled_targets="{}"))
+        pending = jobs["acceptance-pending"]
+        self.assertEqual((pending["needs"], pending["runs-on"]), (["release", "candidate-seal"], "ubuntu-24.04"))
+        self.assertFalse(condition_enabled(pending["if"], True, True, internal_image_only=True,
+                                           needs_results={"candidate-seal": "skipped"}))
+        self.assertIn("candidate-seal", jobs["publish"]["needs"])
+        self.assertFalse(condition_enabled(jobs["publish"]["if"], False, False, needs_results={"candidate-seal": "failure"}))
+        switch = workflow[True]["workflow_dispatch"]["inputs"]["notarize_app_separately"]
+        self.assertEqual((switch["type"], switch["default"]), ("boolean", False))
+
+    def test_pipeline_and_notarization_mode_come_from_the_dispatch(self):
+        workflow = self.workflow()
+        gate = {step.get("name"): step for step in workflow["jobs"]["release-gate"]["steps"]}["Select the candidate pipeline"]
+        mode = {step.get("name"): step for step in workflow["jobs"]["release"]["steps"]}["Select the notarization mode"]
+        names = list(gate["env"])
+        for selected, switch, expected in ((None, "false", "parallel"), (None, "true", "parallel"),
+                                           ("SIGNED_BUILD_RUN", "false", "legacy"), ("COMPILED_APP_TARGETS", "false", "legacy"),
+                                           ("NOTARY_PROGRESS_RUN", "true", None)):
+            with self.subTest(selected=selected, switch=switch), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+                environment = dict(os.environ, GITHUB_OUTPUT=str(output), **{name: "" for name in names})
+                environment["NOTARIZE_APP_SEPARATELY"] = switch
+                if selected: environment[selected] = "42"
+                result = subprocess.run(["bash", "-c", gate["run"]], env=environment, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode == 0, expected is not None, result.stdout + result.stderr)
+                if expected:
+                    self.assertEqual(output.read_text(), "pipeline=" + expected + "\n")
+        for switch, expected in (("true", "app-and-dmg"), ("false", "dmg-only")):
+            with self.subTest(switch=switch), tempfile.TemporaryDirectory() as directory:
+                target = Path(directory) / "env"
+                subprocess.run(["bash", "-c", mode["run"]], env=dict(os.environ, GITHUB_ENV=str(target),
+                               NOTARIZE_APP_SEPARATELY=switch), check=True, capture_output=True, timeout=10)
+                self.assertEqual(target.read_text(), "NGV_NOTARY_MODE=" + expected + "\n")
+
+    def test_offline_gatekeeper_precedes_every_online_assessment_and_the_app_staple(self):
+        steps = self.workflow()["jobs"]["release"]["steps"]
+        names = [step.get("name") for step in steps]
+        order = ["Build and sign app",
+                 "Verify the qualified bpy corresponding source", "Record signed build before notarization",
+                 "Retain signed build input", "Adopt the recorded signed build", "Build and sign DMG",
+                 "Notarize and staple DMG", "Assess and launch the stapled DMG app offline",
+                 "Restore outbound network after the offline check", "Prove the DMG ticket covers the exact app and pack",
+                 "Staple the DMG ticket to the runtime app copy", "Verify the exact DMG users install",
+                 "Check the installed image against fixed release expectations",
+                 "Transfer the verified installed DMG app for workspace acceptance",
+                 "Archive exact diagnostic app and symbols", "Retain the candidate binding for the seal"]
+        indices = [names.index(name) for name in order]
+        self.assertEqual(indices, sorted(indices))
+        offline = names.index("Assess and launch the stapled DMG app offline")
+        for step in steps[:offline]:
+            self.assertNotRegex(step.get("run", ""), r"\bspctl\b|stapler staple [^\n]*NexGenVideo\.app")
+        restore = steps[names.index("Restore outbound network after the offline check")]
+        self.assertTrue(condition_enabled(restore["if"], True, True))
+        self.assertTrue(restore["if"].startswith("always()"))
+        journey = next(step for step in steps if step.get("id") == "journey-artifact")["with"]["path"].split()
+        self.assertEqual(journey, [".build/NexGenVideo.dmg", ".build/notarization-proof.json"])
 
     def test_mode_combinations_use_the_real_input_and_catalog_shell(self):
         workflow = self.workflow()
@@ -486,12 +570,19 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
             "Build and sign app", "Assemble format packs (.ngvpack + catalog entry)",
             "Notarize and staple downloadable format packs",
             "Load-test — the SIGNED app actually loads the SIGNED pack from an EXTERNAL dir",
-            "Notarize and staple app", "Build and sign DMG", "Notarize and staple DMG",
-            "Verify the exact DMG users install",
+            "Build and sign DMG", "Notarize and staple DMG",
+            "Assess and launch the stapled DMG app offline", "Prove the DMG ticket covers the exact app and pack",
+            "Staple the DMG ticket to the runtime app copy",
+            "Verify the exact DMG users install", "Check the installed image against fixed release expectations",
             "Record unpublished candidate bytes", "Upload unpublished candidate",
         ):
             self.assertTrue(condition_enabled(steps[name].get("if"), True, True), name)
             self.assertFalse(steps[name].get("continue-on-error", False), name)
+        for name in ("Prepare App notarization intent", "Submit App notarization exactly once", "Notarize and staple app"):
+            self.assertFalse(condition_enabled(steps[name].get("if"), True, True), name)
+            self.assertTrue(condition_enabled(steps[name].get("if"), True, True, two_submissions=True), name)
+        self.assertFalse(condition_enabled(steps["Staple the DMG ticket to the runtime app copy"]["if"], True, True,
+                                           two_submissions=True))
         reuse = steps["Verify retained signature, shared links and actual external pack load evidence"]
         self.assertFalse(condition_enabled(reuse.get("if"), True, True))
         self.assertTrue(condition_enabled(reuse.get("if"), True, True, component_continuation=True))
@@ -524,7 +615,8 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
         self.assertEqual(upload["if-no-files-found"], "error")
         for name in ("diagnostic-acceptance", "bpy-runtime", "external-user-acceptance"):
             job = workflow["jobs"][name]
-            self.assertEqual(job["needs"], "release")
+            self.assertEqual(job["needs"], ["release", "candidate-seal"])
+            self.assertFalse(condition_enabled(job.get("if"), True, True, needs_results={"candidate-seal": "skipped"}), name)
             self.assertTrue(condition_enabled(job.get("if"), True, True), name)
             self.assertFalse(job.get("continue-on-error", False), name)
         external = workflow["jobs"]["external-user-acceptance"]["with"]
@@ -632,7 +724,8 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
                            NGV_RELEASE_PACK_TREE_SHA256=tree(original_pack),
                            NGV_RELEASE_MOUNTED_PACK_TREE_SHA256=tree(original_pack),
                            NGV_RELEASE_PACK_ZIP=str(build / 'musicvideo.ngvpack.zip'),
-                           NGV_RELEASE_PACK_ZIP_SHA256=hashlib.sha256((build / 'musicvideo.ngvpack.zip').read_bytes()).hexdigest())
+                           NGV_RELEASE_PACK_ZIP_SHA256=hashlib.sha256((build / 'musicvideo.ngvpack.zip').read_bytes()).hexdigest(),
+                           NGV_RELEASE_DIAGNOSTIC_APP_TREE_SHA256=tree(app))
         return root, environment
 
     def test_final_dmg_workspace_transfer_keeps_the_installed_bytes_and_existing_format(self):
@@ -797,7 +890,7 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
                 run = step.get('run', '')
                 if 'git status --porcelain --untracked-files=no' in run:
                     guards.append((step['name'], run.split('          BASE=', 1)[0].split('BASE=', 1)[0]))
-        self.assertEqual(len(guards), 9)
+        self.assertEqual(len(guards), 10)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             files = {'Sources/NexGenVideo/Resources/Info.plist': b'original plist', 'other.txt': b'original source',
@@ -829,7 +922,31 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
 
     def test_staged_release_tests_share_the_testable_build_configuration(self):
         text = WORKFLOW.read_text()
-        steps = named_release_steps(text)
+        tests = dict(named_release_steps(text, ("release-tests",)))
+        packaging = dict(named_release_steps(text, ("release",)))
+        for name, command in (("Build the exact release test configuration",
+                               'swift build --jobs 1 --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release '
+                               '--scratch-path "$RUNNER_TEMP/release-tests" --build-tests -Xswiftc -enable-testing'),
+                              ("Stage release test runtime inputs",
+                               'scripts/stage_test_runtime.sh release "$RUNNER_TEMP/release-tests"')):
+            self.assertEqual(single_line_run(tests[name]), command)
+            self.assertNotRegex(tests[name], r"(?m)^        (?:if|continue-on-error):")
+        parallel_test = tests["Test the exact release configuration"]
+        for fragment in ('python3 scripts/run_macos_tests.py --cache-path "$NGV_SWIFTPM_CACHE_PATH"',
+                         '-c release --scratch-path "$RUNNER_TEMP/release-tests" --swiftc-flag=-enable-testing',
+                         '--serialize-app-tests', '--evidence "$RUNNER_TEMP/release-test-evidence" 2>&1 | tee release-test.log',
+                         'scripts/verify_swift_test_output.py --log release-test.log --swift-testing-runs 2 --xctest-runs 2'):
+            self.assertIn(fragment, parallel_test)
+        self.assertNotIn("--retained-release-engine", parallel_test)
+        self.assertIn("name: release-tests-result", tests["Retain the Release test result for the candidate seal"])
+        for name, command in (("Build and sign app", "scripts/bundle.sh release --sign"),
+                              ("Assemble format packs (.ngvpack + catalog entry)",
+                               'scripts/assemble_ngvpack.sh plugins/musicvideo.json release .build/plugins "${SIGN_IDENTITY:-}"')):
+            self.assertEqual(re.findall(r"(?m)^        if: (.+)$", packaging[name]), ["env.NGV_PARALLEL_CANDIDATE == 'true'"])
+            self.assertIn(command, packaging[name])
+            self.assertNotIn("$RUNNER_TEMP", packaging[name])
+        self.assertNotIn("Build the exact release test configuration", packaging)
+        steps = named_release_steps(text, ("release-build",))
         names = [name for name, _ in steps]
         by_name = dict(steps)
 
@@ -962,7 +1079,9 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
                     self.assertEqual(condition_enabled(steps[name]['if'], True, True, compiled_targets=selected), not bool(selected))
                 for name in compiled:
                     self.assertEqual(condition_enabled(steps[name]['if'], True, True, compiled_targets=selected), bool(selected))
-                self.assertEqual(condition_enabled(jobs['bpy-source']['if'], True, True, compiled_targets=selected), not bool(selected))
+                self.assertFalse(condition_enabled(jobs['bpy-source']['if'], True, True, compiled_targets=selected))
+                self.assertEqual(condition_enabled(jobs['release-tests']['if'], True, True, compiled_targets=selected), not bool(selected))
+                self.assertEqual(condition_enabled(jobs['release-build']['if'], True, True, compiled_targets=selected), bool(selected))
                 if selected:
                     self.assertTrue(condition_enabled(jobs['release-build']['if'], True, True,
                         needs_results={'bpy-source': 'skipped'}, ancestry_success=False, compiled_targets=selected))

@@ -327,6 +327,7 @@ def verify(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed
     releases = [job for job in jobs["jobs"] if job["name"] == "release"]
     if jobs["total_count"] != len(jobs["jobs"]) or len(releases) != 1 or releases[0]["conclusion"] != "success":
         raise ValueError("candidate release job did not succeed")
+    require_seal(jobs, run_id, source_sha, run.get("run_attempt"))
     if (artifact["id"] != artifact_id or artifact["name"] != "diagnostic-release-evidence"
             or artifact["expired"] or artifact["digest"] != f"sha256:{digest}"
             or artifact["workflow_run"]["id"] != run_id
@@ -334,6 +335,15 @@ def verify(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed
         raise ValueError("candidate artifact provenance mismatch")
     if set(changed_paths) - HARNESS_PATHS:
         raise ValueError("application or build inputs changed; a new signed build is required")
+
+
+def require_seal(jobs, run_id, source_sha, attempt):
+    """A release whose graph seals its candidate is valid only once that seal passed."""
+    seals = [job for job in jobs.get("jobs", []) if job.get("name") == "candidate-seal"]
+    if seals and (len(seals) != 1 or seals[0].get("conclusion") != "success" or seals[0].get("status") != "completed"
+                  or seals[0].get("run_id") != run_id or seals[0].get("head_sha") != source_sha
+                  or seals[0].get("run_attempt") != attempt):
+        raise ValueError("candidate seal did not pass; the signed product lacks its native Release tests")
 
 
 def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, digest, changed_paths,
@@ -375,6 +385,7 @@ def verify_signed_bpy(run, jobs, artifact, run_id, source_sha, artifact_id, dige
             or releases[0].get("head_sha") != producer_source
             or releases[0].get("run_attempt") != run["run_attempt"]):
         raise ValueError("candidate release job did not succeed in the bound attempt")
+    require_seal(jobs, run_id, producer_source, run["run_attempt"])
     if (artifact.get("id") != artifact_id or artifact.get("name") != artifact_name
             or artifact.get("expired") is not False or artifact.get("digest") != "sha256:" + digest
             or artifact.get("workflow_run", {}).get("id") != run_id

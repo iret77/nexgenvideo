@@ -12,8 +12,11 @@ import capture_render_review_test_diagnostic as diagnostic
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def workflow_test_run(workflow, name):
-    chunks = re.split(r"(?m)^      - ", workflow.read_text())[1:]
+def workflow_test_run(workflow, name, job=None):
+    text = workflow.read_text()
+    if job is not None:
+        text = re.split(r"(?m)^  [A-Za-z0-9_-]+:\n", text.split("\n  " + job + ":\n", 1)[1], maxsplit=1)[0]
+    chunks = re.split(r"(?m)^      - ", text)[1:]
     matches = [chunk for chunk in chunks if chunk.startswith(f"name: {name}\n")]
     if len(matches) != 1:
         raise AssertionError(f"expected one {name!r} step in {workflow}")
@@ -88,17 +91,15 @@ class SwiftTestFailurePropagationTests(unittest.TestCase):
                 diagnostic.validate_framework_selection(*case)
 
     def test_nonzero_exit_is_final_and_zero_requires_complete_selected_runs(self):
+        release = ("Test the exact release configuration", "release-test.log",
+                   ["-c", "release", "--scratch-path", "{runtime}/release-tests"])
         workflows = (
-            ("ci.yml", "Test", "test.log", []),
-            (
-                "release.yml",
-                "Test the exact release configuration",
-                "release-test.log",
-                ["-c", "release", "--scratch-path", "{runtime}/release-tests"],
-            ),
+            ("ci.yml", None, "Test", "test.log", []),
+            ("release.yml", "release-build", *release),
+            ("release.yml", "release-tests", *release),
         )
-        for filename, name, log, configuration in workflows:
-            run = workflow_test_run(ROOT / ".github/workflows" / filename, name)
+        for filename, job, name, log, configuration in workflows:
+            run = workflow_test_run(ROOT / ".github/workflows" / filename, name, job)
             cases = (
                 (139, "error: Exited with unexpected signal code 11", 139),
                 (1, "Test Suite failed", 1),

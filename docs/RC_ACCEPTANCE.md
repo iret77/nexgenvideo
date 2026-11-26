@@ -41,8 +41,9 @@ The candidate artifact retains the DMG, notarized pack ZIPs and entries, badges,
 bpy receipt and corresponding-source pair, plus a source/run/attempt and exact-byte
 hash receipt. Artifact upload precedes the native jobs and is not their acceptance
 result. Diagnostic and bpy acceptance use `diagnostic-app.zip` from the stapled
-`.build/NexGenVideo.app` of the same source and producer run; these jobs do not
-establish identity with the app copied from the DMG. The external user journey
+`.build/NexGenVideo.app` of the same source and producer run. With DMG-only
+notarization the producer proves that this app is the installed DMG app plus its
+own ticket. The external user journey
 checks the exact DMG SHA. All three jobs must succeed. The app keeps the normal
 stable HTTPS catalog URL. Offline pack artifacts and direct pack
 load checks do not establish a fresh Musicvideo installation: its exact compatible

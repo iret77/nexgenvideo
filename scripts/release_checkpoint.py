@@ -23,6 +23,14 @@ REPOSITORY = "iret77/nexgenvideo"
 FILES = ("NexGenVideo.zip", "symbols.tar.gz", "plugins.tar.gz", "bpy-source-receipt.json")
 NATIVE_TIMEOUT = 900
 SIGNED_MANIFEST_MAX_BYTES = 16 * 1024**2
+NATIVE_TEST_JOBS = ("release-build", "release-tests")
+SEALED_TESTS = "sealed-release-tests/v1"
+NOTARY_MODES = ("dmg-only", "app-and-dmg")
+LEGACY_INPUTS = ("compiled_app_targets_json", "retained_product_source_sha", "completed_release_tests_run_id",
+                 "completed_engine_tests_run_id", "compiler_checkpoint_run_id", "signed_build_run_id",
+                 "notary_progress_run_id")
+SEAL_JOB, SEAL_ARTIFACT, SEAL_RECORD = "candidate-seal", "release-candidate-seal", "release-candidate-seal.json"
+SIGNING_STEPS = ("Record signed build before notarization", "Retain signed build input", "Retain signed build proof")
 
 
 def signed_manifest_bytes(archive):
@@ -146,7 +154,7 @@ def tree_digest(root):
 
 def native_test_products(root, scratch, cache, phase):
     require(os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and os.environ.get('GITHUB_ACTIONS') == 'true'
-            and os.environ.get('GITHUB_JOB') == 'release-build' and os.environ.get('GITHUB_RUN_ATTEMPT') == '1'
+            and os.environ.get('GITHUB_JOB') in NATIVE_TEST_JOBS and os.environ.get('GITHUB_RUN_ATTEMPT') == '1'
             and sys.platform == 'darwin', 'Native test products require the owned release job')
     temporary = Path(os.environ['RUNNER_TEMP']).resolve()
     require(root.resolve().is_relative_to(temporary) and scratch.resolve().is_relative_to(temporary),
@@ -230,7 +238,7 @@ def native_test_products(root, scratch, cache, phase):
 
 
 def confirm_native_test_products(root, artifact_id, artifact_digest):
-    require(os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and os.environ.get('GITHUB_JOB') == 'release-build'
+    require(os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and os.environ.get('GITHUB_JOB') in NATIVE_TEST_JOBS
             and os.environ.get('GITHUB_RUN_ATTEMPT') == '1' and sys.platform == 'darwin', 'Owned native release checkpoint required')
     require(artifact_id and artifact_id.isdecimal() and int(artifact_id) > 0
             and re.fullmatch('[a-f0-9]{64}', artifact_digest or ''), 'Exact successful compiler upload required')
@@ -302,7 +310,16 @@ def create(root):
     run("tar", "-czf", str(root / "plugins.tar.gz"), "-C", str(build), "plugins")
     (root / "bpy-source-receipt.json").write_bytes((build / "bpy-source/bpy-source-receipt.json").read_bytes())
     native = os.environ.get("RELEASE_NATIVE_PROOF", "")
-    if native:
+    sealed = os.environ.get("RELEASE_TESTS_SEALED") == "true"
+    if sealed:
+        inputs = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())["inputs"]
+        require(not native and os.environ.get("GITHUB_JOB") == "release"
+                and not any(inputs.get(name) for name in LEGACY_INPUTS)
+                and os.environ.get("NGV_NOTARY_MODE") in NOTARY_MODES,
+                "Separately sealed Release tests require a freshly built parallel candidate")
+        evidence = {"schema": SEALED_TESTS, "sourceSHA": os.environ["GITHUB_SHA"],
+                    "runID": int(os.environ["GITHUB_RUN_ID"])}
+    elif native:
         evidence = json.loads(Path(native).read_text())
         if evidence.get("schema") == "release-native-scoped-repair/v1":
             from release_test_repair import verify_receipt
@@ -343,6 +360,8 @@ def create(root):
                 "nativeEvidence": evidence, "files": {
                     name: {"bytes": (root / name).stat().st_size, "sha256": checksum(root / name)}
                     for name in FILES}}
+    if sealed:
+        manifest["notaryMode"] = os.environ["NGV_NOTARY_MODE"]
     validate_app_zip(root / "NexGenVideo.zip")
     write_signed_manifest(root / "manifest.json", manifest)
 
@@ -382,6 +401,9 @@ def verify_manifest(manifest, source, run_id):
     elif evidence.get("schema") == "resumed-release-tests/v1":
         from release_engine_resume import verify_completed_suite
         verify_completed_suite(evidence.get("suite", {}), source, run_id)
+    elif evidence.get("schema") == SEALED_TESTS:
+        require(evidence == {"schema": SEALED_TESTS, "sourceSHA": source, "runID": run_id}
+                and manifest.get("notaryMode") in NOTARY_MODES, "Separately sealed Release tests belong to another build")
     else:
         suite = evidence.get("suite", {})
         require(evidence.get("schema") == "fresh-release-tests/v1"
@@ -394,6 +416,8 @@ def verify_manifest(manifest, source, run_id):
         if "compilerOrigin" in evidence:
             from release_compiler_restore import origin_receipt
             require(evidence["compilerOrigin"] == origin_receipt(source, run_id), "Unexpected release test compiler origin")
+    require(evidence.get("schema") == SEALED_TESTS or "notaryMode" not in manifest,
+            "Only a separately sealed candidate may select its notarization mode")
     require(set(manifest.get("files", {})) == set(FILES), "Signed input file inventory differs")
     for value in manifest["files"].values():
         require(type(value.get("bytes")) is int and 0 < value["bytes"] < 12 * 1024**3
@@ -415,11 +439,11 @@ def internal_image_evidence(run, jobs, source):
 
     origins = {}
 
-    def original(job_name, artifact_name, member, byte_limit):
+    def original(job_name, artifact_name, member, byte_limit, labels=('macrunner',)):
         producers = [job for job in jobs['jobs'] if job['name'] == job_name]
         require(len(producers) == 1, 'Ambiguous internal image producer')
         job = producers[0]
-        require(job.get('labels') == ['macrunner'] and job.get('conclusion') == 'success'
+        require(job.get('labels') == list(labels) and job.get('conclusion') == 'success'
                 and job.get('status') == 'completed' and job.get('run_attempt') == 1
                 and job.get('run_id') == run_id and job.get('head_sha') == source,
                 'Internal image producer identity differs')
@@ -438,29 +462,52 @@ def internal_image_evidence(run, jobs, source):
                 require(archive.namelist() == [member], 'Unexpected internal image evidence entries')
                 return json.loads(archive_bytes(archive, member, byte_limit))
 
-    manifest = original('release-build', 'release-signed-input-' + source + '-proof',
-                        'manifest.json', SIGNED_MANIFEST_MAX_BYTES)
-    verify_manifest(manifest, source, run_id)
-    require(manifest['nativeEvidence']['schema'] == 'fresh-release-tests/v1', 'Fresh Release tests required')
-    builder, = [job for job in jobs['jobs'] if job['name'] == 'release-build']
-    restore_steps = [step['conclusion'] for step in builder.get('steps', [])
-                     if step['name'] == 'Restore the original release test compiler products']
-    require(restore_steps in ([], ['skipped'], ['success'])
-            and (restore_steps == ['success']) == ('compilerOrigin' in manifest['nativeEvidence']),
-            'Signed compiler provenance differs from the original build steps')
+    sealed = any(job.get('name') == SEAL_JOB for job in jobs['jobs'])
+    if sealed:
+        from candidate_seal import SEAL_LABELS, verify_record
+        seal = verify_record(original(SEAL_JOB, SEAL_ARTIFACT, SEAL_RECORD, SIGNED_MANIFEST_MAX_BYTES,
+                                      labels=SEAL_LABELS), source, run_id)
+        require(seal['tests']['schema'] == 'fresh-release-tests/v1' and seal['tests'].get('origin', {}).get('runID') == run_id,
+                'Fresh Release tests of this exact run required')
+        manifest = verify_manifest(original('release', 'release-signed-input-' + source + '-proof', 'manifest.json',
+                                            SIGNED_MANIFEST_MAX_BYTES), source, run_id)
+        require(manifest['nativeEvidence']['schema'] == SEALED_TESTS and manifest['identity'] == seal['identity']
+                and hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+                == seal['signedManifestSHA256'], 'Sealed candidate differs from its signed build record')
+        identity = seal['identity']
+    else:
+        manifest = original('release-build', 'release-signed-input-' + source + '-proof',
+                            'manifest.json', SIGNED_MANIFEST_MAX_BYTES)
+        verify_manifest(manifest, source, run_id)
+        require(manifest['nativeEvidence']['schema'] == 'fresh-release-tests/v1', 'Fresh Release tests required')
+        builder, = [job for job in jobs['jobs'] if job['name'] == 'release-build']
+        restore_steps = [step['conclusion'] for step in builder.get('steps', [])
+                         if step['name'] == 'Restore the original release test compiler products']
+        require(restore_steps in ([], ['skipped'], ['success'])
+                and (restore_steps == ['success']) == ('compilerOrigin' in manifest['nativeEvidence']),
+                'Signed compiler provenance differs from the original build steps')
+        identity = manifest['identity']
     mounted = original('release', 'release-workspace-producer', 'release-workspace-producer.json', 100_000)
     app = mounted.get('app', {})
     require(mounted.get('schema') == 'nexgenvideo/release-workspace-producer/1'
             and mounted.get('sourceSHA') == source == app.get('NGVSourceCommit')
             and mounted.get('runID') == str(run_id) and mounted.get('runAttempt') == '1'
             and mounted.get('packOrigin') == 'mounted-dmg'
-            and app.get('CFBundleVersion') == manifest['identity']['build']
-            and app.get('CFBundleShortVersionString') == manifest['identity']['version']
+            and app.get('CFBundleVersion') == identity['build']
+            and app.get('CFBundleShortVersionString') == identity['version']
             and mounted.get('mountedAppTreeSHA256') == app.get('treeSHA256')
             and mounted.get('mountedPackTreeSHA256') == mounted.get('packTreeSHA256')
             and all(re.fullmatch('[a-f0-9]{64}', mounted.get(key, '')) for key in
                     ('dmgSHA256', 'mountedAppTreeSHA256', 'mountedPackTreeSHA256', 'archiveSHA256',
                      'runtimeInputSHA256', 'bpySourceReceiptSHA256')), 'Mounted internal product differs')
+    if sealed:
+        from notarization_proof import SUMMARY_SCHEMA, validate_any
+        validate_any(mounted.get('notarization'), mounted['dmgSHA256'])
+        require(mounted['notarization']['schema'] == SUMMARY_SCHEMA, 'Mounted product lacks its notarization summary')
+        require(mounted['dmgSHA256'] == seal['dmgSHA256']
+                and mounted['notarization']['mode'] == seal['notaryMode']
+                and re.fullmatch('[a-f0-9]{64}', mounted.get('diagnosticAppTreeSHA256', '')),
+                'Mounted internal product differs from its sealed candidate')
     return dict(mounted, evidenceArtifacts=origins)
 
 
@@ -538,6 +585,47 @@ def require_saved_notary(producer, jobs, inventory, root, *, retained=None):
                             "Saved continuation lost an original Apple submission")
 
 
+def signed_builders(jobs, source):
+    builders = [job for job in jobs if job.get("name") == "release-build" and job.get("conclusion") != "skipped"]
+    if builders:
+        require(len(builders) == 1 and builders[0].get("conclusion") == "success"
+                and builders[0].get("head_sha") == source and builders[0].get("labels") == ["macrunner"],
+                "Original signed build did not pass")
+        return builders
+    signers = [job for job in jobs if job.get("name") == "release" and job.get("conclusion") != "skipped"]
+    require(len(signers) == 1 and signers[0].get("head_sha") == source and signers[0].get("labels") == ["macrunner"]
+            and signers[0].get("status") == "completed" and signers[0].get("run_attempt") == 1,
+            "Original signed build did not pass")
+    steps = {step.get("name"): step.get("conclusion") for step in signers[0].get("steps", [])}
+    require(all(steps.get(name) == "success" for name in SIGNING_STEPS), "Original signed build did not pass")
+    return signers
+
+
+def adopt(root):
+    require(os.environ.get("GITHUB_REPOSITORY") == REPOSITORY and os.environ.get("GITHUB_JOB") == "release",
+            "Only the signing release job may adopt its own signed build")
+    source, run_id = os.environ["GITHUB_SHA"], int(os.environ["GITHUB_RUN_ID"])
+    manifest = verify_manifest(json.loads((root / "manifest.json").read_bytes()), source, run_id)
+    require(manifest["nativeEvidence"]["schema"] == SEALED_TESTS, "Adoption requires a separately sealed candidate")
+    build = Path(".build")
+    require(tree_digest(build / "NexGenVideo.app") == manifest["appTreeSHA256"]
+            and identity(build) == manifest["identity"], "Adopted signed App differs from its record")
+    for name in FILES:
+        require(checksum(root / name) == manifest["files"][name]["sha256"], "Recorded signed input changed: " + name)
+    require(manifest["identity"]["version"] == os.environ["REL_VERSION"]
+            and manifest["identity"]["build"] == os.environ["BUILD_NUMBER"]
+            and manifest["identity"]["catalogURL"] == os.environ["PLUGIN_CATALOG_URL"]
+            and manifest["notaryMode"] == os.environ["NGV_NOTARY_MODE"], "Adopted App identity differs")
+    run("codesign", "--verify", "--strict", str(build / "NexGenVideo.app"))
+    shutil.copyfile(root / "NexGenVideo.zip", build / "NexGenVideo.zip")
+    with Path(os.environ["GITHUB_ENV"]).open("a") as output:
+        output.write("NGV_SIGNED_APP_ARCHIVE_SHA256=" + manifest["files"]["NexGenVideo.zip"]["sha256"] + "\n")
+    state = Path(os.environ["NOTARY_STATE_DIR"])
+    state.mkdir(parents=True, exist_ok=True)
+    write(state / "context.json", {"schema": "release-notary-context/v1", "repository": REPOSITORY,
+          "sourceSHA": source, "buildRunID": run_id, "runID": run_id})
+
+
 def prepare(run_id, root):
     retained = packaging_binding()
     source = retained["productSourceSHA"] if retained is not None else os.environ["GITHUB_SHA"]
@@ -555,10 +643,7 @@ def prepare(run_id, root):
             "Signed input producer differs")
     jobs = api(f"actions/runs/{run_id}/attempts/1/jobs?per_page=100")
     require(jobs.get("total_count") == len(jobs.get("jobs", [])), "Incomplete signed build job inventory")
-    builders = [job for job in jobs["jobs"] if job.get("name") == "release-build"]
-    require(len(builders) == 1 and builders[0].get("conclusion") == "success"
-            and builders[0].get("head_sha") == source and builders[0].get("labels") == ["macrunner"],
-            "Original signed build did not pass")
+    builders = signed_builders(jobs["jobs"], source)
     artifacts = api(f"actions/runs/{run_id}/artifacts?per_page=100")
     require(artifacts.get("total_count") == len(artifacts.get("artifacts", [])), "Incomplete signed artifact inventory")
     require_saved_notary(producer, jobs["jobs"], artifacts["artifacts"], root, retained=retained)
@@ -580,6 +665,8 @@ def prepare(run_id, root):
     with zipfile.ZipFile(root / "proof.zip") as archive:
         require(archive.namelist() == ["manifest.json"], "Unexpected signed proof entries")
         manifest = verify_manifest(json.loads(signed_manifest_bytes(archive)), source, run_id)
+    require((manifest["nativeEvidence"].get("schema") == SEALED_TESTS) == (builders[0]["name"] == "release"),
+            "Signed build producer and its test evidence location differ")
     binding = {"schema": "release-signed-binding/v1", "sourceSHA": source,
                "producer": producer, "builder": builders[0], "artifact": selected[prefix], "manifest": manifest}
     if retained is not None:
@@ -658,6 +745,7 @@ def restore(root):
             output.write('NGV_COMPONENT_NOTARY_CONTINUATION=true\n')
         if retained is not None and cohort_signed_product(retained) and retained['previousNotary'].get('cohortPackChecks'):
             output.write('NGV_COHORT_PACK_CHECKS_REUSED=true\n')
+        output.write("NGV_NOTARY_MODE=" + manifest.get("notaryMode", "app-and-dmg") + "\n")
     write(root / "restored.json", {"sourceSHA": binding["sourceSHA"], "producerRun": binding["producer"]["id"],
           "appTreeSHA256": manifest["appTreeSHA256"], "identity": manifest["identity"]})
     if os.environ.get("NOTARY_STATE_DIR"):
@@ -856,7 +944,7 @@ def restore_notary(root):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(allow_abbrev=False)
-    parser.add_argument("operation", choices=("create", "prepare", "restore", "create-dmg",
+    parser.add_argument("operation", choices=("create", "adopt", "prepare", "restore", "create-dmg",
                                              "prepare-notary", "restore-notary", "native-test-products", "confirm-native-test-products"))
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--run-id", type=int)
@@ -876,6 +964,8 @@ if __name__ == "__main__":
         confirm_native_test_products(args.root, args.artifact_id, args.artifact_digest)
     elif args.operation == "create":
         create(args.root)
+    elif args.operation == "adopt":
+        adopt(args.root)
     elif args.operation == "prepare":
         prepare(args.run_id, args.root)
     elif args.operation == "restore":
