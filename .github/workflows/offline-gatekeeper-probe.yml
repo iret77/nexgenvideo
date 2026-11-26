@@ -1,0 +1,35 @@
+name: Offline Gatekeeper probe
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  probe:
+    if: github.head_ref == 'iret77/offline-gatekeeper-probe' && github.actor == 'iret77'
+    runs-on: macrunner
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-user-journey-input
+          run-id: 45889013942
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/journey
+      - name: Probe Gatekeeper online and offline
+        run: python3 scripts/offline_gatekeeper_probe.py "$RUNNER_TEMP/journey" "$RUNNER_TEMP/probe"
+      - name: Restore outbound network
+        if: always()
+        run: python3 scripts/offline_gatekeeper.py restore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: offline-gatekeeper-probe
+          path: |
+            ${{ runner.temp }}/probe/probe.json
+            ${{ runner.temp }}/probe/syspolicy.log
+          retention-days: 7
