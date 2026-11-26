@@ -18,17 +18,17 @@ class FakeVM:
         self.calls.append(arguments)
         log.append({'command': arguments})
         command = arguments[2:] if arguments[:2] == ['sudo', '-n'] else arguments
-        if command[:2] == ['pfctl', '-E']:
+        if command[:2] == ['/sbin/pfctl', '-E']:
             return 0, 'pf enabled\nToken : 42\n'
-        if command[:2] == ['pfctl', '-sr']:
+        if command[:2] == ['/sbin/pfctl', '-sr']:
             return 0, 'anchor "com.apple/*" all\n'
-        if command[:3] == ['pfctl', '-a', offline.ANCHOR] and command[3] == '-f':
+        if command[:3] == ['/sbin/pfctl', '-a', offline.ANCHOR] and command[3] == '-f':
             self.blocked = True
             return 0, ''
-        if command[:3] == ['pfctl', '-a', offline.ANCHOR] and command[3:] == ['-F', 'all']:
+        if command[:3] == ['/sbin/pfctl', '-a', offline.ANCHOR] and command[3:] == ['-F', 'all']:
             self.blocked = False
             return 0, ''
-        if command[0] == 'pfctl':
+        if command[0] == '/sbin/pfctl':
             return 0, ''
         if command[0] == 'curl':
             if command[-1] == offline.RESTORE_PROBE and not self.blocked:
@@ -101,7 +101,7 @@ class OfflineGatekeeperTests(unittest.TestCase):
         self.assertEqual(record['appCDHash'], 'a' * 40)
         self.assertTrue(record['launch']['packLoaded'])
         self.assertFalse(vm.blocked)
-        self.assertIn(['sudo', '-n', 'pfctl', '-X', '42'], vm.calls)
+        self.assertIn(['sudo', '-n', '/sbin/pfctl', '-X', '42'], vm.calls)
 
     def test_failures_name_their_cause_and_always_release_the_block(self):
         for variant, kind in (('reachable', 'infrastructure'), ('enforcement-off', 'infrastructure'),
@@ -113,9 +113,9 @@ class OfflineGatekeeperTests(unittest.TestCase):
                 self.assertFalse(record['passed'])
                 self.assertEqual(record['failure']['kind'], kind)
                 if variant == 'other-app':
-                    self.assertFalse(any('pfctl' in call for call in vm.calls))
+                    self.assertFalse(any('/sbin/pfctl' in call for call in vm.calls))
                 else:
-                    self.assertIn(['sudo', '-n', 'pfctl', '-a', offline.ANCHOR, '-F', 'all'], vm.calls)
+                    self.assertIn(['sudo', '-n', '/sbin/pfctl', '-a', offline.ANCHOR, '-F', 'all'], vm.calls)
                 if kind == 'gatekeeper':
                     self.assertIn('notarize_app_separately=true', error)
                     self.assertTrue(record['offlineConditionProven'])
@@ -130,7 +130,7 @@ class OfflineGatekeeperTests(unittest.TestCase):
             with patch.object(offline, 'run', side_effect=vm), self.assertRaises(SystemExit):
                 offline.check(root / 'NexGenVideo.dmg', {'dmgSHA256': '0' * 64, 'app': {'cdhash': 'a' * 40}},
                               root / 'offline.json', root)
-        self.assertFalse(any('pfctl' in call for call in vm.calls))
+        self.assertFalse(any('/sbin/pfctl' in call for call in vm.calls))
 
 
 if __name__ == '__main__':

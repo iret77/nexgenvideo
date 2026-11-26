@@ -198,7 +198,7 @@ def gatekeeper_enabled(log=None):
     if 'assessments enabled' in run(['spctl', '--status'], log)[1]:
         return
     for flag in ('--global-enable', '--master-enable'):
-        if run(['sudo', '-n', 'spctl', flag], log)[0] == 0:
+        if run(['sudo', '-n', '/usr/sbin/spctl', flag], log)[0] == 0:
             break
     require('assessments enabled' in run(['spctl', '--status'], log)[1],
             'Gatekeeper assessments cannot be enabled; a notarization assessment would be void')
