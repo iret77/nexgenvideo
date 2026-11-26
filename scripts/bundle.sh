@@ -140,7 +140,12 @@ notarize_app() {
 }
 
 build_dmg() {
-  xcrun stapler validate "$APP"
+  # A DMG-only submission notarizes the app through the disk image, so the app is stapled afterwards.
+  if [ "${NGV_NOTARY_MODE:-app-and-dmg}" = dmg-only ]; then
+    codesign --verify --strict --verbose=2 "$APP"
+  else
+    xcrun stapler validate "$APP"
+  fi
   echo "==> Building DMG"
   rm -f "$DMG"
   DMG_VOLNAME="NexGenVideo"

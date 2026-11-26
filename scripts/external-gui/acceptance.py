@@ -30,6 +30,7 @@ REPOSITORY = ROOT.parents[1]
 sys.path.insert(0, str(REPOSITORY / 'scripts'))
 from verify_diagnostic_candidate import SIGNED_JOURNEY_HARNESS_PATHS
 import retained_packaging
+import notarization_proof
 from isolated_test_home import environment as isolated_environment
 TEST_INPUTS = ('acceptance.py', 'test_bundle.py', 'transport.py', 'project.yml', 'NexGenVideoExternalUITests/UserJourneyTests.swift')
 COLOR_HELPER = 'scripts/export_color_diagnostic.swift'
@@ -229,7 +230,9 @@ def install(args, evidence, *, allowed_paths=None):
             if attached:
                 command(['hdiutil', 'detach', mount], evidence / 'install.log')
         command(['codesign', '--verify', '--deep', '--strict', '--verbose=2', installed], evidence / 'install.log')
-        command(['xcrun', 'stapler', 'validate', installed], evidence / 'install.log')
+        proof_path = dmg.with_name('notarization-proof.json')
+        proof = notarization_proof.load(proof_path) if proof_path.is_file() and not proof_path.is_symlink() else None
+        identity['notarization'] = notarization_proof.verify_installed(installed, dmg, proof, evidence / 'install.log')
     else:
         source = Path(args.app).resolve(strict=True)
         require(re.fullmatch('[a-f0-9]{64}', args.app_tree_sha256 or ''),
