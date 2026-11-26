@@ -2071,7 +2071,7 @@ jobs:
             echo "NGV_RELEASE_DIAGNOSTIC_APP_TREE_SHA256=$NGV_RELEASE_DIAGNOSTIC_APP_TREE_SHA256"
             echo "NGV_CHECKED_PRODUCT_SOURCE=$NGV_CHECKED_PRODUCT_SOURCE"
           } >> "$GITHUB_ENV"
-          echo "OK: mounted DMG layout, copied app, Gatekeeper assessment, and quarantined pack load"
+          echo "OK: mounted DMG layout, copied app, DMG-ticket notarization proof, and quarantined pack load"
 
       - name: Check the installed image against fixed release expectations
         if: inputs.retained_product_source_sha == '' && inputs.compiled_app_targets_json == ''
