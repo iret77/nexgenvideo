@@ -188,7 +188,7 @@ does not make the retained-product validator reject the first real submission.
 A freshly built candidate uses both macrunner VMs at once. `release-tests` builds
 the test configuration and runs the full Release suite in its isolated scratch
 directory. In parallel, `release` acquires and validates the qualified bpy source
-once, builds and signs the production app and pack, retains the exact App
+once while it builds and signs the production app and pack, retains the exact App
 ZIP, pack, four symbol bundles and bpy receipt with a source-bound manifest, and
 packages them. Its manifest names the separately sealed tests instead of embedding
 them. The Ubuntu `candidate-seal` job accepts the candidate only when both jobs passed

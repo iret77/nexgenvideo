@@ -1422,6 +1422,18 @@ jobs:
           echo "NOTARY_STATE_DIR=$RUNNER_TEMP/release-notary-state" >> "$GITHUB_ENV"
           echo "Building $V (dry=${{ inputs.dry_run }})"
 
+      - name: Start the single qualified bpy source acquisition
+        if: env.NGV_PARALLEL_CANDIDATE == 'true'
+        run: |
+          set -euo pipefail
+          ACQUISITION="$RUNNER_TEMP/bpy-source-acquisition"
+          mkdir -p "$ACQUISITION"
+          # Download and validation overlap the app build; the signed record waits for their result.
+          nohup bash -c 'python3 scripts/consume_bpy_distributable_source.py --output-directory .build/bpy-source \
+            --source-sha "$GITHUB_SHA" > "$1/log" 2>&1; echo "$?" > "$1/status"' _ "$ACQUISITION" \
+            > /dev/null 2>&1 < /dev/null &
+          echo "$!" > "$ACQUISITION/pid"
+
       - name: Select the notarization mode
         if: env.NGV_PARALLEL_CANDIDATE == 'true'
         env:
@@ -1507,15 +1519,20 @@ jobs:
           scripts/assemble_ngvpack.sh plugins/musicvideo.json release .build/plugins "${SIGN_IDENTITY:-}"
           ls -la .build/plugins
 
-      - uses: ./.github/actions/prepare-bpy-source
-        if: env.NGV_PARALLEL_CANDIDATE == 'true'
-        with:
-          directory: .build/bpy-source
-
       - name: Verify the qualified bpy corresponding source
         if: env.NGV_PARALLEL_CANDIDATE == 'true'
+        timeout-minutes: 25
         run: |
           set -euo pipefail
+          ACQUISITION="$RUNNER_TEMP/bpy-source-acquisition"
+          until [ -s "$ACQUISITION/status" ]; do
+            kill -0 "$(cat "$ACQUISITION/pid")" 2>/dev/null || [ -s "$ACQUISITION/status" ] \
+              || { cat "$ACQUISITION/log"; echo "::error::bpy source acquisition ended without a result"; exit 1; }
+            sleep 10
+          done
+          cat "$ACQUISITION/log"
+          [ "$(cat "$ACQUISITION/status")" = 0 ] \
+            || { echo "::error::Qualified bpy source acquisition failed"; exit 1; }
           python3 scripts/verify_bpy_distributable_source.py \
             .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar \
             .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json
@@ -2382,7 +2399,6 @@ jobs:
           for pattern in (
               "plugins/*.ngvpack.zip",
               "plugins/*.entry.json",
-              "bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar",
               "bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json",
           ):
               matches = sorted(root.glob(pattern))
@@ -2403,6 +2419,12 @@ jobs:
                   digest = hashlib.file_digest(handle, "sha256").hexdigest()
               if digest != entry["sha256"]:
                   raise SystemExit(f"pack entry checksum mismatch: {path}")
+          source_pair = json.loads((root / "bpy-source/bpy-source-receipt.json").read_text())["publicSourceAsset"]
+          archive = root / "bpy-source" / source_pair["filename"]
+          with archive.open("rb") as handle:
+              if (archive.stat().st_size != source_pair["size"]
+                      or hashlib.file_digest(handle, "sha256").hexdigest() != source_pair["sha256"]):
+                  raise SystemExit("corresponding source differs from its pinned public asset")
           producer = json.loads((root / "release-workspace-producer.json").read_text())
           dmg = next(asset for asset in assets if asset["path"] == "NexGenVideo.dmg")
           if dmg["sha256"] != producer["dmgSHA256"]:
@@ -2417,6 +2439,7 @@ jobs:
               "pluginCatalogURL": os.environ["PLUGIN_CATALOG_URL"],
               "published": False,
               "assets": assets,
+              "correspondingSource": source_pair,
           }
           if os.environ.get('RETAINED_PACKAGING_ROOT'):
               receipt.update(schema='nexgenvideo/artifact-only-candidate/2', producerSourceSHA=os.environ['GITHUB_SHA'],
@@ -2437,7 +2460,6 @@ jobs:
             .build/artifact-only-candidate.json
             .build/release-workspace-producer.json
             .build/bpy-source/bpy-source-receipt.json
-            .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar
             .build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json
           if-no-files-found: error
           retention-days: 7

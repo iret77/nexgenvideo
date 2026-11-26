@@ -452,7 +452,7 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
     def test_offline_gatekeeper_precedes_every_online_assessment_and_the_app_staple(self):
         steps = self.workflow()["jobs"]["release"]["steps"]
         names = [step.get("name") for step in steps]
-        order = ["Build and sign app",
+        order = ["Start the single qualified bpy source acquisition", "Build and sign app",
                  "Verify the qualified bpy corresponding source", "Record signed build before notarization",
                  "Retain signed build input", "Adopt the recorded signed build", "Build and sign DMG",
                  "Notarize and staple DMG", "Assess and launch the stapled DMG app offline",
@@ -609,9 +609,9 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
         upload = steps["Upload unpublished candidate"]["with"]
         for path in (".build/NexGenVideo.dmg", ".build/plugins/*.ngvpack.zip",
                      ".build/plugins/*.entry.json", ".build/artifact-only-candidate.json",
-                     ".build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar",
                      ".build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.manifest.json"):
             self.assertIn(path, upload["path"].splitlines())
+        self.assertNotIn(".build/bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar", upload["path"])
         self.assertEqual(upload["if-no-files-found"], "error")
         for name in ("diagnostic-acceptance", "bpy-runtime", "external-user-acceptance"):
             job = workflow["jobs"][name]
@@ -706,7 +706,9 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
         (original_pack / 'pack').write_bytes(b'final-notarized-pack')
         build = root / '.build'
         (build / 'bpy-source').mkdir(parents=True)
-        (build / 'bpy-source/bpy-source-receipt.json').write_text('{"sourceSHA":"' + 'a' * 40 + '"}')
+        (build / 'bpy-source/bpy-source-receipt.json').write_text(json.dumps({'sourceSHA': 'a' * 40, 'publicSourceAsset': {
+            'filename': 'NexGenVideo-bpy-5.2.2-corresponding-source.tar', 'size': len(b'candidate-input'),
+            'sha256': hashlib.sha256(b'candidate-input').hexdigest()}}))
         (build / 'NexGenVideo.dmg').write_bytes(b'exact-final-dmg')
         (build / 'musicvideo.ngvpack.zip').write_bytes(b'exact-final-pack-zip')
         stale = build / 'NexGenVideo.app/Contents/MacOS/NexGenVideo'
@@ -816,7 +818,7 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
         transfer = steps['Transfer the verified installed DMG app for workspace acceptance']['run']
         record = steps['Record unpublished candidate bytes']['run']
         script = record.split("python3 - <<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
-        for changed in (False, True):
+        for changed in (False, True, 'source'):
             with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory:
                 root, environment = self.release_transfer_fixture(directory)
                 subprocess.run(['bash', '-c', transfer], cwd=root, env=environment, check=True,
@@ -834,15 +836,24 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
                     (build / 'bpy-source' / name).write_bytes(b'candidate-input')
                 environment.update(REL_VERSION='1.8.0', BUILD_NUMBER='123',
                                    PLUGIN_CATALOG_URL='https://example.test/catalog.json')
-                if changed:
+                if changed is True:
                     (build / 'NexGenVideo.dmg').write_bytes(b'changed-after-transfer')
+                if changed == 'source':
+                    (build / 'bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar').write_bytes(b'candidate-inpuT')
                 result = subprocess.run([sys.executable, '-c', script], cwd=root, env=environment,
                                         capture_output=True, text=True, timeout=15)
                 candidate = build / 'artifact-only-candidate.json'
                 self.assertEqual(result.returncode == 0, not changed)
                 self.assertEqual(candidate.exists(), not changed)
-                if changed:
+                if changed is True:
                     self.assertIn('candidate DMG differs from the checked workspace producer', result.stderr)
+                elif changed:
+                    self.assertIn('corresponding source differs from its pinned public asset', result.stderr)
+                else:
+                    record = json.loads(candidate.read_text())
+                    self.assertEqual(record['correspondingSource']['sha256'], hashlib.sha256(b'candidate-input').hexdigest())
+                    self.assertNotIn('bpy-source/NexGenVideo-bpy-5.2.2-corresponding-source.tar',
+                                     [asset['path'] for asset in record['assets']])
 
     def test_compiled_release_routes_keep_both_checkouts_pristine(self):
         jobs = yaml.safe_load(WORKFLOW.read_text())['jobs']
