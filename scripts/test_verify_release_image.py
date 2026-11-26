@@ -92,7 +92,8 @@ class ReleaseImageTests(unittest.TestCase):
         tools.team = 'VG5X6JCLGF'
         tools.stapled.update({str(dmg), str(pack)})
         proof = sample_proof(notarization_proof.sha256(dmg))
-        expected = {'version': '1.8.0', 'build': '141', 'sourceSHA': 'c' * 40, 'notaryMode': 'dmg-only'}
+        expected = {'version': '1.8.0', 'build': '141', 'sourceSHA': 'c' * 40, 'notaryMode': 'dmg-only',
+                    'dmgSHA256': notarization_proof.sha256(dmg)}
         return app, pack, dmg, tools, proof, expected
 
     def check(self, root, app, pack, dmg, tools, proof, expected, launched=True):

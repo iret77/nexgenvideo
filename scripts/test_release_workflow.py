@@ -465,7 +465,8 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
         self.assertEqual(indices, sorted(indices))
         offline = names.index("Assess and launch the stapled DMG app offline")
         for step in steps[:offline]:
-            self.assertNotRegex(step.get("run", ""), r"\bspctl\b|stapler staple [^\n]*NexGenVideo\.app")
+            self.assertNotRegex(step.get("run", ""), r"\bspctl\b|notarization_proof\.py (?:assess|verify-installed)"
+                                r"|verify_release_image|stapler staple [^\n]*NexGenVideo\.app")
         restore = steps[names.index("Restore outbound network after the offline check")]
         self.assertTrue(condition_enabled(restore["if"], True, True))
         self.assertTrue(restore["if"].startswith("always()"))

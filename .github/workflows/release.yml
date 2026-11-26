@@ -2016,7 +2016,7 @@ jobs:
             xcrun stapler validate "$INSTALL_APP"
             NGV_RELEASE_DIAGNOSTIC_APP_TREE_SHA256="$(python3 scripts/external-gui/acceptance.py tree-sha256 --app .build/NexGenVideo.app)"
           fi
-          spctl -a -vvv -t exec "$INSTALL_APP"
+          python3 scripts/notarization_proof.py assess --app "$INSTALL_APP"
           scripts/verify_app_slice.sh "$INSTALL_APP"
           scripts/verify_bpy_bundle.sh "$INSTALL_APP" --distribution
           INSTALLED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INSTALL_APP/Contents/Info.plist")"

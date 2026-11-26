@@ -37,6 +37,7 @@ class FakeTools:
     def __init__(self, root, hashes, log=None):
         self.root, self.hashes, self.log, self.calls = root, hashes, log, []
         self.stapled, self.assessment = set(), 'accepted\nsource=Notarized Developer ID\n'
+        self.enabled, self.enableable = False, True
 
     def __call__(self, arguments, log=None, timeout=120):
         arguments = [str(item) for item in arguments]
@@ -49,7 +50,16 @@ class FakeTools:
             return 1, 'not signed'
         if arguments[:3] == ['xcrun', 'stapler', 'validate']:
             return (0, 'The validate action worked!') if arguments[3] in self.stapled else (65, 'no ticket')
+        if arguments[:2] == ['spctl', '--status']:
+            return 0, 'assessments enabled' if self.enabled else 'assessments disabled'
+        if arguments[:4] == ['sudo', '-n', 'spctl', '--global-enable']:
+            self.enabled = self.enableable
+            return (0, '') if self.enableable else (1, 'not permitted')
+        if arguments[:4] == ['sudo', '-n', 'spctl', '--master-enable']:
+            return 1, 'not permitted'
         if arguments[0] == 'spctl':
+            if not self.enabled:
+                return 0, self.assessment + 'override=security disabled\n'
             return 0, self.assessment
         if arguments[:3] == ['xcrun', 'notarytool', 'log']:
             Path(arguments[-1]).write_text(json.dumps(self.log))
@@ -177,6 +187,21 @@ class NotarizationProofTests(unittest.TestCase):
                 tools.stapled.add(str(app))
                 self.assertEqual(proof_module.verify_installed(app, dmg, None), {'mode': 'app-and-dmg', 'stapledApp': True})
                 self.assertTrue(proof_module.verify_installed(app, dmg, proof)['stapledApp'])
+
+    def test_assessment_enables_gatekeeper_and_rejects_an_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app, pack, uploaded, dmg, state, tools, environment = self.fixture(root)
+            with patch.object(proof_module, 'run', side_effect=tools):
+                self.assertTrue(proof_module.assess(app))
+                self.assertIn(['sudo', '-n', 'spctl', '--global-enable'], tools.calls)
+                tools.enabled, tools.enableable = False, False
+                with self.assertRaisesRegex(ValueError, 'cannot be enabled'):
+                    proof_module.assess(app)
+                tools.enabled = True
+                tools.assessment += 'override=security disabled\n'
+                with self.assertRaisesRegex(ValueError, 'disabled'):
+                    proof_module.assess(app)
 
     def test_validate_rejects_uncovered_or_inconsistent_records(self):
         proof_module.validate(sample_proof())

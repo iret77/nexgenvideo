@@ -107,14 +107,6 @@ def checked(arguments, log, timeout=180):
     return notarization_proof.checked(arguments, log, timeout)
 
 
-def assessed(arguments, log):
-    text = checked(arguments, log)
-    lines = text.splitlines()
-    require('override=security disabled' not in lines, 'Gatekeeper assessments are disabled; the check would be void')
-    require(notarization_proof.NOTARIZED_SOURCE in lines, 'Gatekeeper does not report notarized Developer ID')
-    return True
-
-
 def check(app, pack, dmg, expected, proof, diagnostic, home, log):
     failures = []
     info = plistlib.loads((Path(app) / 'Contents/Info.plist').read_bytes())
@@ -158,8 +150,7 @@ def check(app, pack, dmg, expected, proof, diagnostic, home, log):
         require(notarization_proof.signature(diagnostic)['cdhash'] == proof['app']['cdhash'],
                 'Diagnostic app is not the notarized DMG app')
     installed = notarization_proof.verify_installed(app, dmg, proof, log)
-    assessed(['spctl', '-a', '-vvv', '-t', 'open', '--context', 'context:primary-signature', dmg], log)
-    assessed(['spctl', '-a', '-vvv', '-t', 'exec', app], log)
+    notarization_proof.assess(dmg, log, kind='open')
     with tempfile.TemporaryDirectory(prefix='ngv-image-pack-') as directory:
         copy = Path(directory) / 'musicvideo.ngvpack'
         checked(['ditto', pack, copy], log)

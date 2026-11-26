@@ -193,20 +193,47 @@ def validate_any(record, dmg_sha256=None):
     return record
 
 
-def verify_installed(app, dmg, proof, log=None):
-    """Prove an app copied out of the DMG is notarized: its own staple, or the DMG ticket that covers it."""
-    if proof is None or proof['mode'] == 'app-and-dmg':
+def gatekeeper_enabled(log=None):
+    """macrunner images ship with assessments disabled, which turns every spctl verdict into an override."""
+    if 'assessments enabled' in run(['spctl', '--status'], log)[1]:
+        return
+    for flag in ('--global-enable', '--master-enable'):
+        if run(['sudo', '-n', 'spctl', flag], log)[0] == 0:
+            break
+    require('assessments enabled' in run(['spctl', '--status'], log)[1],
+            'Gatekeeper assessments cannot be enabled; a notarization assessment would be void')
+
+
+def assess(target, log=None, kind='exec'):
+    gatekeeper_enabled(log)
+    context = ['--context', 'context:primary-signature'] if kind == 'open' else []
+    lines = checked(['spctl', '-a', '-vvv', '-t', kind, *context, target], log).splitlines()
+    require('override=security disabled' not in lines, 'Gatekeeper assessments are disabled; the check would be void')
+    require(NOTARIZED_SOURCE in lines, 'Gatekeeper does not report notarized Developer ID for ' + str(target))
+    return True
+
+
+def verify_copy(app, record, log=None):
+    """Prove a transferred app copy is notarized: its own staple, or the DMG ticket that covers its cdhash."""
+    if record is None or record['mode'] == 'app-and-dmg':
         checked(['xcrun', 'stapler', 'validate', app], log)
-        if proof is None:
-            return {'mode': 'app-and-dmg', 'stapledApp': True}
-    validate_any(proof, sha256(dmg))
-    checked(['xcrun', 'stapler', 'validate', dmg], log)
-    installed = signature(app, log)['cdhash']
-    require(installed == proof['app']['cdhash'], 'Installed app is not covered by the stapled DMG ticket. ' + FIX)
-    assessment = checked(['spctl', '-a', '-vvv', '-t', 'exec', app], log)
-    require(NOTARIZED_SOURCE in assessment.splitlines(), 'Gatekeeper does not report the installed app as notarized')
-    return {'mode': proof['mode'], 'stapledApp': proof['mode'] == 'app-and-dmg', 'cdhash': installed,
-            'dmgSHA256': proof['dmgSHA256'], 'submissionID': proof['submissionID']}
+    result = {'mode': 'app-and-dmg' if record is None else record['mode'],
+              'stapledApp': record is None or record['mode'] == 'app-and-dmg'}
+    if record is not None:
+        validate_any(record)
+        installed = signature(app, log)['cdhash']
+        require(installed == record['app']['cdhash'], 'Installed app is not covered by the stapled DMG ticket. ' + FIX)
+        result.update(cdhash=installed, dmgSHA256=record['dmgSHA256'], submissionID=record['submissionID'])
+    assess(app, log)
+    return result
+
+
+def verify_installed(app, dmg, proof, log=None):
+    """An app copied out of the DMG additionally requires that exact stapled DMG."""
+    if proof is not None:
+        validate_any(proof, sha256(dmg))
+        checked(['xcrun', 'stapler', 'validate', dmg], log)
+    return verify_copy(app, proof, log)
 
 
 def derived_diagnostic(installed, diagnostic, mode, tree, log=None):
@@ -230,6 +257,8 @@ def main():
     for name in ('--dmg', '--uploaded-dmg', '--app', '--pack', '--state', '--output', '--apple-log'):
         create.add_argument(name, required=True, type=Path)
     create.add_argument('--mode', required=True, choices=MODES)
+    assessment = commands.add_parser('assess')
+    assessment.add_argument('--app', required=True, type=Path)
     installed = commands.add_parser('verify-installed')
     for name in ('--app', '--dmg', '--proof'):
         installed.add_argument(name, required=True, type=Path)
@@ -240,6 +269,8 @@ def main():
     if args.operation == 'record':
         record(args.dmg, args.uploaded_dmg, args.app, args.pack, args.state, args.mode, args.output,
                args.apple_log, os.environ)
+    elif args.operation == 'assess':
+        assess(args.app)
     elif args.operation == 'verify-installed':
         print(json.dumps(verify_installed(args.app, args.dmg, load(args.proof)), sort_keys=True))
     else:

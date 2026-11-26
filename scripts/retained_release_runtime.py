@@ -6,10 +6,46 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
+import zipfile
 
 from reuse_bpy_binary_evidence import api, download
 from verify_diagnostic_candidate import verify_signed_workspace
 from workspace_native_ci import extract_transfer, runtime_receipt
+
+
+def release_notarization(run, jobs, source_sha):
+    """A sealed release app may be unstapled; its producer record carries the DMG ticket binding."""
+    if not any(job.get('name') == 'candidate-seal' for job in jobs['jobs']):
+        return None
+    from notarization_proof import SUMMARY_SCHEMA, validate_any
+    from retained_app_test_products import verify_artifact
+    release = next(job for job in jobs['jobs'] if job['name'] == 'release')
+    inventory = api(f"/actions/runs/{run['id']}/artifacts?name=release-workspace-producer&per_page=100")
+    if inventory.get('total_count') != 1 or len(inventory.get('artifacts', [])) != 1:
+        raise ValueError('The sealed release has no unique workspace producer record')
+    artifact = api('/actions/artifacts/' + str(inventory['artifacts'][0]['id']))
+    digest = str(artifact.get('digest', '')).removeprefix('sha256:')
+    if not re.fullmatch('[0-9a-f]{64}', digest) or not 0 < artifact.get('size_in_bytes', 0) <= 1024 * 1024:
+        raise ValueError('Invalid workspace producer artifact')
+    verify_artifact(artifact, run, release, artifact['id'], digest, 'release-workspace-producer')
+    with tempfile.TemporaryDirectory() as directory:
+        archive = Path(directory) / 'producer.zip'
+        download(artifact, archive)
+        if hashlib.sha256(archive.read_bytes()).hexdigest() != digest:
+            raise ValueError('Workspace producer archive changed')
+        with zipfile.ZipFile(archive) as bundle:
+            if bundle.namelist() != ['release-workspace-producer.json'] or bundle.infolist()[0].file_size > 100_000:
+                raise ValueError('Unexpected workspace producer archive')
+            producer = json.loads(bundle.read('release-workspace-producer.json'))
+    record = producer.get('notarization')
+    if (producer.get('sourceSHA') != source_sha or producer.get('runID') != str(run['id'])
+            or not isinstance(record, dict) or record.get('schema') != SUMMARY_SCHEMA):
+        raise ValueError('Workspace producer lacks the notarization of this sealed release')
+    validate_any(record, producer.get('dmgSHA256'))
+    return {'notarization': record, 'dmgSHA256': producer['dmgSHA256'], 'archiveSHA256': producer.get('archiveSHA256'),
+            'mountedAppTreeSHA256': producer.get('mountedAppTreeSHA256'), 'producerArtifactID': artifact['id'],
+            'producerArtifactSHA256': digest}
 
 
 def bind(run_id, source_sha, artifact_id, digest, *, verifier=None, packaging=None):
@@ -41,6 +77,10 @@ def bind(run_id, source_sha, artifact_id, digest, *, verifier=None, packaging=No
                  changedHarnessPaths=sorted(filter(None, changed.split('\0'))))
     if mounted is not None:
         proof['mountedInternalImage'] = mounted
+    else:
+        notarized = release_notarization(run, jobs, source_sha)
+        if notarized is not None:
+            proof['releaseNotarization'] = notarized
     if packaging_binding is not None:
         proof.update(schema='nexgenvideo/retained-release-runtime/2', packaging=packaging_binding)
     return artifact, proof
@@ -59,11 +99,17 @@ def validate_app(directory, source_sha, receipt, *, proof=None):
     pack = directory / 'plugins/musicvideo.ngvpack'
     if not pack.is_dir() or pack.is_symlink():
         raise ValueError('Original external Musicvideo pack is missing')
-    for arguments in (['codesign', '--verify', '--deep', '--strict', str(app)],
-                      ['xcrun', 'stapler', 'validate', str(app)],
-                      ['spctl', '-a', '-t', 'exec', str(app)]):
-        subprocess.run(arguments, check=True, stdin=subprocess.DEVNULL, timeout=120)
     mounted = (proof or {}).get('mountedInternalImage')
+    released = (proof or {}).get('releaseNotarization')
+    if released is not None and (receipt['archiveSHA256'] != released['archiveSHA256']
+                                 or identity['treeSHA256'] != released['mountedAppTreeSHA256']):
+        raise ValueError('Restored workspace differs from its notarized release producer')
+    record = mounted.get('notarization') if mounted is not None else (released or {}).get('notarization')
+    subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True, stdin=subprocess.DEVNULL, timeout=120)
+    import notarization_proof
+    proof_record = notarization_proof.verify_copy(app, record)
+    if proof is not None:
+        proof['appNotarization'] = proof_record
     if mounted is not None:
         if (identity != mounted['app'] or receipt['archiveSHA256'] != mounted['archiveSHA256']
                 or tree_sha256(pack) != mounted['mountedPackTreeSHA256']):

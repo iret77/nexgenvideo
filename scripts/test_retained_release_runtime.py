@@ -11,7 +11,9 @@ import app_cohort_v2
 from unittest.mock import patch
 import zipfile
 
+import notarization_proof
 import retained_release_runtime as runtime
+from test_notarization_proof import APP_HASH, FakeTools, sample_proof
 
 sys.path.insert(0, str(Path(__file__).parent / 'external-gui'))
 import acceptance as journey
@@ -27,10 +29,15 @@ class RetainedReleaseRuntimeTests(unittest.TestCase):
         receipt = {'appTreeSHA256': app['treeSHA256'], 'archiveSHA256': 'b' * 64}
         mounted = {'app': app, 'archiveSHA256': receipt['archiveSHA256'],
                    'mountedPackTreeSHA256': journey.tree_sha256(pack)}
-        with patch.object(journey, 'metadata', return_value=app), patch.object(runtime.subprocess, 'run') as commands:
+        with patch.object(journey, 'metadata', return_value=app), patch.object(runtime.subprocess, 'run') as commands, \
+                patch.object(notarization_proof, 'verify_copy', return_value={}) as notarized:
             self.assertEqual(runtime.validate_app(self.root, self.source, receipt,
                              proof={'mountedInternalImage': mounted}), app)
             self.assertIn(['xcrun', 'stapler', 'validate', str(pack)], [call.args[0] for call in commands.call_args_list])
+            self.assertEqual(notarized.call_args.args, (self.root / 'NexGenVideo.app', None))
+            sealed = dict(mounted, notarization=notarization_proof.summary(sample_proof()))
+            runtime.validate_app(self.root, self.source, receipt, proof={'mountedInternalImage': sealed})
+            self.assertEqual(notarized.call_args.args[1], sealed['notarization'])
             for key, replacement in [('mountedPackTreeSHA256', 'c' * 64), ('archiveSHA256', 'd' * 64),
                                      ('app', dict(app, CFBundleVersion='140'))]:
                 with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'mounted internal DMG'):
@@ -120,10 +127,12 @@ class RetainedReleaseRuntimeTests(unittest.TestCase):
                         patch.object(packaging, 'consumer_record', return_value=parent), patch.object(packaging, 'compiled_signed_product', return_value=True), \
                         patch.object(compiled, 'PACK_TREE', tree), patch.object(compiled, 'pack_verification_origin', return_value=origin), \
                         patch.object(journey, 'metadata', return_value=app), patch.object(app_cohort_v2, 'has_manifest', return_value=False), \
-                        patch.object(runtime.subprocess, 'run') as commands, patch('builtins.print'):
+                        patch.object(runtime.subprocess, 'run') as commands, patch('builtins.print'), \
+                        patch.object(notarization_proof, 'verify_copy', return_value={}) as notarized:
                     if changed == 'valid':
                         self.assertEqual(runtime.validate_app(directory, source, receipt, proof=proof), app)
-                        self.assertEqual([call.args[0][0] for call in commands.call_args_list], ['codesign', 'xcrun', 'spctl'])
+                        self.assertEqual([call.args[0][0] for call in commands.call_args_list], ['codesign'])
+                        notarized.assert_called_once()
                         self.assertEqual(proof['packVerificationReuse']['runtimeArtifactID'], 888)
                         self.assertEqual(proof['packVerificationReuse']['parent'], proof['packaging'])
                         self.assertFalse(proof['packVerificationReuse']['currentNativeCodesignOrStaplerPerformed'])
@@ -252,6 +261,73 @@ class RetainedReleaseRuntimeTests(unittest.TestCase):
             self.assertIn('--artifact-sha256 "$ORIGINAL_DIGEST"', workflow)
         self.assertIn('NGV_GIT_COMMIT: ${{ inputs.runtime_source_sha || github.sha }}', audio)
         self.assertIn("'harnessSHA': os.environ['GITHUB_SHA']", audio)
+
+    def test_dmg_only_workspace_app_is_proven_by_its_ticket_hash_and_enforced_gatekeeper(self):
+        app = self.root / 'NexGenVideo.app'
+        app.mkdir()
+        pack = self.root / 'plugins/musicvideo.ngvpack'
+        pack.mkdir(parents=True)
+        identity = {'treeSHA256': 'a' * 64}
+        record = notarization_proof.summary(sample_proof())
+        receipt = {'appTreeSHA256': 'a' * 64, 'archiveSHA256': 'b' * 64}
+        released = {'notarization': record, 'archiveSHA256': 'b' * 64, 'mountedAppTreeSHA256': 'a' * 64}
+        def validate(tools, proof):
+            with patch.object(journey, 'metadata', return_value=identity), patch.object(runtime.subprocess, 'run'), \
+                    patch.object(notarization_proof, 'run', side_effect=tools), patch('builtins.print'), \
+                    patch('compiled_app_release.verify_retained_runtime_pack', return_value=None):
+                return runtime.validate_app(self.root, self.source, receipt, proof=proof)
+        tools = FakeTools(self.root, {'NexGenVideo.app': APP_HASH})
+        proof = {'releaseNotarization': released}
+        self.assertEqual(validate(tools, proof), identity)
+        self.assertEqual(proof['appNotarization']['cdhash'], APP_HASH)
+        self.assertFalse(proof['appNotarization']['stapledApp'])
+        self.assertIn(['sudo', '-n', 'spctl', '--global-enable'], tools.calls)
+        for name in ('other-hash', 'gatekeeper-off', 'unstapled-legacy', 'other-archive'):
+            with self.subTest(name), self.assertRaises(ValueError):
+                tools = FakeTools(self.root, {'NexGenVideo.app': '7' * 40 if name == 'other-hash' else APP_HASH})
+                if name == 'gatekeeper-off': tools.enableable = False
+                case = {'releaseNotarization': dict(released, archiveSHA256='c' * 64)} if name == 'other-archive' else (
+                    {} if name == 'unstapled-legacy' else {'releaseNotarization': released})
+                validate(tools, case)
+        tools = FakeTools(self.root, {'NexGenVideo.app': APP_HASH})
+        tools.stapled.add(str(app))
+        self.assertEqual(validate(tools, {}), identity)
+
+    def test_sealed_release_binds_its_producer_notarization(self):
+        import io
+        record = notarization_proof.summary(sample_proof())
+        producer = {'sourceSHA': self.source, 'runID': '12', 'dmgSHA256': record['dmgSHA256'], 'archiveSHA256': 'b' * 64,
+                    'mountedAppTreeSHA256': 'a' * 64, 'notarization': record}
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, 'w') as bundle:
+            bundle.writestr('release-workspace-producer.json', json.dumps(producer))
+        data = stream.getvalue()
+        item = dict(self.artifact, id=35, name='release-workspace-producer', size_in_bytes=len(data),
+                    digest='sha256:' + hashlib.sha256(data).hexdigest())
+        self.jobs = dict(total_count=2, jobs=[*self.jobs['jobs'], dict(id=57, name='candidate-seal', status='completed',
+                         conclusion='success', run_id=12, run_attempt=1, head_sha=self.source)])
+        for changed in ('valid', 'source', 'summary'):
+            with self.subTest(changed=changed):
+                value = dict(producer, sourceSHA='f' * 40) if changed == 'source' else (
+                    dict(producer, notarization=sample_proof()) if changed == 'summary' else producer)
+                stream = io.BytesIO()
+                with zipfile.ZipFile(stream, 'w') as bundle:
+                    bundle.writestr('release-workspace-producer.json', json.dumps(value))
+                data = stream.getvalue()
+                item.update(size_in_bytes=len(data), digest='sha256:' + hashlib.sha256(data).hexdigest())
+                inventory = {'total_count': 1, 'artifacts': [{'id': 35}]}
+                with patch.object(runtime, 'api', side_effect=[self.run, self.jobs, self.artifact, inventory, item]), \
+                        patch.object(runtime, 'download', side_effect=lambda artifact, path: path.write_bytes(data)), \
+                        patch.object(app_cohort_v2, 'has_manifest', return_value=False), \
+                        patch.object(runtime.subprocess, 'run'), \
+                        patch.object(runtime.subprocess, 'check_output', side_effect=[b'scripts/retained_release_runtime.py\0', self.harness]):
+                    if changed == 'valid':
+                        _, proof = runtime.bind(12, self.source, 34, self.digest)
+                        self.assertEqual(proof['releaseNotarization']['notarization'], record)
+                        self.assertEqual(proof['releaseNotarization']['producerArtifactID'], 35)
+                    else:
+                        with self.assertRaises(ValueError):
+                            runtime.bind(12, self.source, 34, self.digest)
 
     def test_changed_app_tree_or_failed_signature_cannot_be_accepted(self):
         (self.root / 'plugins/musicvideo.ngvpack').mkdir(parents=True)
