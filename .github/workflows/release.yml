@@ -123,6 +123,7 @@ jobs:
     outputs:
       publication-resumed: ${{ steps.publication-state.outputs.resumed }}
       pipeline: ${{ steps.pipeline.outputs.pipeline }}
+      expected-build: ${{ steps.expected-build.outputs.build }}
       restored-build-run: ${{ steps.prior-notary.outputs.build_run_id }}
       product-source-sha: ${{ steps.retained-product.outputs.product_source_sha || github.sha }}
     permissions:
@@ -224,6 +225,16 @@ jobs:
           fetch-depth: 0
 
       - uses: ./.github/actions/setup-macos-source
+      - name: Derive the expected build number from the source tree
+        id: expected-build
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import plistlib
+          from pathlib import Path
+          current = int(plistlib.loads(Path('Sources/NexGenVideo/Resources/Info.plist').read_bytes())['CFBundleVersion'])
+          print(f'build={current + 1}')
+          PY
+
       - name: Validate every retained product selector before publication or runner allocation
         run: python3 scripts/retained_packaging.py validate-inputs
 
@@ -1482,6 +1493,13 @@ jobs:
         if: env.NGV_PARALLEL_CANDIDATE == 'true' && inputs.internal_image_only
         run: python3 scripts/prepare_release_onnx.py
 
+      - name: Resolve the locked release dependencies
+        if: env.NGV_PARALLEL_CANDIDATE == 'true' && inputs.internal_image_only
+        timeout-minutes: 10
+        run: |
+          swift package --cache-path "$NGV_SWIFTPM_CACHE_PATH" --force-resolved-versions resolve
+          git diff --exit-code -- Package.swift Package.resolved
+
       - name: Record release compiler configuration
         if: env.NGV_PARALLEL_CANDIDATE == 'true'
         run: |
@@ -1923,14 +1941,20 @@ jobs:
           if-no-files-found: ignore
           retention-days: 90
 
+      - name: Prove the DMG ticket covers the exact app and pack
+        if: inputs.retained_product_source_sha == '' && inputs.compiled_app_targets_json == ''
+        run: |
+          python3 scripts/notarization_proof.py record --dmg .build/NexGenVideo.dmg \
+            --uploaded-dmg "$RUNNER_TEMP/release-dmg-input/NexGenVideo.dmg" --app .build/NexGenVideo.app \
+            --pack .build/plugins/musicvideo.ngvpack --state "$NOTARY_STATE_DIR" --mode "$NGV_NOTARY_MODE" \
+            --output .build/notarization-proof.json --apple-log .build/notarization-dmg-log.json
+
       - name: Assess and launch the stapled DMG app offline
         id: offline-gatekeeper
         if: inputs.retained_product_source_sha == '' && inputs.compiled_app_targets_json == ''
         timeout-minutes: 15
         run: |
-          set -euo pipefail
-          python3 scripts/offline_gatekeeper.py check --dmg .build/NexGenVideo.dmg \
-            --dmg-sha256 "$(shasum -a 256 .build/NexGenVideo.dmg | awk '{print $1}')" \
+          python3 scripts/offline_gatekeeper.py check --dmg .build/NexGenVideo.dmg --proof .build/notarization-proof.json \
             --evidence .build/offline-gatekeeper.json --home "$RUNNER_TEMP/nexgenvideo-test-home"
 
       - name: Restore outbound network after the offline check
@@ -1946,14 +1970,6 @@ jobs:
           path: .build/offline-gatekeeper.json
           if-no-files-found: error
           retention-days: 90
-
-      - name: Prove the DMG ticket covers the exact app and pack
-        if: inputs.retained_product_source_sha == '' && inputs.compiled_app_targets_json == ''
-        run: |
-          python3 scripts/notarization_proof.py record --dmg .build/NexGenVideo.dmg \
-            --uploaded-dmg "$RUNNER_TEMP/release-dmg-input/NexGenVideo.dmg" --app .build/NexGenVideo.app \
-            --pack .build/plugins/musicvideo.ngvpack --state "$NOTARY_STATE_DIR" --mode "$NGV_NOTARY_MODE" \
-            --output .build/notarization-proof.json --apple-log .build/notarization-dmg-log.json
 
       - name: Staple the DMG ticket to the runtime app copy
         if: env.NGV_NOTARY_MODE == 'dmg-only'
@@ -2085,12 +2101,16 @@ jobs:
         env:
           HOME: ${{ runner.temp }}/nexgenvideo-test-home
           CFFIXED_USER_HOME: ${{ runner.temp }}/nexgenvideo-test-home
+          EXPECTED_BUILD: ${{ needs.release-gate.outputs.expected-build }}
+          EXPECTED_VERSION: ${{ inputs.version }}
         run: |
+          set -euo pipefail
           python3 scripts/verify_release_image.py --app "$NGV_RELEASE_INSTALL_CHECK/NexGenVideo.app" \
             --pack "$NGV_RELEASE_PACK_BUNDLE" --dmg .build/NexGenVideo.dmg --proof .build/notarization-proof.json \
             --diagnostic-app .build/NexGenVideo.app --evidence .build/release-image-check.json \
             --log .build/release-image-check.log --home "$HOME" \
-            --version "$REL_VERSION" --build "$BUILD_NUMBER" --source-sha "$NGV_CHECKED_PRODUCT_SOURCE"
+            --version "$EXPECTED_VERSION" --build "$EXPECTED_BUILD" --source-sha "$NGV_CHECKED_PRODUCT_SOURCE" \
+            --dmg-sha256 "$(jq -r .dmgSHA256 .build/notarization-proof.json)"
 
       - name: Verify DMG checks did not mutate tracked source
         run: |

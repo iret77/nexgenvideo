@@ -133,6 +133,14 @@ class ReleaseImageTests(unittest.TestCase):
                 result = self.check(root, app, pack, dmg, tools, proof, expected, launched=name != 'launch')
                 self.assertFalse(result['passed'])
 
+    def test_dmg_must_match_the_independently_bound_hash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app, pack, dmg, tools, proof, expected = self.fixture(root)
+            expected['dmgSHA256'] = '0' * 64
+            with self.assertRaisesRegex(ValueError, 'notarized DMG'):
+                self.check(root, app, pack, dmg, tools, proof, expected)
+
     def test_disabled_gatekeeper_cannot_satisfy_the_assessment(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

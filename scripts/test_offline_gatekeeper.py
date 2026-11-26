@@ -10,8 +10,8 @@ import offline_gatekeeper as offline
 
 
 class FakeVM:
-    def __init__(self, variant):
-        self.variant, self.calls, self.blocked = variant, [], False
+    def __init__(self, variant, test):
+        self.variant, self.test, self.calls, self.blocked = variant, test, [], False
 
     def __call__(self, arguments, log, timeout=120, input_text=None):
         arguments = [str(item) for item in arguments]
@@ -33,7 +33,8 @@ class FakeVM:
         if command[0] == 'curl':
             if command[-1] == offline.RESTORE_PROBE and not self.blocked:
                 return (7, 'unreachable') if self.variant == 'network-not-restored' else (0, '')
-            reachable = self.variant == 'reachable' and command[-1] == 'https://ocsp.apple.com/'
+            reachable = self.variant == 'reachable' and command[-1] == 'https://api.apple-cloudkit.com/' and command[0] == 'curl'
+            self.test.assertEqual(command[command.index('--max-time') + 1], offline.PROBE_SECONDS)
             return (0, '') if reachable or not self.blocked else (28, 'timed out')
         if command[:2] == ['spctl', '--status']:
             return 0, 'assessments enabled'
@@ -50,7 +51,10 @@ class FakeVM:
             return 1, 'No such xattr'
         if command[:2] == ['codesign', '-d']:
             return 0, 'CDHash=' + 'a' * 40 + '\n'
-        if command[0] in ('ditto', 'xattr', 'codesign', 'hdiutil'):
+        if command[0] == 'hdiutil' or (command[0] == 'ditto' and 'volume' in arguments[1]):
+            self.test.assertFalse(self.blocked, 'the DMG is mounted and copied before the network is blocked')
+            return 0, ''
+        if command[0] in ('ditto', 'xattr', 'codesign'):
             return 0, ''
         raise AssertionError(arguments)
 
@@ -59,15 +63,15 @@ class OfflineGatekeeperTests(unittest.TestCase):
     def test_rules_keep_loopback_and_drop_apple_and_every_new_connection(self):
         rules = offline.rules().splitlines()
         self.assertEqual(rules[0], 'pass quick on lo0 all')
-        for rule in ('block drop quick inet from any to 17.0.0.0/8', 'block drop quick inet from 17.0.0.0/8 to any',
-                     'block drop out quick proto udp all', 'block drop out quick proto tcp all flags S/SA'):
+        for rule in ('block return out quick inet from any to 17.0.0.0/8', 'block drop in quick inet from 17.0.0.0/8 to any',
+                     'block return out quick proto udp all', 'block return out quick proto tcp all flags S/SA'):
             self.assertIn(rule, rules)
-        self.assertTrue(any(rule.startswith('block drop quick inet6 from any to {') and '2620:149::/32' in rule
+        self.assertTrue(any(rule.startswith('block return out quick inet6 from any to {') and '2620:149::/32' in rule
                             for rule in rules))
         self.assertFalse(any(rule.startswith('pass') for rule in rules[1:]))
 
     def run_check(self, variant):
-        vm = FakeVM(variant)
+        vm = FakeVM(variant, self)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             dmg = root / 'NexGenVideo.dmg'
@@ -83,7 +87,9 @@ class OfflineGatekeeperTests(unittest.TestCase):
             with patch.object(offline, 'run', side_effect=vm), patch.object(offline.time, 'sleep'), \
                     patch.object(offline.subprocess, 'run', side_effect=launched):
                 try:
-                    offline.check(dmg, hashlib.sha256(b'stapled dmg').hexdigest(), evidence, root / 'home')
+                    offline.check(dmg, {'dmgSHA256': hashlib.sha256(b'stapled dmg').hexdigest(),
+                                        'app': {'cdhash': 'b' * 40 if variant == 'other-app' else 'a' * 40}},
+                                  evidence, root / 'home')
                 except SystemExit as exit_error:
                     error = str(exit_error)
             return vm, error, json.loads(evidence.read_text())
@@ -100,13 +106,16 @@ class OfflineGatekeeperTests(unittest.TestCase):
     def test_failures_name_their_cause_and_always_release_the_block(self):
         for variant, kind in (('reachable', 'infrastructure'), ('enforcement-off', 'infrastructure'),
                               ('rejected-app', 'gatekeeper'), ('launch-fails', 'gatekeeper'),
-                              ('network-not-restored', 'infrastructure')):
+                              ('network-not-restored', 'infrastructure'), ('other-app', 'infrastructure')):
             with self.subTest(variant=variant):
                 vm, error, record = self.run_check(variant)
                 self.assertIsNotNone(error)
                 self.assertFalse(record['passed'])
                 self.assertEqual(record['failure']['kind'], kind)
-                self.assertIn(['sudo', '-n', 'pfctl', '-a', offline.ANCHOR, '-F', 'all'], vm.calls)
+                if variant == 'other-app':
+                    self.assertFalse(any('pfctl' in call for call in vm.calls))
+                else:
+                    self.assertIn(['sudo', '-n', 'pfctl', '-a', offline.ANCHOR, '-F', 'all'], vm.calls)
                 if kind == 'gatekeeper':
                     self.assertIn('notarize_app_separately=true', error)
                     self.assertTrue(record['offlineConditionProven'])
@@ -114,12 +123,13 @@ class OfflineGatekeeperTests(unittest.TestCase):
                     self.assertIn('could not run', error)
 
     def test_foreign_dmg_is_rejected_before_the_network_changes(self):
-        vm = FakeVM('pass')
+        vm = FakeVM('pass', self)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'NexGenVideo.dmg').write_bytes(b'another dmg')
             with patch.object(offline, 'run', side_effect=vm), self.assertRaises(SystemExit):
-                offline.check(root / 'NexGenVideo.dmg', '0' * 64, root / 'offline.json', root)
+                offline.check(root / 'NexGenVideo.dmg', {'dmgSHA256': '0' * 64, 'app': {'cdhash': 'a' * 40}},
+                              root / 'offline.json', root)
         self.assertFalse(any('pfctl' in call for call in vm.calls))
 
 

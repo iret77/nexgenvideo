@@ -149,6 +149,7 @@ def check(app, pack, dmg, expected, proof, diagnostic, home, log):
         checked(['xcrun', 'stapler', 'validate', diagnostic], log)
         require(notarization_proof.signature(diagnostic)['cdhash'] == proof['app']['cdhash'],
                 'Diagnostic app is not the notarized DMG app')
+    require(notarization_proof.sha256(dmg) == expected['dmgSHA256'], 'The DMG differs from the notarized DMG')
     installed = notarization_proof.verify_installed(app, dmg, proof, log)
     notarization_proof.assess(dmg, log, kind='open')
     with tempfile.TemporaryDirectory(prefix='ngv-image-pack-') as directory:
@@ -180,11 +181,12 @@ def main():
     for name in ('--app', '--pack', '--dmg', '--proof', '--evidence', '--home', '--log'):
         parser.add_argument(name, required=True, type=Path)
     parser.add_argument('--diagnostic-app', type=Path)
-    for name in ('--version', '--build', '--source-sha'):
+    for name in ('--version', '--build', '--source-sha', '--dmg-sha256'):
         parser.add_argument(name, required=True)
     args = parser.parse_args()
     proof = notarization_proof.load(args.proof)
-    expected = {'version': args.version, 'build': args.build, 'sourceSHA': args.source_sha, 'notaryMode': proof['mode']}
+    expected = {'version': args.version, 'build': args.build, 'sourceSHA': args.source_sha, 'notaryMode': proof['mode'],
+                'dmgSHA256': args.dmg_sha256}
     result = check(args.app, args.pack, args.dmg, expected, proof, args.diagnostic_app, args.home, args.log)
     args.evidence.write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
     for failure in result['failures']:

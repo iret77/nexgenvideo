@@ -199,11 +199,13 @@ then `release` sequence with embedded test evidence.
 Only the DMG is submitted to Apple; Apple issues tickets for the DMG and every
 nested code object. The Apple log must list the cdhash of the app, the pack and each
 own binary before the workflow staples the app runtime copy. Before any online
-assessment, the disposable VM blocks outbound connections with a pf anchor, proves
-that Apple and GitHub are unreachable and that Gatekeeper rejects an unnotarized
-control, then assesses the quarantined DMG, copies the app and pack out of it and
-launches the pack self-test. A failure names the fallback input
-`notarize_app_separately`, which restores the separate App submission and staple.
+assessment, the disposable VM copies the quarantined app and pack out of the DMG,
+then blocks outbound connections with a pf anchor for about a minute: it proves that
+Apple and GitHub are unreachable and that Gatekeeper rejects an unnotarized control,
+then assesses the quarantined DMG and app and launches the pack self-test. A failure
+names the fallback input `notarize_app_separately`, which restores the separate App
+submission and staple. Every Gatekeeper assessment first enables assessments, which
+macrunner images ship disabled, and rejects an override verdict.
 A scripted image check then compares the installed copy with fixed expectations:
 arm64-only own binaries, macOS 26.0 floor, version, build, source, team, hardened
 runtime, tickets, Gatekeeper assessments and a quarantined pack load.

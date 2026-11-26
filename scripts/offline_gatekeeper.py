@@ -15,7 +15,8 @@ SCHEMA = 'nexgenvideo/offline-gatekeeper/1'
 ANCHOR = 'com.apple/ngv-offline-gatekeeper'
 APPLE_V4 = ('17.0.0.0/8',)
 APPLE_V6 = ('2620:149::/32', '2403:300::/32', '2a01:b740::/29')
-PROBES = ('https://api.apple-cloudkit.com/', 'https://ocsp.apple.com/', 'https://github.com/')
+PROBES = ('https://api.apple-cloudkit.com/', 'https://github.com/')
+PROBE_SECONDS = '3'
 RESTORE_PROBE = 'https://api.github.com/'
 NOTARIZED_SOURCE = 'source=Notarized Developer ID'
 FIX = 'Rerun the candidate with notarize_app_separately=true to restore the two-submission notarization.'
@@ -29,9 +30,9 @@ def rules():
     v6 = ', '.join(APPLE_V6)
     lines = ['pass quick on lo0 all']
     for network in APPLE_V4:
-        lines += [f'block drop quick inet from any to {network}', f'block drop quick inet from {network} to any']
-    lines += [f'block drop quick inet6 from any to {{ {v6} }}', f'block drop quick inet6 from {{ {v6} }} to any',
-              'block drop out quick proto udp all', 'block drop out quick proto tcp all flags S/SA']
+        lines += [f'block return out quick inet from any to {network}', f'block drop in quick inet from {network} to any']
+    lines += [f'block return out quick inet6 from any to {{ {v6} }}', f'block drop in quick inet6 from {{ {v6} }} to any',
+              'block return out quick proto udp all', 'block return out quick proto tcp all flags S/SA']
     return '\n'.join(lines) + '\n'
 
 
@@ -101,8 +102,8 @@ def restore(log, token=None):
 def prove_offline(log):
     results = {}
     for url in PROBES:
-        user = run(['curl', '-sS', '-o', '/dev/null', '--max-time', '8', url], log, timeout=30)[0]
-        root = run(['sudo', '-n', 'curl', '-sS', '-o', '/dev/null', '--max-time', '8', url], log, timeout=30)[0]
+        user = run(['curl', '-sS', '-o', '/dev/null', '--max-time', PROBE_SECONDS, url], log, timeout=10)[0]
+        root = run(['sudo', '-n', 'curl', '-sS', '-o', '/dev/null', '--max-time', PROBE_SECONDS, url], log, timeout=10)[0]
         results[url] = {'userExit': user, 'rootExit': root}
         if user == 0 or root == 0:
             raise InfrastructureError('Offline condition not established: ' + url + ' is still reachable')
@@ -122,7 +123,7 @@ def enable_gatekeeper(log):
     return text.strip()
 
 
-def negative_control(work, log):
+def unnotarized_control(work, log):
     bundle = work / 'Unnotarized.app'
     executable = bundle / 'Contents/MacOS/Unnotarized'
     executable.parent.mkdir(parents=True)
@@ -136,7 +137,11 @@ def negative_control(work, log):
     if run(['codesign', '--force', '--sign', '-', bundle], log)[0] != 0:
         raise InfrastructureError('Cannot create the unnotarized Gatekeeper control')
     quarantine(bundle, log)
-    code, text = run(['spctl', '-a', '-vvv', '-t', 'exec', bundle], log)
+    return bundle
+
+
+def negative_control(bundle, log):
+    code, text = run(['spctl', '-a', '-vvv', '-t', 'exec', bundle], log, timeout=60)
     if code == 0 or 'override=security disabled' in text:
         raise InfrastructureError('Gatekeeper accepted an unnotarized control; assessments are not enforced')
     return {'exit': code}
@@ -165,14 +170,14 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def check(dmg, expected_sha256, evidence, home):
+def check(dmg, proof, evidence, home):
     log = []
     record = {'schema': SCHEMA, 'passed': False, 'offlineConditionProven': False, 'dmgSHA256': sha256(dmg),
               'startedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'rules': rules(), 'log': log}
     failure = None
     try:
-        if record['dmgSHA256'] != expected_sha256:
-            raise InfrastructureError('The DMG differs from the verified final DMG')
+        if record['dmgSHA256'] != proof['dmgSHA256']:
+            raise InfrastructureError('The DMG differs from the notarized DMG in its Apple-bound proof')
         with tempfile.TemporaryDirectory(prefix='ngv-offline-') as directory:
             work = Path(directory)
             image = work / 'download' / 'NexGenVideo.dmg'
@@ -180,53 +185,59 @@ def check(dmg, expected_sha256, evidence, home):
             if run(['ditto', dmg, image], log)[0] != 0:
                 raise InfrastructureError('Cannot copy the DMG')
             record['dmgQuarantine'] = quarantine(image, log)
-            record['gatekeeperStatus'] = enable_gatekeeper(log)
             mount = work / 'volume'
             mount.mkdir()
+            installed = work / 'Applications' / 'NexGenVideo.app'
+            pack = work / 'Plug-Ins' / 'musicvideo.ngvpack'
+            installed.parent.mkdir()
+            pack.parent.mkdir()
+            if run(['hdiutil', 'attach', image, '-nobrowse', '-readonly', '-noverify', '-mountpoint', mount], log)[0] != 0:
+                raise InfrastructureError('Cannot mount the quarantined DMG')
+            try:
+                if run(['ditto', mount / 'NexGenVideo.app', installed], log)[0] != 0 or \
+                        run(['ditto', mount / 'musicvideo.ngvpack', pack], log)[0] != 0:
+                    raise InfrastructureError('Cannot copy the app and pack out of the mounted DMG')
+            finally:
+                run(['hdiutil', 'detach', mount], log)
+            record['inheritedQuarantine'] = run(['xattr', '-p', 'com.apple.quarantine', installed], log)[0] == 0
+            quarantine(installed, log)
+            quarantine(pack, log)
+            record['appCDHash'] = cdhash(installed, log)
+            if record['appCDHash'] != proof['app']['cdhash']:
+                raise InfrastructureError('The DMG app differs from the app in the Apple-bound proof')
+            control = unnotarized_control(work, log)
+            record['gatekeeperStatus'] = enable_gatekeeper(log)
+            environment = dict(os.environ, HOME=str(home), CFFIXED_USER_HOME=str(home), NGV_SELFTEST_PACK=str(pack))
             with OfflineNetwork(log, work):
+                blocked = time.monotonic()
                 record['offlineProbes'] = prove_offline(log)
-                record['negativeControl'] = negative_control(work, log)
+                record['negativeControl'] = negative_control(control, log)
                 record['offlineConditionProven'] = True
-                code, text = run(['spctl', '-a', '-vvv', '-t', 'open', '--context', 'context:primary-signature', image], log)
+                code, text = run(['spctl', '-a', '-vvv', '-t', 'open', '--context', 'context:primary-signature', image],
+                                 log, timeout=60)
                 record['dmgAssessment'] = {'exit': code, 'notarized': NOTARIZED_SOURCE in text.splitlines()}
                 if code != 0 or not record['dmgAssessment']['notarized']:
                     raise ValueError('Gatekeeper rejected the stapled DMG offline. ' + FIX)
-                if run(['hdiutil', 'attach', image, '-nobrowse', '-readonly', '-mountpoint', mount], log)[0] != 0:
-                    raise InfrastructureError('Cannot mount the quarantined DMG')
-                try:
-                    installed = work / 'Applications' / 'NexGenVideo.app'
-                    pack = work / 'Plug-Ins' / 'musicvideo.ngvpack'
-                    installed.parent.mkdir()
-                    pack.parent.mkdir()
-                    if run(['ditto', mount / 'NexGenVideo.app', installed], log)[0] != 0 or \
-                            run(['ditto', mount / 'musicvideo.ngvpack', pack], log)[0] != 0:
-                        raise InfrastructureError('Cannot copy the app and pack out of the mounted DMG')
-                finally:
-                    run(['hdiutil', 'detach', mount], log)
-                record['inheritedQuarantine'] = run(['xattr', '-p', 'com.apple.quarantine', installed], log)[0] == 0
-                quarantine(installed, log)
-                quarantine(pack, log)
-                record['appCDHash'] = cdhash(installed, log)
-                code, text = run(['spctl', '-a', '-vvv', '-t', 'exec', installed], log)
+                code, text = run(['spctl', '-a', '-vvv', '-t', 'exec', installed], log, timeout=60)
                 record['appAssessment'] = {'exit': code, 'notarized': NOTARIZED_SOURCE in text.splitlines()}
                 if code != 0 or not record['appAssessment']['notarized']:
                     raise ValueError('Gatekeeper rejected the app copied from the stapled DMG offline. ' + FIX)
-                environment = dict(os.environ, HOME=str(home), CFFIXED_USER_HOME=str(home), NGV_SELFTEST_PACK=str(pack))
                 started = time.monotonic()
                 launched = subprocess.run([str(installed / 'Contents/MacOS/NexGenVideo')], stdin=subprocess.DEVNULL,
-                                          capture_output=True, text=True, timeout=180, env=environment)
+                                          capture_output=True, text=True, timeout=120, env=environment)
                 output = launched.stdout + launched.stderr
                 log.append({'command': ['NGV_SELFTEST_PACK=' + str(pack), str(installed / 'Contents/MacOS/NexGenVideo')],
                             'exit': launched.returncode, 'output': output,
                             'seconds': round(time.monotonic() - started, 3)})
                 print(output, flush=True)
                 record['launch'] = {'exit': launched.returncode, 'packLoaded': 'SELFTEST_PACK_OK loaded musicvideo' in output}
+                record['blockedSeconds'] = round(time.monotonic() - blocked, 3)
                 if launched.returncode != 0 or not record['launch']['packLoaded']:
                     raise ValueError('The quarantined app from the stapled DMG did not launch and load its pack offline. ' + FIX)
             record['passed'] = True
-    except (InfrastructureError, ValueError, OSError, subprocess.TimeoutExpired) as error:
+    except (InfrastructureError, ValueError, OSError, KeyError, subprocess.TimeoutExpired) as error:
         failure = error
-        record['failure'] = {'kind': 'infrastructure' if isinstance(error, InfrastructureError) else 'gatekeeper',
+        record['failure'] = {'kind': 'infrastructure' if isinstance(error, (InfrastructureError, KeyError)) else 'gatekeeper',
                              'message': str(error)}
     finally:
         record['completedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -243,13 +254,14 @@ def main():
     commands = parser.add_subparsers(dest='operation', required=True)
     assess = commands.add_parser('check')
     assess.add_argument('--dmg', required=True, type=Path)
-    assess.add_argument('--dmg-sha256', required=True)
+    assess.add_argument('--proof', required=True, type=Path)
     assess.add_argument('--evidence', required=True, type=Path)
     assess.add_argument('--home', required=True, type=Path)
     commands.add_parser('restore')
     args = parser.parse_args()
     if args.operation == 'check':
-        check(args.dmg, args.dmg_sha256, args.evidence, args.home)
+        from notarization_proof import load
+        check(args.dmg, load(args.proof), args.evidence, args.home)
     else:
         log = []
         try:

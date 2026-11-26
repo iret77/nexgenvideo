@@ -425,6 +425,35 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
         switch = workflow[True]["workflow_dispatch"]["inputs"]["notarize_app_separately"]
         self.assertEqual((switch["type"], switch["default"]), ("boolean", False))
 
+    def test_image_expectations_and_locks_do_not_come_from_the_build(self):
+        workflow = self.workflow()
+        gate = {step.get("name"): step for step in workflow["jobs"]["release-gate"]["steps"]}
+        derive = gate["Derive the expected build number from the source tree"]["run"]
+        script = derive.split("<<'PY' >> \"$GITHUB_OUTPUT\"\n", 1)[1].rsplit("\nPY", 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Sources/NexGenVideo/Resources").mkdir(parents=True)
+            (root / "Sources/NexGenVideo/Resources/Info.plist").write_bytes(plistlib.dumps({"CFBundleVersion": "141"}))
+            result = subprocess.run([sys.executable, "-c", script], cwd=root, capture_output=True, text=True, check=True)
+            self.assertEqual(result.stdout, "build=142\n")
+        self.assertEqual(workflow["jobs"]["release-gate"]["outputs"]["expected-build"], "${{ steps.expected-build.outputs.build }}")
+        steps = {step.get("name"): step for step in workflow["jobs"]["release"]["steps"]}
+        image = steps["Check the installed image against fixed release expectations"]
+        self.assertEqual(image["env"]["EXPECTED_BUILD"], "${{ needs.release-gate.outputs.expected-build }}")
+        self.assertEqual(image["env"]["EXPECTED_VERSION"], "${{ inputs.version }}")
+        for fragment in ('--build "$EXPECTED_BUILD"', '--version "$EXPECTED_VERSION"',
+                         '--dmg-sha256 "$(jq -r .dmgSHA256 .build/notarization-proof.json)"'):
+            self.assertIn(fragment, image["run"])
+        self.assertNotIn("$BUILD_NUMBER", image["run"])
+        self.assertIn("--proof .build/notarization-proof.json", steps["Assess and launch the stapled DMG app offline"]["run"])
+        lock = steps["Resolve the locked release dependencies"]
+        self.assertTrue(condition_enabled(lock["if"], True, True, internal_image_only=True))
+        self.assertFalse(condition_enabled(lock["if"], True, True, internal_image_only=True, compiled_targets="{}"))
+        self.assertIn("--force-resolved-versions resolve", lock["run"])
+        self.assertIn("git diff --exit-code -- Package.swift Package.resolved", lock["run"])
+        names = list(steps)
+        self.assertLess(names.index("Resolve the locked release dependencies"), names.index("Build and sign app"))
+
     def test_pipeline_and_notarization_mode_come_from_the_dispatch(self):
         workflow = self.workflow()
         gate = {step.get("name"): step for step in workflow["jobs"]["release-gate"]["steps"]}["Select the candidate pipeline"]
@@ -455,8 +484,8 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
         order = ["Start the single qualified bpy source acquisition", "Build and sign app",
                  "Verify the qualified bpy corresponding source", "Record signed build before notarization",
                  "Retain signed build input", "Adopt the recorded signed build", "Build and sign DMG",
-                 "Notarize and staple DMG", "Assess and launch the stapled DMG app offline",
-                 "Restore outbound network after the offline check", "Prove the DMG ticket covers the exact app and pack",
+                 "Notarize and staple DMG", "Prove the DMG ticket covers the exact app and pack",
+                 "Assess and launch the stapled DMG app offline", "Restore outbound network after the offline check",
                  "Staple the DMG ticket to the runtime app copy", "Verify the exact DMG users install",
                  "Check the installed image against fixed release expectations",
                  "Transfer the verified installed DMG app for workspace acceptance",
