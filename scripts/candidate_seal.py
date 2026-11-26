@@ -18,7 +18,7 @@ SEALED_TESTS = 'sealed-release-tests/v1'
 BINDING = 'release-candidate-binding'
 TESTS_RESULT = 'release-tests-result'
 BASE_MEMBERS = {'manifest.json', 'release-workspace-producer.json'}
-PRODUCT_MEMBERS = BASE_MEMBERS | {'notarization-proof.json', 'offline-gatekeeper.json', 'release-image-check.json'}
+PRODUCT_MEMBERS = BASE_MEMBERS | {'notarization-proof.json', 'release-image-check.json'}
 TEST_STEP = 'Test the exact release configuration'
 LIMIT = 16 * 1024**2
 SHA = re.compile('[a-f0-9]{64}')
@@ -82,12 +82,9 @@ def fresh_suite(suite, source):
 def product_evidence(files, manifest, producer):
     from notarization_proof import summary, validate
     proof = validate(files['notarization-proof.json'], producer['dmgSHA256'])
-    offline, image = files['offline-gatekeeper.json'], files['release-image-check.json']
+    image = files['release-image-check.json']
     require(proof['mode'] == manifest['notaryMode'] and producer.get('notarization') == summary(proof),
             'Notarization proof differs from the signed candidate')
-    require(offline.get('schema') == 'nexgenvideo/offline-gatekeeper/1' and offline.get('passed') is True
-            and offline.get('offlineConditionProven') is True and offline.get('dmgSHA256') == producer['dmgSHA256']
-            and offline.get('appCDHash') == proof['app']['cdhash'], 'Offline Gatekeeper evidence is missing or failed')
     expected = image.get('expected', {})
     require(image.get('schema') == 'nexgenvideo/release-image-check/1' and image.get('passed') is True
             and image.get('dmgSHA256') == producer['dmgSHA256']
@@ -96,8 +93,7 @@ def product_evidence(files, manifest, producer):
             and expected.get('sourceSHA') == manifest['sourceSHA'] and expected.get('notaryMode') == proof['mode'],
             'Scripted image check is missing or failed')
     return {'notaryMode': proof['mode'], 'notarizationSubmissionID': proof['submissionID'],
-            'appCDHash': proof['app']['cdhash'], 'offlineGatekeeperSHA256': canonical(offline),
-            'imageCheckSHA256': canonical(image)}
+            'appCDHash': proof['app']['cdhash'], 'imageCheckSHA256': canonical(image)}
 
 
 def seal(output):

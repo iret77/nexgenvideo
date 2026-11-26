@@ -11,7 +11,7 @@ import zipfile
 
 import candidate_seal as seal
 from notarization_proof import summary
-from test_notarization_proof import APP_HASH, sample_proof
+from test_notarization_proof import sample_proof
 
 
 SOURCE = 'a' * 40
@@ -44,8 +44,6 @@ class Producer:
         if not embedded:
             self.binding.update({
                 'notarization-proof.json': proof,
-                'offline-gatekeeper.json': {'schema': 'nexgenvideo/offline-gatekeeper/1', 'passed': True,
-                                            'offlineConditionProven': True, 'dmgSHA256': DMG, 'appCDHash': APP_HASH},
                 'release-image-check.json': {'schema': 'nexgenvideo/release-image-check/1', 'passed': True,
                                              'dmgSHA256': DMG, 'expected': {'build': '141', 'version': '1.8.0',
                                                                             'sourceSHA': SOURCE, 'notaryMode': 'dmg-only'}}})
@@ -129,15 +127,16 @@ class CandidateSealTests(unittest.TestCase):
         def foreign_suite(producer): producer.suite['sourceSHA'] = 'b' * 40
         def filtered_suite(producer): producer.suite['filter'] = 'NexGenVideoTests.Only'
         def reused_suite(producer): producer.suite['phases'] = [{'reusedFrom': 1}]
-        def missing_offline(producer): producer.binding.pop('offline-gatekeeper.json')
-        def offline_failed(producer): producer.binding['offline-gatekeeper.json']['passed'] = False
+        def missing_image(producer): producer.binding.pop('release-image-check.json')
+        def image_failed(producer): producer.binding['release-image-check.json']['passed'] = False
+        def stray_offline(producer): producer.binding['offline-gatekeeper.json'] = {'passed': True}
         def image_build(producer): producer.binding['release-image-check.json']['expected']['build'] = '140'
         def other_dmg(producer): producer.binding['release-workspace-producer.json']['dmgSHA256'] = 'c' * 64
         def mode_mismatch(producer): producer.binding['manifest.json']['notaryMode'] = 'app-and-dmg'
         def release_failed(producer): producer.jobs[RUN][1]['conclusion'] = 'failure'
         def foreign_label(producer): producer.jobs[RUN][-1]['labels'] = ['ubuntu-24.04']
-        for change in (failed_tests, cancelled_tests, foreign_suite, filtered_suite, reused_suite, missing_offline,
-                       offline_failed, image_build, other_dmg, mode_mismatch, release_failed, foreign_label):
+        for change in (failed_tests, cancelled_tests, foreign_suite, filtered_suite, reused_suite, missing_image,
+                       image_failed, stray_offline, image_build, other_dmg, mode_mismatch, release_failed, foreign_label):
             with self.subTest(change=change.__name__), tempfile.TemporaryDirectory() as directory:
                 producer = Producer()
                 change(producer)

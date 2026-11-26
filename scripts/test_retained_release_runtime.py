@@ -13,7 +13,7 @@ import zipfile
 
 import notarization_proof
 import retained_release_runtime as runtime
-from test_notarization_proof import APP_HASH, FakeTools, sample_proof
+from test_notarization_proof import APP_HASH, PACK_HASH, FakeTools, sample_proof
 
 sys.path.insert(0, str(Path(__file__).parent / 'external-gui'))
 import acceptance as journey
@@ -262,7 +262,7 @@ class RetainedReleaseRuntimeTests(unittest.TestCase):
         self.assertIn('NGV_GIT_COMMIT: ${{ inputs.runtime_source_sha || github.sha }}', audio)
         self.assertIn("'harnessSHA': os.environ['GITHUB_SHA']", audio)
 
-    def test_dmg_only_workspace_app_is_proven_by_its_ticket_hash_and_enforced_gatekeeper(self):
+    def test_dmg_only_workspace_app_is_proven_by_its_ticket_hashes_and_release_signature(self):
         app = self.root / 'NexGenVideo.app'
         app.mkdir()
         pack = self.root / 'plugins/musicvideo.ngvpack'
@@ -276,20 +276,23 @@ class RetainedReleaseRuntimeTests(unittest.TestCase):
                     patch.object(notarization_proof, 'run', side_effect=tools), patch('builtins.print'), \
                     patch('compiled_app_release.verify_retained_runtime_pack', return_value=None):
                 return runtime.validate_app(self.root, self.source, receipt, proof=proof)
-        tools = FakeTools(self.root, {'NexGenVideo.app': APP_HASH})
+        hashes = {'NexGenVideo.app': APP_HASH, 'musicvideo.ngvpack': PACK_HASH}
+        tools = FakeTools(self.root, dict(hashes))
         proof = {'releaseNotarization': released}
         self.assertEqual(validate(tools, proof), identity)
         self.assertEqual(proof['appNotarization']['cdhash'], APP_HASH)
+        self.assertEqual(proof['appNotarization']['packCDHash'], PACK_HASH)
         self.assertFalse(proof['appNotarization']['stapledApp'])
-        self.assertIn(['sudo', '-n', '/usr/sbin/spctl', '--global-enable'], tools.calls)
-        for name in ('other-hash', 'gatekeeper-off', 'unstapled-legacy', 'other-archive'):
+        self.assertFalse(any(call[0] == 'spctl' for call in tools.calls))
+        for name in ('other-hash', 'other-pack', 'other-team', 'unstapled-legacy', 'other-archive'):
             with self.subTest(name), self.assertRaises(ValueError):
-                tools = FakeTools(self.root, {'NexGenVideo.app': '7' * 40 if name == 'other-hash' else APP_HASH})
-                if name == 'gatekeeper-off': tools.enableable = False
+                tools = FakeTools(self.root, dict(hashes, **{'NexGenVideo.app': '7' * 40} if name == 'other-hash' else
+                                                  {'musicvideo.ngvpack': '6' * 40} if name == 'other-pack' else {}))
+                if name == 'other-team': tools.team = 'OTHERTEAM1'
                 case = {'releaseNotarization': dict(released, archiveSHA256='c' * 64)} if name == 'other-archive' else (
                     {} if name == 'unstapled-legacy' else {'releaseNotarization': released})
                 validate(tools, case)
-        tools = FakeTools(self.root, {'NexGenVideo.app': APP_HASH})
+        tools = FakeTools(self.root, dict(hashes))
         tools.stapled.add(str(app))
         self.assertEqual(validate(tools, {}), identity)
 

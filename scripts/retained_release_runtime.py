@@ -107,7 +107,7 @@ def validate_app(directory, source_sha, receipt, *, proof=None):
     record = mounted.get('notarization') if mounted is not None else (released or {}).get('notarization')
     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True, stdin=subprocess.DEVNULL, timeout=120)
     import notarization_proof
-    proof_record = notarization_proof.verify_copy(app, record)
+    proof_record = notarization_proof.verify_copy(app, record, pack=pack if record is not None else None)
     if proof is not None:
         proof['appNotarization'] = proof_record
     if mounted is not None:

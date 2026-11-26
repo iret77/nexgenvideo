@@ -104,7 +104,6 @@ def condition_enabled(condition, artifact_only, dry_run, resumed=False, *, needs
         "env.NGV_PARALLEL_CANDIDATE": str(not legacy).lower(),
         "env.NGV_NOTARY_MODE": "app-and-dmg" if legacy or two_submissions else "dmg-only",
         "steps.restore-notary.outputs.dmg_present": "",
-        "steps.offline-gatekeeper.outcome": "success",
         "steps.signed-input.outcome": "skipped" if not legacy else "success",
         "steps.adopt-signed.outcome": "success" if not legacy else "skipped",
     }
@@ -445,7 +444,6 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
                          '--dmg-sha256 "$(jq -r .dmgSHA256 .build/notarization-proof.json)"'):
             self.assertIn(fragment, image["run"])
         self.assertNotIn("$BUILD_NUMBER", image["run"])
-        self.assertIn("--proof .build/notarization-proof.json", steps["Assess and launch the stapled DMG app offline"]["run"])
         lock = steps["Resolve the locked release dependencies"]
         self.assertTrue(condition_enabled(lock["if"], True, True, internal_image_only=True))
         self.assertFalse(condition_enabled(lock["if"], True, True, internal_image_only=True, compiled_targets="{}"))
@@ -478,27 +476,25 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
                                NOTARIZE_APP_SEPARATELY=switch), check=True, capture_output=True, timeout=10)
                 self.assertEqual(target.read_text(), "NGV_NOTARY_MODE=" + expected + "\n")
 
-    def test_offline_gatekeeper_precedes_every_online_assessment_and_the_app_staple(self):
+    def test_dmg_ticket_proof_precedes_the_app_staple_and_no_step_relies_on_gatekeeper(self):
         steps = self.workflow()["jobs"]["release"]["steps"]
         names = [step.get("name") for step in steps]
         order = ["Start the single qualified bpy source acquisition", "Build and sign app",
                  "Verify the qualified bpy corresponding source", "Record signed build before notarization",
                  "Retain signed build input", "Adopt the recorded signed build", "Build and sign DMG",
                  "Notarize and staple DMG", "Prove the DMG ticket covers the exact app and pack",
-                 "Assess and launch the stapled DMG app offline", "Restore outbound network after the offline check",
                  "Staple the DMG ticket to the runtime app copy", "Verify the exact DMG users install",
                  "Check the installed image against fixed release expectations",
                  "Transfer the verified installed DMG app for workspace acceptance",
                  "Archive exact diagnostic app and symbols", "Retain the candidate binding for the seal"]
         indices = [names.index(name) for name in order]
         self.assertEqual(indices, sorted(indices))
-        offline = names.index("Assess and launch the stapled DMG app offline")
-        for step in steps[:offline]:
-            self.assertNotRegex(step.get("run", ""), r"\bspctl\b|notarization_proof\.py (?:assess|verify-installed)"
-                                r"|verify_release_image|stapler staple [^\n]*NexGenVideo\.app")
-        restore = steps[names.index("Restore outbound network after the offline check")]
-        self.assertTrue(condition_enabled(restore["if"], True, True))
-        self.assertTrue(restore["if"].startswith("always()"))
+        proof = names.index("Prove the DMG ticket covers the exact app and pack")
+        for step in steps[:proof]:
+            self.assertNotRegex(step.get("run", ""), r"stapler staple [^\n]*NexGenVideo\.app")
+        for job in self.workflow()["jobs"].values():
+            for step in job.get("steps", []):
+                self.assertNotRegex(step.get("run", ""), r"\bspctl\b|offline_gatekeeper|gatekeeper_enabled")
         journey = next(step for step in steps if step.get("id") == "journey-artifact")["with"]["path"].split()
         self.assertEqual(journey, [".build/NexGenVideo.dmg", ".build/notarization-proof.json"])
 
@@ -601,7 +597,7 @@ xcrun() { printf 'stapler\\n' >> "$CALLS"; return "$NATIVE_RC"; }
             "Notarize and staple downloadable format packs",
             "Load-test — the SIGNED app actually loads the SIGNED pack from an EXTERNAL dir",
             "Build and sign DMG", "Notarize and staple DMG",
-            "Assess and launch the stapled DMG app offline", "Prove the DMG ticket covers the exact app and pack",
+            "Prove the DMG ticket covers the exact app and pack",
             "Staple the DMG ticket to the runtime app copy",
             "Verify the exact DMG users install", "Check the installed image against fixed release expectations",
             "Record unpublished candidate bytes", "Upload unpublished candidate",

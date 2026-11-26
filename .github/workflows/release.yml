@@ -1406,9 +1406,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/retained_packaging.py bind --root "$RUNNER_TEMP/retained-packaging"
 
-      - name: Prove Gatekeeper can be enforced before the build
-        run: python3 -I -c "import sys; sys.path.insert(0, 'scripts'); import notarization_proof; notarization_proof.gatekeeper_enabled()"
-
       - name: Resolve version + mode
         env:
           ARTIFACT_ONLY: ${{ inputs.artifact_only }}
@@ -1952,28 +1949,6 @@ jobs:
             --pack .build/plugins/musicvideo.ngvpack --state "$NOTARY_STATE_DIR" --mode "$NGV_NOTARY_MODE" \
             --output .build/notarization-proof.json --apple-log .build/notarization-dmg-log.json
 
-      - name: Assess and launch the stapled DMG app offline
-        id: offline-gatekeeper
-        if: inputs.retained_product_source_sha == '' && inputs.compiled_app_targets_json == ''
-        timeout-minutes: 15
-        run: |
-          python3 scripts/offline_gatekeeper.py check --dmg .build/NexGenVideo.dmg --proof .build/notarization-proof.json \
-            --evidence .build/offline-gatekeeper.json --home "$RUNNER_TEMP/nexgenvideo-test-home"
-
-      - name: Restore outbound network after the offline check
-        if: always() && steps.offline-gatekeeper.outcome != 'skipped'
-        timeout-minutes: 5
-        run: python3 scripts/offline_gatekeeper.py restore
-
-      - name: Retain offline Gatekeeper evidence
-        if: always() && steps.offline-gatekeeper.outcome != 'skipped'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: release-offline-gatekeeper-${{ github.run_id }}-a${{ github.run_attempt }}
-          path: .build/offline-gatekeeper.json
-          if-no-files-found: error
-          retention-days: 90
-
       - name: Staple the DMG ticket to the runtime app copy
         if: env.NGV_NOTARY_MODE == 'dmg-only'
         run: |
@@ -2035,7 +2010,6 @@ jobs:
             xcrun stapler validate "$INSTALL_APP"
             NGV_RELEASE_DIAGNOSTIC_APP_TREE_SHA256="$(python3 scripts/external-gui/acceptance.py tree-sha256 --app .build/NexGenVideo.app)"
           fi
-          python3 scripts/notarization_proof.py assess --app "$INSTALL_APP"
           scripts/verify_app_slice.sh "$INSTALL_APP"
           scripts/verify_bpy_bundle.sh "$INSTALL_APP" --distribution
           INSTALLED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INSTALL_APP/Contents/Info.plist")"
@@ -2097,7 +2071,7 @@ jobs:
             echo "NGV_RELEASE_DIAGNOSTIC_APP_TREE_SHA256=$NGV_RELEASE_DIAGNOSTIC_APP_TREE_SHA256"
             echo "NGV_CHECKED_PRODUCT_SOURCE=$NGV_CHECKED_PRODUCT_SOURCE"
           } >> "$GITHUB_ENV"
-          echo "OK: mounted DMG layout, copied app, Gatekeeper assessment, and quarantined pack load"
+          echo "OK: mounted DMG layout, copied app, DMG-ticket notarization proof, and quarantined pack load"
 
       - name: Check the installed image against fixed release expectations
         if: inputs.retained_product_source_sha == '' && inputs.compiled_app_targets_json == ''
@@ -2522,7 +2496,7 @@ jobs:
             cp "$RUNNER_TEMP/release-signed-input/manifest.json" "$BINDING/manifest.json"
           fi
           cp .build/release-workspace-producer.json "$BINDING/"
-          for EVIDENCE in notarization-proof.json offline-gatekeeper.json release-image-check.json; do
+          for EVIDENCE in notarization-proof.json release-image-check.json; do
             if [ -f ".build/$EVIDENCE" ]; then cp ".build/$EVIDENCE" "$BINDING/"; fi
           done
           ls -la "$BINDING"

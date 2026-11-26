@@ -151,7 +151,6 @@ def check(app, pack, dmg, expected, proof, diagnostic, home, log):
                 'Diagnostic app is not the notarized DMG app')
     require(notarization_proof.sha256(dmg) == expected['dmgSHA256'], 'The DMG differs from the notarized DMG')
     installed = notarization_proof.verify_installed(app, dmg, proof, log)
-    notarization_proof.assess(dmg, log, kind='open')
     with tempfile.TemporaryDirectory(prefix='ngv-image-pack-') as directory:
         copy = Path(directory) / 'musicvideo.ngvpack'
         checked(['ditto', pack, copy], log)

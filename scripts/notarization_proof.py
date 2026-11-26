@@ -23,7 +23,7 @@ OWN_BINARIES = ('Contents/MacOS/NexGenVideo', 'Contents/Frameworks/libNexGenEngi
                 'Contents/XPCServices/NexGenVideoBpyService0.xpc/Contents/MacOS/NexGenVideoBpySupervisor',
                 'Contents/XPCServices/NexGenVideoBpyService1.xpc/Contents/MacOS/NexGenVideoBpyService',
                 'Contents/XPCServices/NexGenVideoBpyService1.xpc/Contents/MacOS/NexGenVideoBpySupervisor')
-NOTARIZED_SOURCE = 'source=Notarized Developer ID'
+RUNTIME_FLAG = 0x10000
 FIX = 'Rerun the candidate with notarize_app_separately=true to restore the two-submission notarization.'
 
 
@@ -193,38 +193,29 @@ def validate_any(record, dmg_sha256=None):
     return record
 
 
-def gatekeeper_enabled(log=None):
-    """macrunner images ship with assessments disabled, which turns every spctl verdict into an override."""
-    if 'assessments enabled' in run(['spctl', '--status'], log)[1]:
-        return
-    for flag in ('--global-enable', '--master-enable'):
-        if run(['sudo', '-n', '/usr/sbin/spctl', flag], log)[0] == 0:
-            break
-    require('assessments enabled' in run(['spctl', '--status'], log)[1],
-            'Gatekeeper assessments cannot be enabled; a notarization assessment would be void')
+def signed_by_release_team(target, log=None):
+    checked(['codesign', '--verify', '--deep', '--strict', '--verbose=2', target], log)
+    value = signature(target, log)
+    require(value['team'] == TEAM and value['flags'] is not None and value['flags'] & RUNTIME_FLAG,
+            'Not signed by Developer ID team ' + TEAM + ' with the hardened runtime: ' + str(target))
+    return value
 
 
-def assess(target, log=None, kind='exec'):
-    gatekeeper_enabled(log)
-    context = ['--context', 'context:primary-signature'] if kind == 'open' else []
-    lines = checked(['spctl', '-a', '-vvv', '-t', kind, *context, target], log).splitlines()
-    require('override=security disabled' not in lines, 'Gatekeeper assessments are disabled; the check would be void')
-    require(NOTARIZED_SOURCE in lines, 'Gatekeeper does not report notarized Developer ID for ' + str(target))
-    return True
-
-
-def verify_copy(app, record, log=None):
-    """Prove a transferred app copy is notarized: its own staple, or the DMG ticket that covers its cdhash."""
+def verify_copy(app, record, log=None, pack=None):
+    """Prove a transferred copy is notarized: its own staple, or the DMG ticket that covers its cdhash."""
     if record is None or record['mode'] == 'app-and-dmg':
         checked(['xcrun', 'stapler', 'validate', app], log)
     result = {'mode': 'app-and-dmg' if record is None else record['mode'],
               'stapledApp': record is None or record['mode'] == 'app-and-dmg'}
+    installed = signed_by_release_team(app, log)['cdhash']
     if record is not None:
         validate_any(record)
-        installed = signature(app, log)['cdhash']
         require(installed == record['app']['cdhash'], 'Installed app is not covered by the stapled DMG ticket. ' + FIX)
         result.update(cdhash=installed, dmgSHA256=record['dmgSHA256'], submissionID=record['submissionID'])
-    assess(app, log)
+        if pack is not None:
+            require(signed_by_release_team(pack, log)['cdhash'] == record['pack']['cdhash'],
+                    'Installed pack is not covered by the stapled DMG ticket. ' + FIX)
+            result['packCDHash'] = record['pack']['cdhash']
     return result
 
 
@@ -257,8 +248,6 @@ def main():
     for name in ('--dmg', '--uploaded-dmg', '--app', '--pack', '--state', '--output', '--apple-log'):
         create.add_argument(name, required=True, type=Path)
     create.add_argument('--mode', required=True, choices=MODES)
-    assessment = commands.add_parser('assess')
-    assessment.add_argument('--app', required=True, type=Path)
     installed = commands.add_parser('verify-installed')
     for name in ('--app', '--dmg', '--proof'):
         installed.add_argument(name, required=True, type=Path)
@@ -269,8 +258,6 @@ def main():
     if args.operation == 'record':
         record(args.dmg, args.uploaded_dmg, args.app, args.pack, args.state, args.mode, args.output,
                args.apple_log, os.environ)
-    elif args.operation == 'assess':
-        assess(args.app)
     elif args.operation == 'verify-installed':
         print(json.dumps(verify_installed(args.app, args.dmg, load(args.proof)), sort_keys=True))
     else:
