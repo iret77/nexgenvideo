@@ -76,18 +76,23 @@ struct BibleSpatialViewSheet: View {
                     } else {
                         Text("Render a saved location camera, inspect the result, then assign it to a reference view.")
                             .foregroundStyle(AppTheme.Text.secondaryColor)
-                        Picker("Location geometry", selection: $sceneID) {
-                            Text("Choose location").tag(UUID?.none)
-                            ForEach(scenes) { Text($0.name).tag(Optional($0.id)) }
+                        // The probe covers only the pop-up a user presses, not the row with its label.
+                        LabeledContent("Location geometry") {
+                            Picker("Location geometry", selection: $sceneID) {
+                                Text("Choose location").tag(UUID?.none)
+                                ForEach(scenes) { Text($0.name).tag(Optional($0.id)) }
+                            }.labelsHidden()
+                                .reviewAcceptanceProbe("bible.spatial.locations", state: !loading && location != nil, text: scenes.map(\.selectionIdentity).joined(separator: "\n"))
+                                .reviewAcceptanceProbe("bible.spatial.scene", state: canChooseScene, text: sceneID?.uuidString ?? "")
                         }.disabled(!canChooseScene)
-                            .reviewAcceptanceProbe("bible.spatial.locations", state: !loading && location != nil, text: scenes.map(\.selectionIdentity).joined(separator: "\n"))
-                            .reviewAcceptanceProbe("bible.spatial.scene", state: canChooseScene, text: sceneID?.uuidString ?? "")
-                        Picker("Camera", selection: $cameraID) {
-                            Text("Choose camera").tag(String?.none)
-                            ForEach(scene?.snapshot.cameras ?? []) { Text($0.name).tag(Optional($0.id)) }
+                        LabeledContent("Camera") {
+                            Picker("Camera", selection: $cameraID) {
+                                Text("Choose camera").tag(String?.none)
+                                ForEach(scene?.snapshot.cameras ?? []) { Text($0.name).tag(Optional($0.id)) }
+                            }.labelsHidden()
+                                .reviewAcceptanceProbe("bible.spatial.cameras", text: scene?.snapshot.cameras.map(\.id).joined(separator: "\n"))
+                                .reviewAcceptanceProbe("bible.spatial.camera", state: canChooseCamera, text: cameraID ?? "")
                         }.disabled(!canChooseCamera)
-                            .reviewAcceptanceProbe("bible.spatial.cameras", text: scene?.snapshot.cameras.map(\.id).joined(separator: "\n"))
-                            .reviewAcceptanceProbe("bible.spatial.camera", state: canChooseCamera, text: cameraID ?? "")
                         if let location, !location.sheets.isEmpty {
                             Menu("Use an existing reference view") {
                                 ForEach(location.sheets.keys.sorted(), id: \.self) { key in
