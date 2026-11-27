@@ -1180,7 +1180,7 @@ final class ProductionVisualSourcesDriver {
                 }
                 NSApp.postEvent(event, atStart: false)
             }
-        } else { try await click(id, in: target, preDown: preDown) }
+        } else { try await click(id, in: target, fraction: popUpFraction(id, in: target), preDown: preDown) }
         try await wait("native menu " + path.joined(separator: " / ")) { tracking.closed || tracking.error != nil }
         if let error = tracking.error { tracking.root?.cancelTracking(); throw GateBlocked(error) }
         guard tracking.titles.count == path.count else { throw GateBlocked("The complete native menu path was not observed.") }
@@ -1188,6 +1188,27 @@ final class ProductionVisualSourcesDriver {
             "item": path.last!, "path": path, "titles": tracking.titles.first ?? [], "menus": tracking.titles, "closed": tracking.closed,
             "settle": settled ?? [:]])
         try persist()
+    }
+
+    // A labelled picker's probe spans its label; the user presses the pop-up button itself.
+    private func popUpFraction(_ id: String, in target: NSWindow) -> NSPoint {
+        let center = NSPoint(x: 0.5, y: 0.5)
+        guard let view = probe(id, in: target), let root = target.contentView,
+              view.bounds.width > 0, view.bounds.height > 0 else { return center }
+        let probeScreen = target.convertToScreen(view.convert(view.bounds, to: nil)).insetBy(dx: -1, dy: -1)
+        let roles = [NSAccessibility.Role.popUpButton.rawValue, NSAccessibility.Role.menuButton.rawValue]
+        var pending: [any NSAccessibilityProtocol] = [root], visited = Set<ObjectIdentifier>(), found: [NSRect] = []
+        while let element = pending.popLast(), visited.count < 4096 {
+            guard visited.insert(ObjectIdentifier(element)).inserted else { continue }
+            let frame = element.accessibilityFrame()
+            if roles.contains(element.accessibilityRole()?.rawValue ?? ""), frame.width > 0, frame.height > 0,
+               probeScreen.contains(frame), !found.contains(frame) { found.append(frame) }
+            pending += (element.accessibilityChildren() ?? []).compactMap { $0 as? any NSAccessibilityProtocol }
+        }
+        guard found.count == 1, let button = found.first else { return center }
+        let local = view.convert(target.convertFromScreen(button), from: nil)
+        return NSPoint(x: (local.midX - view.bounds.minX) / view.bounds.width,
+                       y: (local.midY - view.bounds.minY) / view.bounds.height)
     }
 
     struct BoardPosition {
