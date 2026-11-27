@@ -1180,7 +1180,7 @@ final class ProductionVisualSourcesDriver {
                 }
                 NSApp.postEvent(event, atStart: false)
             }
-        } else { try await click(id, in: target, fraction: popUpFraction(id, in: target), preDown: preDown) }
+        } else { try await click(id, in: target, fraction: try popUpFraction(id, in: target), preDown: preDown) }
         try await wait("native menu " + path.joined(separator: " / ")) { tracking.closed || tracking.error != nil }
         if let error = tracking.error { tracking.root?.cancelTracking(); throw GateBlocked(error) }
         guard tracking.titles.count == path.count else { throw GateBlocked("The complete native menu path was not observed.") }
@@ -1191,24 +1191,41 @@ final class ProductionVisualSourcesDriver {
     }
 
     // A labelled picker's probe spans its label; the user presses the pop-up button itself.
-    private func popUpFraction(_ id: String, in target: NSWindow) -> NSPoint {
+    private func popUpFraction(_ id: String, in target: NSWindow) throws -> NSPoint {
         let center = NSPoint(x: 0.5, y: 0.5)
         guard let view = probe(id, in: target), let root = target.contentView,
-              view.bounds.width > 0, view.bounds.height > 0 else { return center }
-        let probeScreen = target.convertToScreen(view.convert(view.bounds, to: nil)).insetBy(dx: -1, dy: -1)
+              view.bounds.width > 0, view.bounds.height > 0 else {
+            try record("pop-up target", fields: ["id": id, "fallback": "no probe"])
+            return center
+        }
+        let probeScreen = target.convertToScreen(view.convert(view.bounds, to: nil))
         let roles = [NSAccessibility.Role.popUpButton.rawValue, NSAccessibility.Role.menuButton.rawValue]
-        var pending: [any NSAccessibilityProtocol] = [root], visited = Set<ObjectIdentifier>(), found: [NSRect] = []
+        var pending: [any NSAccessibilityProtocol] = [root], visited = Set<ObjectIdentifier>()
+        var found: [NSRect] = [], candidates: [[String: Any]] = []
         while let element = pending.popLast(), visited.count < 4096 {
             guard visited.insert(ObjectIdentifier(element)).inserted else { continue }
-            let frame = element.accessibilityFrame()
-            if roles.contains(element.accessibilityRole()?.rawValue ?? ""), frame.width > 0, frame.height > 0,
-               probeScreen.contains(frame), !found.contains(frame) { found.append(frame) }
+            let role = element.accessibilityRole()?.rawValue ?? "", frame = element.accessibilityFrame()
+            if roles.contains(role) {
+                let inside = frame.width > 0 && frame.height > 0 && probeScreen.insetBy(dx: -1, dy: -1).contains(frame)
+                candidates.append(["role": role, "label": element.accessibilityLabel() ?? "", "inside": inside,
+                                   "screenFrame": [frame.minX, frame.minY, frame.width, frame.height]])
+                if inside, !found.contains(frame) { found.append(frame) }
+            }
             pending += (element.accessibilityChildren() ?? []).compactMap { $0 as? any NSAccessibilityProtocol }
         }
-        guard found.count == 1, let button = found.first else { return center }
+        var fields: [String: Any] = ["id": id, "visited": visited.count, "capped": visited.count >= 4096,
+            "candidates": candidates, "probeScreenFrame": [probeScreen.minX, probeScreen.minY, probeScreen.width, probeScreen.height]]
+        guard found.count == 1, let button = found.first else {
+            fields["fallback"] = found.isEmpty ? "no pop-up inside the probe" : "several pop-ups inside the probe"
+            try record("pop-up target", fields: fields)
+            return center
+        }
         let local = view.convert(target.convertFromScreen(button), from: nil)
-        return NSPoint(x: (local.midX - view.bounds.minX) / view.bounds.width,
-                       y: (local.midY - view.bounds.minY) / view.bounds.height)
+        let fraction = NSPoint(x: (local.midX - view.bounds.minX) / view.bounds.width,
+                               y: (local.midY - view.bounds.minY) / view.bounds.height)
+        fields["fraction"] = [fraction.x, fraction.y]
+        try record("pop-up target", fields: fields)
+        return fraction
     }
 
     struct BoardPosition {
