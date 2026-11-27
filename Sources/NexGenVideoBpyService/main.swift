@@ -783,6 +783,8 @@ private struct VerificationScene: Codable {
     let width: Int
     let height: Int
     let percentage: Int
+    let effectiveWidth: Int
+    let effectiveHeight: Int
     let pixels: Int
     let engine: String
     let cyclesDevice: String?
