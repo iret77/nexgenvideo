@@ -239,12 +239,11 @@ def evaluated_geometry(bpy, limits, spatial_meshes=None, spatial_bounds=None, na
                             f"evaluated object limit exceeded: {counts['objects']}"
                         )
                     if obj.type != "MESH":
-                        if spatial_bounds is None:
-                            continue
-                        if obj.type in {"CURVES", "POINTCLOUD", "VOLUME", "GREASEPENCIL"} and instance.show_self:
+                        if (spatial_bounds is not None and instance.show_self
+                                and obj.type in {"CURVES", "POINTCLOUD", "VOLUME", "GREASEPENCIL"}):
                             raise RuntimeError(f"Convert visible {obj.type} geometry to a baked mesh sequence before exporting the plan")
-                        if obj.type not in {"CURVE", "FONT", "SURFACE", "META"}:
-                            continue
+                        # Curve, text, surface and metaball geometry also arrives as its evaluated mesh instance.
+                        continue
                     mesh = obj.to_mesh(
                         preserve_all_data_layers=False,
                         depsgraph=depsgraph,
